@@ -119,7 +119,6 @@ fi
 # Re-enable SPI (HDMI --primary must not disable it)
 if [[ -n "$SPI" ]]; then
   xrandr --output "$SPI" --on 2>/dev/null || true
-  # ensure still has active geometry
   active=$(xrandr --query 2>/dev/null | awk -v n="$SPI" '
     $0 ~ ("^" n " connected") {
       if (match($0, /[0-9]+x[0-9]+\+[0-9]+\+[0-9]+/))
@@ -131,6 +130,13 @@ if [[ -n "$SPI" ]]; then
   else
     log "SPI ACTIVE $active  ← Digivice will pin here"
   fi
+fi
+
+# Final safety: ALWAYS put HDMI back on as primary (never blank desk monitor)
+if [[ -n "$HDMI" ]]; then
+  xrandr --output "$HDMI" --auto --on 2>/dev/null
+  xrandr --output "$HDMI" --primary 2>/dev/null
+  log "HDMI re-assert primary $HDMI (safety net)"
 fi
 
 unblank_backlight
