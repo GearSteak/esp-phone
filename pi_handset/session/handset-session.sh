@@ -34,14 +34,23 @@ digivice_display_env() {
   export QT_ENABLE_HIGHDPI_SCALING=0
   export ESP_HANDSET_MIRROR="${ESP_HANDSET_MIRROR:-1}"
   export ESP_HANDSET_SKIP_PIN="${ESP_HANDSET_SKIP_PIN:-1}"
-  # Autostart often lacks DISPLAY
+  # primary = HDMI/desktop (visible); panel = SPI only
+  export ESP_HANDSET_TARGET="${ESP_HANDSET_TARGET:-primary}"
+
   if [[ -z "${DISPLAY:-}" && -z "${WAYLAND_DISPLAY:-}" ]]; then
     export DISPLAY=:0
   fi
+
+  # Graphical session: NEVER fall through to linuxfb (that was hiding Digivice)
   if [[ -n "${DISPLAY:-}" || -n "${WAYLAND_DISPLAY:-}" ]]; then
-    unset QT_QPA_PLATFORM 2>/dev/null || true
+    if [[ -n "${DISPLAY:-}" && -z "${WAYLAND_DISPLAY:-}" ]]; then
+      export QT_QPA_PLATFORM="${QT_QPA_PLATFORM:-xcb}"
+    else
+      unset QT_QPA_PLATFORM 2>/dev/null || true
+    fi
     return 0
   fi
+
   if [[ -e /dev/fb0 ]]; then
     export QT_QPA_PLATFORM="${QT_QPA_PLATFORM:-linuxfb:fb=/dev/fb0}"
     export QT_QPA_FB_FORCE_FULLSCREEN=1

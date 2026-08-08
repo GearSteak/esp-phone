@@ -408,7 +408,10 @@ def main() -> int:
             if modem:
                 modem.close()
             return 1
-    print("[handset] showing UI…", flush=True)    if os.environ.get("ESP_HANDSET_KIOSK", "").strip() in ("1", "true", "yes"):
+    print("[handset] showing UI…", flush=True)
+    if os.environ.get("ESP_HANDSET_KIOSK", "").strip() in ("1", "true", "yes"):
+        # Default: primary screen fullscreen so Digivice is obvious on HDMI/desktop
+        os.environ.setdefault("ESP_HANDSET_TARGET", "primary")
         geom.apply_kiosk(win)
     else:
         win.resize(geom.W, geom.H)
@@ -420,6 +423,17 @@ def main() -> int:
         win.grabKeyboard()
     except Exception:
         pass
+    try:
+        import subprocess
+
+        subprocess.Popen(
+            ["wmctrl", "-a", "ESP Digivice"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    except Exception:
+        pass
+    print("[handset] event loop starting", flush=True)
     code = app.exec_()
     try:
         win.releaseKeyboard()

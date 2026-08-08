@@ -1,4 +1,8 @@
-"""Digivice panel geometry — prefer SPI panel without blanking the only display."""
+"""Digivice display placement.
+
+Default kiosk target is the **primary** screen (usually HDMI / what you look at).
+Set ESP_HANDSET_TARGET=panel to prefer the SPI 2\" panel instead.
+"""
 
 from __future__ import annotations
 
@@ -30,19 +34,20 @@ def _default_wh() -> Tuple[int, int]:
 W, H = _default_wh()
 
 
-def panel_size_candidates() -> Tuple[Tuple[int, int], ...]:
-    return ((W, H), (H, W), (240, 320), (320, 240))
+def _screens():
+    try:
+        from PyQt5.QtGui import QGuiApplication
+
+        return list(QGuiApplication.screens() or [])
+    except Exception:
+        return []
 
 
 def pick_panel_screen():
-    try:
-        from PyQt5.QtGui import QGuiApplication
-    except ImportError:
-        return None
-    screens = list(QGuiApplication.screens() or [])
+    screens = _screens()
     if not screens:
         return None
-    wanted = set(panel_size_candidates())
+    wanted = {(W, H), (H, W), (240, 320), (320, 240)}
     for s in screens:
         sz = s.size()
         if (sz.width(), sz.height()) in wanted:
@@ -61,63 +66,100 @@ def pick_panel_screen():
         for s in screens:
             if s.name() == name:
                 return s
-    # Single screen or no SPI: use primary / first so window still appears
-    return QGuiApplication.primaryScreen() or screens[0]
+    return min(screens, key=lambda s: s.size().width() * s.size().height())
 
 
-def place_on_panel(win) -> Optional[object]:
-    from PyQt5.QtCore import Qt
+def pick_kiosk_screen():
+    """primary = what desktop uses (HDMI); panel = tiny SPI."""
+    from PyQt5.QtGui import QGuiApplication
 
-    screen = pick_panel_screen()
-    # Keep Window bit so Qt actually maps a top-level window
+    prefer = (os.environ.get("ESP_HANDSET_TARGET", "primary") or "primary").strip().lower()
+    screens = _screens()
+    primary = QGuiApplication.primaryScreen()
+    panel = pick_panel_screen()
+
+    if prefer in ("panel", "spi", "small"):
+        return panel or primary
+    if prefer in ("primary", "hdmi", "main", "desktop"):
+        return primary or panel
+    # auto: if panel is distinct from primary, still use primary so user sees UI
+    return primary or panel
+
+
+def apply_kiosk(win) -> None:
+    """Fullscreen Digivice on the chosen screen — always force visible on top."""
+    from PyQt5.QtCore import Qt, QTimer
+    from PyQt5.QtGui import QGuiApplication
+    from PyQt5.QtWidgets import QApplication
+
+    # Opaque main window (avoids “transparent over desktop” illusion)
     try:
-        win.setWindowFlags(
-            Qt.Window | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint
+        win.setAttribute(Qt.WA_StyledBackground, True)
+        win.setStyleSheet(
+            "QMainWindow { background-color: #0b1a2a; color: #e8eef5; }"
         )
     except Exception:
         pass
 
-    if screen is not None:
-        try:
-            win.setScreen(screen)
-        except Exception:
-            pass
-        geo = screen.geometry()
-        # If screen is huge (HDMI only), use phone-sized window, not 1080p fullscreen
-        if geo.width() * geo.height() > 300_000:
-            win.setGeometry(geo.x(), geo.y(), W, H)
-            print(
-                f"[handset] large screen {screen.name()!r} "
-                f"→ window {W}x{H} (not crop full HD)",
-                flush=True,
-            )
-        else:
-            win.setGeometry(geo)
-            print(
-                f"[handset] panel={screen.name()!r} "
-                f"{geo.width()}x{geo.height()}+{geo.x()}+{geo.y()}",
-                flush=True,
-            )
-        try:
-            handle = win.windowHandle()
-            if handle is not None:
-                handle.setScreen(screen)
-        except Exception:
-            pass
-        return screen
+    screens = _screens()
+    print(f"[handset] screens={len(screens)}", flush=True)
+    for s in screens:
+        g = s.geometry()
+        print(
+            f"[handset]   {s.name()!r} {g.width()}x{g.height()}+{g.x()}+{g.y()}"
+            f"{' PRIMARY' if s is QGuiApplication.primaryScreen() else ''}",
+            flush=True,
+        )
 
-    win.setGeometry(0, 0, W, H)
-    print(f"[handset] fallback {W}x{H}", flush=True)
-    return None
+    screen = pick_kiosk_screen()
+    if screen is None:
+        print("[handset] no QScreen — fallback showFullScreen", flush=True)
+        win.resize(W, H)
+        win.showFullScreen()
+        return
 
+    # Normal top-level window (no weird flags that Wayland drops)
+    win.setWindowFlags(Qt.Window)
+    try:
+        win.setScreen(screen)
+    except Exception:
+        pass
 
-def apply_kiosk(win) -> None:
-    from PyQt5.QtWidgets import QApplication
+    geo = screen.availableGeometry()
+    # Use full screen rect when possible
+    geo = screen.geometry()
+    win.setGeometry(geo)
+    print(
+        f"[handset] kiosk on {screen.name()!r} "
+        f"{geo.width()}x{geo.height()}+{geo.x()}+{geo.y()} "
+        f"(ESP_HANDSET_TARGET={os.environ.get('ESP_HANDSET_TARGET', 'primary')})",
+        flush=True,
+    )
 
-    place_on_panel(win)
     win.show()
-    QApplication.processEvents()
-    place_on_panel(win)
-    win.show()
+    win.showFullScreen()
     win.raise_()
     win.activateWindow()
+    QApplication.processEvents()
+
+    def _refocus() -> None:
+        try:
+            handle = win.windowHandle()
+            if handle is not None and screen is not None:
+                handle.setScreen(screen)
+            win.setGeometry(screen.geometry())
+            win.showFullScreen()
+            win.raise_()
+            win.activateWindow()
+            win.setFocus(Qt.ActiveWindowFocusReason)
+            try:
+                win.grabKeyboard()
+            except Exception:
+                pass
+            print("[handset] re-raise fullscreen", flush=True)
+        except Exception as e:
+            print(f"[handset] refocus: {e}", flush=True)
+
+    QTimer.singleShot(100, _refocus)
+    QTimer.singleShot(500, _refocus)
+    QTimer.singleShot(1500, _refocus)
