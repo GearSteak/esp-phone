@@ -96,8 +96,9 @@ fi
 # SPI 2" as optional second panel — HDMI stays ON
 cp -a "$ROOT/display" "$PREFIX/display"
 chmod +x "$PREFIX/display/install-display.sh" "$PREFIX/display/mipi-dbi-cmd" \
-  "$PREFIX/display/recover-hdmi.sh" 2>/dev/null || true
+  "$PREFIX/display/recover-hdmi.sh" "$PREFIX/display/set-panel-rotation.sh" 2>/dev/null || true
 install -m 755 "$ROOT/display/recover-hdmi.sh" /usr/local/bin/digivice-recover-hdmi
+install -m 755 "$ROOT/display/set-panel-rotation.sh" /usr/local/bin/digivice-set-rotation
 bash "$ROOT/display/install-display.sh"
 
 mkdir -p "$USER_HOME/.esp-handset" "$USER_HOME/Pictures/phone" \
@@ -257,5 +258,7 @@ HDMI-only repair (keeps Digivice default with --keep-phone):
   sudo digivice-recover-hdmi --keep-phone
 
 Wiring: docs/DIGIVICE_WIRING.md · docs/DIGI_BUTTONS.md · docs/DISPLAY_MIRROR.md
+Panel sideways?  sudo digivice-set-rotation 180 && sudo reboot
+  (try 0, 90, 270 until upright)
 SIP: sudo nano /etc/esp-handset/sip.env
 EOF

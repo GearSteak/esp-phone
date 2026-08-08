@@ -29,16 +29,19 @@ Installer enables `mipi-dbi-spi` + `panel.bin` (`waveshare2inch`). After reboot 
 dmesg | grep panel-mipi-dbi
 ```
 
-If the image is upside-down or sideways, on the Pi:
+If sideways/upside-down:
 
 ```bash
-cd /path/to/esp-phone/pi_handset/display   # or /opt/esp-handset/display
-sudo bash set-panel-rotation.sh c0         # try 180° first
-# other tries: 00  60  a0
+sudo digivice-set-rotation 180   # try first
 sudo reboot
+# still wrong? try: 0   then 90   then 270
+sudo digivice-set-rotation 0 && sudo reboot
 ```
 
+Default after install is **180°** (common for this Waveshare module).
+
 Or edit `command 0x36 …` in `waveshare2inch.txt` and re-run `install-display.sh`.
+
 
 ## Navigation
 
