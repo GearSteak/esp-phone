@@ -2,6 +2,10 @@
 
 Same UI on both screens (clone / scale), not two different desktops.
 
+## If the small screen shows only the top-left corner
+
+That means Digivice was fullscreen on **HDMI** and the 2″ only showed a **crop** of that big desktop. Fixed in software: Digivice pins to the **SPI/small** output. Update with `git pull` + reinstall scripts, then `handset-phone`.
+
 ## What the software does
 
 On `handset-phone` / Digivice autostart, `mirror-displays.sh` runs:
