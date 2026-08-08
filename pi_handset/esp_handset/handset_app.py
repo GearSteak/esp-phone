@@ -410,8 +410,8 @@ def main() -> int:
             return 1
     print("[handset] showing UI…", flush=True)
     if os.environ.get("ESP_HANDSET_KIOSK", "").strip() in ("1", "true", "yes"):
-        # SPI is the phone canvas; HDMI should mirror SPI via digivice-layout
-        os.environ.setdefault("ESP_HANDSET_TARGET", "panel")
+        # Render Digivice at 240×320, scale that full frame onto SPI + HDMI
+        os.environ.setdefault("ESP_HANDSET_DISPLAY", "scale")
         geom.apply_kiosk(win)
     else:
         win.resize(geom.W, geom.H)
@@ -433,8 +433,13 @@ def main() -> int:
         )
     except Exception:
         pass
-    print("[handset] event loop starting", flush=True)
+    print("[handset] event loop starting (scale-to-all-screens)", flush=True)
     code = app.exec_()
+    if hasattr(win, "_multi_presenter") and win._multi_presenter:
+        try:
+            win._multi_presenter.stop()
+        except Exception:
+            pass
     try:
         win.releaseKeyboard()
     except Exception:
