@@ -56,6 +56,21 @@ kill_phone_ui() {
   pkill -f "esp_handset/handset_app.py" 2>/dev/null || true
 }
 
+# Same picture on SPI 2" + HDMI (xrandr scale-from / best-effort Wayland)
+apply_mirror() {
+  local m=""
+  for m in \
+    "$PREFIX/session/mirror-displays.sh" \
+    /usr/local/bin/digivice-mirror-displays \
+    "$(dirname "$0")/mirror-displays.sh"
+  do
+    if [[ -f "$m" ]]; then
+      bash "$m" 2>/dev/null || true
+      return 0
+    fi
+  done
+}
+
 cmd="${1:-}"
 case "$cmd" in
   mode)
@@ -70,6 +85,7 @@ case "$cmd" in
   phone)
     mode_set phone
     digivice_display_env
+    apply_mirror
     export ESP_HANDSET_KIOSK=1
     exec /usr/bin/python3 "$PREFIX/handset_app.py"
     ;;
@@ -80,8 +96,16 @@ case "$cmd" in
       exit 0
     fi
     digivice_display_env
+    # Display layout may settle a moment after login
+    ( sleep 2; apply_mirror ) &
+    apply_mirror
     export ESP_HANDSET_KIOSK=1
     exec /usr/bin/python3 "$PREFIX/handset_app.py"
+    ;;
+  mirror)
+    digivice_display_env
+    apply_mirror
+    echo "Mirror applied (if dual outputs present)."
     ;;
   desktop)
     # Leave Digivice for now; does NOT change next-login default unless you want that.
@@ -127,8 +151,9 @@ case "$cmd" in
     cat <<EOF
 Usage: handset-session <command>
 
-  phone         Launch Digivice + set login default to phone
-  desktop       Kill Digivice UI only (default login mode unchanged)
+  phone         Launch Digivice + mirror SPI/HDMI when possible
+  mirror        Re-apply same picture on both screens
+  desktop       Kill Digivice UI only (login default unchanged)
   set-phone     Digivice default at next login/boot
   set-desktop   Desktop default at next login/boot
   mode          Print phone|desktop

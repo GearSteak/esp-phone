@@ -35,7 +35,12 @@ apt-get install -y \
   modemmanager \
   fonts-dejavu-core \
   zram-tools \
-  wmctrl || true
+  wmctrl \
+  x11-xserver-utils \
+  wlr-randr || true
+
+# Optional Wayland mirror tool (bookworm may or may not package it)
+apt-get install -y wl-mirror 2>/dev/null || true
 
 apt-get install -y midori || apt-get install -y epiphany-browser || true
 
@@ -50,6 +55,8 @@ install -m 755 "$ROOT/esp_handset/handset_app.py" "$PREFIX/handset_app.py"
 install -m 755 "$ROOT/esp_handset/esp_keyd.py" "$PREFIX/esp_keyd.py"
 install -m 755 "$ROOT/session/handset-session.sh" "$PREFIX/session/handset-session.sh"
 install -m 755 "$ROOT/session/handset-session.sh" /usr/local/bin/handset-session
+install -m 755 "$ROOT/session/mirror-displays.sh" "$PREFIX/session/mirror-displays.sh"
+install -m 755 "$ROOT/session/mirror-displays.sh" /usr/local/bin/digivice-mirror-displays
 
 cat >/etc/udev/rules.d/99-esp-handset.rules <<'EOF'
 # Espressif USB CDC — Heltec LoRa / notify bridge
@@ -234,20 +241,21 @@ cat <<EOF
 
 === Digivice install complete ===
 DEFAULT boot: Digivice UI (phone).
-HDMI stays ON (no nohdmi) — monitor works in parallel / when you exit Digivice.
+HDMI ON + SPI 2" — installer tries to MIRROR both (same Digivice picture).
 
-Leave Digivice anytime:
-  handset-desktop
-  F12 or Ctrl+Shift+D inside Digivice
-  Settings → Linux
+Mirror help:
+  handset-session mirror
+  digivice-mirror-displays
+  Best results: raspi-config → Advanced → Wayland → X11 (Openbox), then reboot
 
-Return to Digivice:  handset-phone
-  (or reboot / login with session_mode=phone)
+Leave Digivice:
+  handset-desktop · F12 · Ctrl+Shift+D · Settings→Linux
 
-If HDMI ever dies from an old config only:
-  sudo digivice-recover-hdmi   # fixes HDMI; use --keep-phone to stay Digivice-default
-  docs/RECOVERY_HDMI.md
+Return: handset-phone
 
-Wiring: docs/DIGIVICE_WIRING.md · docs/DIGI_BUTTONS.md
+HDMI-only repair (keeps Digivice default with --keep-phone):
+  sudo digivice-recover-hdmi --keep-phone
+
+Wiring: docs/DIGIVICE_WIRING.md · docs/DIGI_BUTTONS.md · docs/DISPLAY_MIRROR.md
 SIP: sudo nano /etc/esp-handset/sip.env
 EOF
