@@ -111,6 +111,8 @@ install -m 755 "$ROOT/display/recover-hdmi.sh" /usr/local/bin/digivice-recover-h
 install -m 755 "$ROOT/display/set-panel-rotation.sh" /usr/local/bin/digivice-set-rotation
 install -m 755 "$ROOT/display/spi-doctor.sh" /usr/local/bin/digivice-spi-doctor
 install -m 755 "$ROOT/display/spi-doctor.sh" "$PREFIX/display/spi-doctor.sh"
+install -m 755 "$ROOT/display/install-spi-userspace.sh" /usr/local/bin/digivice-install-spi-userspace
+install -m 755 "$ROOT/display/install-spi-userspace.sh" "$PREFIX/display/install-spi-userspace.sh"
 
 # Convenience
 cat >/usr/local/bin/handset-spi <<'EOF'

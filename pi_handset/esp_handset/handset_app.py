@@ -429,6 +429,11 @@ def main() -> int:
     win.setFocus()
     print("[handset] event loop starting", flush=True)
     code = app.exec_()
+    if hasattr(win, "_spi_mirror") and win._spi_mirror:
+        try:
+            win._spi_mirror.stop()
+        except Exception:
+            pass
     if hasattr(win, "_multi_presenter") and win._multi_presenter:
         try:
             win._multi_presenter.stop()

@@ -68,6 +68,18 @@ digivice_display_env() {
   export ESP_HANDSET_SKIP_LAYOUT="${ESP_HANDSET_SKIP_LAYOUT:-0}"
   # 1 = SPI primary, HDMI off (proves dual-head was starving SPI)
   export ESP_HANDSET_SPI_ONLY="${ESP_HANDSET_SPI_ONLY:-0}"
+  # Instructables-style ST7789 userspace mirror when /etc/esp-handset/spi-userspace exists
+  if [[ -f /etc/esp-handset/spi-userspace ]] || [[ -f /etc/esp-handset/spi-backend ]]; then
+    export ESP_HANDSET_SPI_BACKEND="${ESP_HANDSET_SPI_BACKEND:-userspace}"
+    export ESP_HANDSET_SKIP_LAYOUT="${ESP_HANDSET_SKIP_LAYOUT:-1}"
+  fi
+  if [[ -f /etc/esp-handset/env ]]; then
+    # shellcheck disable=SC1091
+    set -a
+    # shellcheck source=/dev/null
+    source /etc/esp-handset/env 2>/dev/null || true
+    set +a
+  fi
 
   if [[ -z "${DISPLAY:-}" && -z "${WAYLAND_DISPLAY:-}" ]]; then
     export DISPLAY=:0
