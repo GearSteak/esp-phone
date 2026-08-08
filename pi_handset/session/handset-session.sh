@@ -63,9 +63,11 @@ digivice_display_env() {
   export QT_AUTO_SCREEN_SCALE_FACTOR=0
   export QT_SCALE_FACTOR=1
   export QT_ENABLE_HIGHDPI_SCALING=0
-  export ESP_HANDSET_MIRROR="${ESP_HANDSET_MIRROR:-1}"
+  export ESP_HANDSET_MIRROR="${ESP_HANDSET_MIRROR:-0}"
   export ESP_HANDSET_SKIP_PIN="${ESP_HANDSET_SKIP_PIN:-1}"
   export ESP_HANDSET_SKIP_LAYOUT="${ESP_HANDSET_SKIP_LAYOUT:-0}"
+  # 1 = SPI primary, HDMI off (proves dual-head was starving SPI)
+  export ESP_HANDSET_SPI_ONLY="${ESP_HANDSET_SPI_ONLY:-0}"
 
   if [[ -z "${DISPLAY:-}" && -z "${WAYLAND_DISPLAY:-}" ]]; then
     export DISPLAY=:0
@@ -92,15 +94,19 @@ apply_digivice_layout() {
     log "skip digivice-layout"
     return 0
   fi
-  local m
+  local m args=()
+  if [[ "${ESP_HANDSET_SPI_ONLY:-0}" == "1" ]]; then
+    args+=(--spi-only)
+    log "SPI-ONLY layout (HDMI off)"
+  fi
   for m in \
     "$PREFIX/session/digivice-layout.sh" \
     /usr/local/bin/digivice-layout \
     "$(dirname "$0")/digivice-layout.sh"
   do
     if [[ -f "$m" ]]; then
-      log "layout: $m"
-      bash "$m" >>"$LOG" 2>&1 || true
+      log "layout: $m ${args[*]:-}"
+      bash "$m" "${args[@]}" >>"$LOG" 2>&1 || true
       return 0
     fi
   done
@@ -238,18 +244,12 @@ case "$cmd" in
   *)
     cat <<EOF
 Usage: handset-session <command>
-  phone / autostart / desktop / force-desktop / layout / set-phone / set-desktop / mode / log
+  phone / spi-phone / spi-prove / desktop / layout / set-phone / set-desktop / mode / log
 
-Hard buttons (no USB keyboard):
-  Back ×3 quickly  → desktop
-  Home ×3 quickly  → desktop
+  spi-prove  — red on SPI (HDMI off 6s) then restore HDMI  ← run this first if SPI dark
+  spi-phone  — Digivice on SPI only (HDMI off). handset-desktop restores HDMI.
 
-No keyboard recovery: power off, put SD in PC, create empty file on boot volume:
-  digivice-desktop
-Then reinsert SD and boot (Linux desktop, Digivice stays off until you handset-phone).
-
-Mode file: $MODE_FILE
-Log: $LOG
+Hard exit Digivice: Back×3 or Home×3 or handset-desktop
 EOF
     exit 1
     ;;
