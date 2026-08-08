@@ -21,7 +21,7 @@ find_spi_hdmi() {
   local o
   for o in "$@"; do
     case "$o" in
-      *SPI*|*DPI*|*DSI*|*PANEL*) SPI_OUT="$o" ;;
+      *SPI*|*DPI*|*DSI*|*PANEL*|[Uu]nknown*) SPI_OUT="$o" ;;
       HDMI*|hdmi*) HDMI_OUT="$o" ;;
     esac
   done
@@ -120,7 +120,7 @@ mirror_wayland() {
     local panel="" hdmi="" o
     for o in "${outs[@]:-}"; do
       case "$o" in
-        *SPI*|*DPI*|*DSI*) panel="$o" ;;
+        *SPI*|*DPI*|*DSI*|*PANEL*|[Uu]nknown*) panel="$o" ;;
         *HDMI*) hdmi="$o" ;;
       esac
     done

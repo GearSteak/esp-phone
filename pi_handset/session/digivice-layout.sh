@@ -28,33 +28,42 @@ mapfile -t OUTS < <(xrandr --query 2>/dev/null | awk '/ connected/{print $1}')
 log "connected: ${OUTS[*]:-none}"
 
 SPI=""; HDMI=""
+# mipi-dbi-spi panels often appear as Unknown19-1 (not SPI-1) under KMS
 for o in "${OUTS[@]:-}"; do
   case "$o" in
-    *SPI*|*DPI*|*DSI*|*PANEL*) SPI="$o" ;;
-    HDMI*|hdmi*) HDMI="$o" ;;
+    HDMI*|hdmi*|DP-*|DisplayPort*) HDMI="${HDMI:-$o}" ;;
+    *SPI*|*DPI*|*DSI*|*PANEL*|[Uu]nknown*) SPI="$o" ;;
   esac
 done
 
-if [[ -z "$SPI" ]]; then
+# Prefer exact phone modes if several Unknown* / small outs exist
+if [[ -z "$SPI" ]] || [[ "${#OUTS[@]}" -gt 1 ]]; then
   best=999999999
+  pick=""
   for o in "${OUTS[@]:-}"; do
-    case "$o" in HDMI*|hdmi*) continue ;; esac
+    case "$o" in HDMI*|hdmi*|DP-*) continue ;; esac
     area=$(xrandr --query 2>/dev/null | awk -v n="$o" '
       $0 ~ ("^" n " connected") {p=1;next}
       p && $1 ~ /^[0-9]+x[0-9]+/ {split($1,a,"x"); print (a[1]+0)*(a[2]+0); exit}
       p && /^[^ ]/ {exit}')
     area="${area:-0}"
+    # favor 240x320 / 320x240 (~76800)
+    if [[ "$area" -eq 76800 ]]; then
+      pick=$o; best=$area; break
+    fi
     if [[ "$area" -gt 1000 && "$area" -lt 500000 && "$area" -lt "$best" ]]; then
-      best=$area; SPI=$o
+      best=$area; pick=$o
     fi
   done
+  [[ -n "$pick" ]] && SPI="$pick"
 fi
 
 if [[ -z "$SPI" ]]; then
-  log "ERROR: no SPI/small output — Digivice cannot live on panel; Qt will only use HDMI"
+  log "ERROR: no panel output (SPI / Unknown* / small mode) — Qt will only use HDMI"
   xrandr --query 2>&1 | tee -a "$LOG" >&2
   exit 0
 fi
+log "panel output name=$SPI (UnknownN-1 is normal for mipi-dbi-spi)"
 
 ROT=0
 [[ -f /etc/esp-handset/panel-rotation ]] && \

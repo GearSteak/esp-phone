@@ -47,6 +47,15 @@ W, H = _default_wh()
 # SPI 240×320 = 76800; 320×240 = 76800; 480×320 ≈ 150k; HDMI is millions.
 PHONE_AREA_MAX = 200_000
 
+# mipi-dbi-spi often shows as Unknown19-1 (not "SPI-…") under KMS/xrandr/Qt.
+_PANEL_NAME_MARKERS = (
+    "SPI",
+    "DPI",
+    "DSI",
+    "PANEL",
+    "UNKNOWN",  # DRM generic name for SPI bipanel (e.g. Unknown19-1)
+)
+
 
 def _area(screen) -> int:
     s = screen.size()
@@ -57,27 +66,27 @@ def _screens():
     return list(QGuiApplication.screens() or [])
 
 
+def is_panel_name(name: str) -> bool:
+    n = (name or "").upper()
+    if any(k in n for k in ("HDMI", "DP-", "DISPLAYPORT", "VGA", "VIRTUAL")):
+        return False
+    return any(k in n for k in _PANEL_NAME_MARKERS)
+
+
 def is_phone_screen(screen) -> bool:
+    if is_panel_name(screen.name() or ""):
+        return True
     if _area(screen) <= PHONE_AREA_MAX:
         return True
-    n = (screen.name() or "").upper()
-    return any(k in n for k in ("SPI", "DPI", "DSI", "PANEL"))
+    return False
 
 
 def pick_panel_screen():
-    """Prefer SPI / small panel for the real Digivice window."""
+    """Prefer small DRM panel (SPI / Unknown*-N) for the real Digivice window."""
     screens = _screens()
     if not screens:
         return None
-    wanted = {(W, H), (H, W), (240, 320), (320, 240)}
-    for s in screens:
-        if (s.size().width(), s.size().height()) in wanted:
-            return s
-    for s in screens:
-        n = (s.name() or "").upper()
-        if any(k in n for k in ("SPI", "DPI", "DSI", "PANEL")):
-            return s
-    name = os.environ.get("ESP_HANDSET_PANEL_OUTPUT", "")
+    name = os.environ.get("ESP_HANDSET_PANEL_OUTPUT", "").strip()
     if not name:
         try:
             name = open("/tmp/digivice-panel-output", encoding="utf-8").read().strip()
@@ -87,6 +96,22 @@ def pick_panel_screen():
         for s in screens:
             if s.name() == name:
                 return s
+
+    wanted = {(W, H), (H, W), (240, 320), (320, 240)}
+    by_size = [
+        s
+        for s in screens
+        if (s.size().width(), s.size().height()) in wanted
+    ]
+    if by_size:
+        # Prefer Unknown*/SPI name among exact phone resolutions
+        named = [s for s in by_size if is_panel_name(s.name() or "")]
+        return min(named or by_size, key=_area)
+
+    for s in screens:
+        if is_panel_name(s.name() or ""):
+            return s
+
     small = [s for s in screens if is_phone_screen(s)]
     if small:
         return min(small, key=_area)

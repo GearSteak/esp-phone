@@ -13,19 +13,19 @@ Qt often never saw the SPI screen. Turn SPI on, then relaunch:
 
 ```bash
 export DISPLAY=:0
-digivice-layout          # turns SPI on, keeps HDMI
-xrandr | grep connected  # SPI-… must appear
+digivice-layout          # turns panel on, keeps HDMI
+xrandr | grep connected  # often: Unknown19-1 (not "SPI-…") — that *is* the 2" panel
 handset-desktop; pkill -f handset_app; handset-phone
 ```
+
+KMS names the mipi-dbi panel **`Unknown19-1`** (or similar). Digivice treats that as the phone surface.
 
 Log should include:
 
 ```text
-Digivice LIVE on panel 'SPI-…' 240x320
+Digivice LIVE on panel 'Unknown19-1' 240x320
 scale-host (HDMI) → 'HDMI-…'
 ```
-
-If log only has one screen and no SPI name, the panel is not active in X — check wiring, `dmesg | grep -i mipi`, backlight.
 
 ## Backlight
 
