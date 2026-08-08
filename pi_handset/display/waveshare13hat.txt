@@ -1,0 +1,27 @@
+# Waveshare 1.3inch LCD HAT — ST7789 240×240
+# Proven on Pi Zero 2 W with mipi-dbi-spi (DC=25 RST=27 BL=24).
+# MADCTL 0x60 = upright Digivice orientation on the HAT.
+#
+# Build:  python3 mipi-dbi-cmd waveshare13hat.bin waveshare13hat.txt
+# Install: sudo cp waveshare13hat.bin /lib/firmware/
+
+command 0x01
+delay 150
+
+command 0x11
+delay 10
+
+command 0x3A 0x55
+delay 10
+
+command 0x36 0x08
+command 0x21
+delay 10
+
+command 0x13
+delay 10
+
+command 0x36 0x60
+command 0x29
+delay 250
+delay 250

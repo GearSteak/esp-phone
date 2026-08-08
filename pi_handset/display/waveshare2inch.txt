@@ -1,0 +1,25 @@
+# Waveshare 2inch LCD Module — ST7789V 240×320 SPI
+# Wiki: https://www.waveshare.com/wiki/2inch_LCD_Module
+# Pi: SPI0 CE0, DC=25, RST=27, BL=18
+#
+# Build:  python3 mipi-dbi-cmd waveshare2inch.bin waveshare2inch.txt
+
+command 0x01
+delay 150
+
+command 0x11
+delay 120
+
+command 0x3A 0x55
+delay 10
+
+# Portrait 240 wide × 320 tall (phone)
+command 0x36 0x00
+command 0x21
+delay 10
+
+command 0x13
+delay 10
+
+command 0x29
+delay 100

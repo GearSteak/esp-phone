@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Return to Phone
+Comment=Fullscreen ESP Handset UI
+Exec=handset-session phone
+Icon=phone
+Terminal=false
+Categories=Utility;
+X-GNOME-Autostart-enabled=false

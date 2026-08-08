@@ -1,0 +1,184 @@
+"""Digivice submenu carousel — big center icon, smaller neighbors, wrap-around."""
+
+from __future__ import annotations
+
+from typing import Callable, List, Optional
+
+from PyQt5.QtCore import QEasingCurve, QPropertyAnimation, Qt, pyqtProperty, pyqtSignal
+from PyQt5.QtGui import QColor, QFont, QPainter, QPen
+from PyQt5.QtWidgets import QWidget
+
+from esp_handset.shell_data import AppEntry
+
+
+def _scale_for_offset(off: float) -> float:
+    """Center (0) = 1.0; neighbors shrink with distance."""
+    d = abs(off)
+    if d < 0.01:
+        return 1.0
+    if d < 1.01:
+        return 0.55 + 0.45 * (1.0 - d)  # during anim
+    if d < 2.01:
+        return 0.35
+    return 0.25
+
+
+class RadialMenu(QWidget):
+    """Carousel: one large icon, side icons smaller; ←→ wraps first↔last.
+
+    Icons grow into the highlight and shrink as they leave center.
+    """
+
+    activated = pyqtSignal(str)
+
+    def __init__(
+        self,
+        entries: List[AppEntry],
+        parent: Optional[QWidget] = None,
+        on_activate: Optional[Callable[[str], None]] = None,
+    ):
+        super().__init__(parent)
+        self._entries = list(entries)
+        self._index = 0
+        self._shift = 0.0  # animated: 0 = settled; ±1 during slide toward next
+        self._anim: Optional[QPropertyAnimation] = None
+        self.setMinimumSize(200, 160)
+        self.setFocusPolicy(Qt.StrongFocus)
+        if on_activate:
+            self.activated.connect(on_activate)
+
+    def _get_shift(self) -> float:
+        return self._shift
+
+    def _set_shift(self, v: float) -> None:
+        self._shift = v
+        self.update()
+
+    shift = pyqtProperty(float, _get_shift, _set_shift)
+
+    def set_entries(self, entries: List[AppEntry], index: int = 0) -> None:
+        self._entries = list(entries)
+        self._index = max(0, min(index, len(self._entries) - 1)) if self._entries else 0
+        self._shift = 0.0
+        self.update()
+
+    def current(self) -> Optional[AppEntry]:
+        if not self._entries:
+            return None
+        return self._entries[self._index]
+
+    def move_by(self, delta: int) -> None:
+        if not self._entries or delta == 0:
+            return
+        n = len(self._entries)
+        # finish any in-flight anim
+        if self._anim is not None:
+            self._anim.stop()
+            self._shift = 0.0
+
+        direction = 1 if delta > 0 else -1
+        self._pending_index = (self._index + direction) % n
+
+        self._anim = QPropertyAnimation(self, b"shift", self)
+        self._anim.setDuration(140)
+        self._anim.setStartValue(0.0)
+        self._anim.setEndValue(float(direction))
+        self._anim.setEasingCurve(QEasingCurve.OutCubic)
+
+        def _done():
+            self._index = self._pending_index
+            self._shift = 0.0
+            self.update()
+
+        self._anim.finished.connect(_done)
+        self._anim.start()
+
+    def activate(self) -> None:
+        cur = self.current()
+        if cur:
+            self.activated.emit(cur.key)
+
+    def keyPressEvent(self, event) -> None:  # noqa: N802
+        w = self.window()
+        if w is not None and hasattr(w, "keyPressEvent"):
+            w.keyPressEvent(event)
+            if event.isAccepted():
+                return
+        super().keyPressEvent(event)
+
+    def _entry_at(self, offset: int) -> AppEntry:
+        n = len(self._entries)
+        return self._entries[(self._index + offset) % n]
+
+    def paintEvent(self, _event) -> None:  # noqa: N802
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        w, h = self.width(), self.height()
+        cx, cy = w / 2.0, h / 2.0 - 6
+        n = len(self._entries)
+
+        if n == 0:
+            p.setPen(QColor("#9ab"))
+            p.drawText(self.rect(), Qt.AlignCenter, "Empty")
+            return
+
+        # Side arrows (always — wrap-around)
+        p.setPen(QPen(QColor("#58a6ff"), 2))
+        p.setFont(QFont("DejaVu Sans", 18, QFont.Bold))
+        p.drawText(2, int(cy - 14), 22, 28, Qt.AlignCenter, "‹")
+        p.drawText(w - 24, int(cy - 14), 22, 28, Qt.AlignCenter, "›")
+
+        # Visual slots: logical offsets relative to current, shifted by anim
+        # Draw from far to near so center paints last
+        slot_offsets = [-2, -1, 1, 2, 0] if n >= 3 else ([-1, 1, 0] if n == 2 else [0])
+
+        for logical_off in slot_offsets:
+            if n < 3 and abs(logical_off) >= 2:
+                continue
+            # During shift toward +1, center moves right visually → subtract shift
+            visual_off = logical_off - self._shift
+            entry = self._entry_at(logical_off)
+            scale = _scale_for_offset(visual_off)
+            # bump center a bit more when settled
+            if abs(visual_off) < 0.15:
+                scale = max(scale, 0.92 + 0.08 * (1.0 - abs(visual_off) / 0.15))
+
+            r = max(8, int(30 * scale))
+            x = cx + visual_off * 48
+            y = cy
+            alpha = int(90 + 165 * min(1.0, scale))
+
+            focused = abs(visual_off) < 0.35
+            if focused:
+                p.setBrush(QColor(31, 111, 235, alpha))
+                p.setPen(QPen(QColor("#8ecbff"), 2))
+            else:
+                p.setBrush(QColor(40, 55, 75, alpha))
+                p.setPen(QPen(QColor(255, 255, 255, 45), 1))
+
+            p.drawEllipse(int(x - r), int(y - r), r * 2, r * 2)
+
+            glyph_size = max(8, int(24 * scale))
+            p.setPen(QColor(232, 238, 245, alpha))
+            p.setFont(QFont("DejaVu Sans", glyph_size, QFont.Bold))
+            p.drawText(
+                int(x - r),
+                int(y - r),
+                r * 2,
+                r * 2,
+                Qt.AlignCenter,
+                entry.glyph[:1],
+            )
+
+        # Label for settled (or nearly settled) center
+        show_idx = self._index
+        if abs(self._shift) > 0.5:
+            show_idx = (self._index + (1 if self._shift > 0 else -1)) % n
+        cur = self._entries[show_idx]
+        p.setPen(QColor("#e8eef5"))
+        p.setFont(QFont("DejaVu Sans", 12, QFont.Bold))
+        p.drawText(8, h - 34, w - 16, 18, Qt.AlignHCenter | Qt.AlignTop, cur.title)
+        if cur.subtitle:
+            p.setPen(QColor("#8aa"))
+            p.setFont(QFont("DejaVu Sans", 8))
+            p.drawText(8, h - 16, w - 16, 14, Qt.AlignHCenter | Qt.AlignTop, cur.subtitle)
