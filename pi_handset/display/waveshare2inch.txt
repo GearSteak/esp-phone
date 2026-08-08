@@ -1,8 +1,12 @@
-# Waveshare 2inch LCD Module — ST7789V 240×320 SPI
+# Waveshare 2inch LCD Module — ST7789V 240×320 SPI (MIPI DBI firmware source)
 # Wiki: https://www.waveshare.com/wiki/2inch_LCD_Module
 # Pi: SPI0 CE0, DC=25, RST=27, BL=18
 #
 # Build:  python3 mipi-dbi-cmd waveshare2inch.bin waveshare2inch.txt
+# Install: /lib/firmware/waveshare2inch.bin  AND  /lib/firmware/panel.bin
+#
+# Full ST7789 power/gamma seq (minimal slpout/display-on alone often leaves panel black
+# while DRM still shows connector "connected 0mm x 0mm").
 
 command 0x01
 delay 150
@@ -10,12 +14,29 @@ delay 150
 command 0x11
 delay 120
 
-command 0x3A 0x55
+# MADCTL — overwritten by install-display / digivice-set-rotation (default 0xc0 = 180°)
+command 0x36 0xc0
+
+# 16-bit/pixel RGB565 (ST7789 SPI). 0x05 is the proven MIPI-DBI value; 0x55 often wrong.
+command 0x3A 0x05
 delay 10
 
-# Portrait 240 wide × 320 tall (phone). Install applies MADCTL via digivice-set-rotation.
-# Default on install is 180° (0xc0) — change with: sudo digivice-set-rotation 0|90|180|270
-command 0x36 0xc0
+# Porch
+command 0xB2 0x0C 0x0C 0x00 0x33 0x33
+command 0xB7 0x35
+command 0xBB 0x19
+command 0xC0 0x2C
+command 0xC2 0x01
+command 0xC3 0x12
+command 0xC4 0x20
+command 0xC6 0x0F
+command 0xD0 0xA4 0xA1
+
+# Positive/negative gamma
+command 0xE0 0xD0 0x04 0x0D 0x11 0x13 0x2B 0x3F 0x54 0x4C 0x18 0x0D 0x0B 0x1F 0x23
+command 0xE1 0xD0 0x04 0x0C 0x11 0x13 0x2C 0x3F 0x44 0x51 0x2F 0x1F 0x1F 0x20 0x23
+
+# Inv on (Waveshare IPS often needs this)
 command 0x21
 delay 10
 

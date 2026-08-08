@@ -107,6 +107,8 @@ chmod +x "$PREFIX/display/install-display.sh" "$PREFIX/display/mipi-dbi-cmd" \
   "$PREFIX/display/recover-hdmi.sh" "$PREFIX/display/set-panel-rotation.sh" 2>/dev/null || true
 install -m 755 "$ROOT/display/recover-hdmi.sh" /usr/local/bin/digivice-recover-hdmi
 install -m 755 "$ROOT/display/set-panel-rotation.sh" /usr/local/bin/digivice-set-rotation
+install -m 755 "$ROOT/display/spi-doctor.sh" /usr/local/bin/digivice-spi-doctor
+install -m 755 "$ROOT/display/spi-doctor.sh" "$PREFIX/display/spi-doctor.sh"
 bash "$ROOT/display/install-display.sh"
 
 mkdir -p "$USER_HOME/.esp-handset" "$USER_HOME/Pictures/phone" \
