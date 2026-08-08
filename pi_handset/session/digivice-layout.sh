@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
-# SAFE Digivice layout — never blank HDMI.
+# SAFE Digivice layout — HDMI stays on; SPI enabled with a real mode.
 #
-# 1) Bring HDMI up first (primary) so you always have a visible desktop monitor.
-# 2) Enable SPI/Unknown panel as a second head (extended).
-# 3) NEVER use --scale-from / --same-as (those blacked out HDMI on Pi).
+# Digivice app pin-bounds its window onto SPI geometry (not HDMI fullscreen).
+# Never use --scale-from / --same-as (can blank HDMI).
 #
 set +e
 set -u
@@ -26,21 +25,25 @@ unblank_backlight() {
     [[ -d "$d" ]] || continue
     echo 0 >"$d/bl_power" 2>/dev/null || true
     [[ -r "$d/max_brightness" ]] && cat "$d/max_brightness" >"$d/brightness" 2>/dev/null || true
+    log "backlight $d"
+  done
+  # gpio-backlight often used by mipi-dbi
+  for d in /sys/class/leds/*backlight* /sys/class/leds/*bl*; do
+    [[ -e "$d/brightness" ]] || continue
+    echo 1 >"$d/brightness" 2>/dev/null || echo 255 >"$d/brightness" 2>/dev/null || true
   done
 }
 
 if ! command -v xrandr >/dev/null 2>&1 || ! xrandr --query >/dev/null 2>&1; then
-  log "no xrandr — unblank backlight only"
+  log "no xrandr — backlight only"
   unblank_backlight
   exit 0
 fi
 
-# ---- HDMI first (must never stay off) ----
 mapfile -t OUTS < <(xrandr --query 2>/dev/null | awk '/ connected/{print $1}')
 log "connected: ${OUTS[*]:-none}"
 
-HDMI=""
-SPI=""
+HDMI=""; SPI=""
 for o in "${OUTS[@]:-}"; do
   case "$o" in
     HDMI*|hdmi*|DP-*|DisplayPort*) HDMI="${HDMI:-$o}" ;;
@@ -48,7 +51,6 @@ for o in "${OUTS[@]:-}"; do
   esac
 done
 
-# Pick small panel by size if name missed
 if [[ -z "$SPI" ]]; then
   best=999999999
   for o in "${OUTS[@]:-}"; do
@@ -58,53 +60,82 @@ if [[ -z "$SPI" ]]; then
       p && $1 ~ /^[0-9]+x[0-9]+/ {split($1,a,"x"); print (a[1]+0)*(a[2]+0); exit}
       p && /^[^ ]/ {exit}')
     area="${area:-0}"
+    if [[ "$area" -eq 76800 ]]; then pick=$o; best=$area; break; fi
     if [[ "$area" -gt 1000 && "$area" -lt 500000 && "$area" -lt "$best" ]]; then
-      best=$area; SPI=$o
+      best=$area; pick=$o
     fi
   done
+  [[ -n "${pick:-}" ]] && SPI="$pick"
 fi
 
-# Global auto first (recovers heads after bad layout)
 xrandr --auto 2>/dev/null
 unblank_backlight
 
-if [[ -n "$HDMI" ]]; then
-  xrandr --output "$HDMI" --auto --on 2>/dev/null
-  xrandr --output "$HDMI" --primary 2>/dev/null
-  log "HDMI primary: $HDMI (SAFE path — you should see picture here)"
-else
-  log "WARN: no HDMI in xrandr connected list"
-fi
-
-if [[ -n "$SPI" && "$SPI" != "$HDMI" ]]; then
+# --- SPI first at 0,0 with phone mode (content plane Digivice will bind to) ---
+if [[ -n "$SPI" ]]; then
   ok=0
   for try in "$MODE" 240x320 320x240; do
-    if xrandr --output "$SPI" --mode "$try" --right-of "${HDMI:-$SPI}" --rotate normal 2>/dev/null; then
+    # Force preferred + enable; pos 0,0 so Digivice geometry is simple
+    if xrandr --output "$SPI" --mode "$try" --pos 0x0 --rotate normal --on 2>/dev/null; then
       MODE=$try; ok=1
-      log "panel $SPI mode $MODE right-of HDMI"
+      log "SPI $SPI mode $MODE @0+0"
       break
     fi
   done
   if [[ "$ok" -eq 0 ]]; then
-    xrandr --output "$SPI" --auto --on 2>/dev/null
-    if [[ -n "$HDMI" ]]; then
-      xrandr --output "$SPI" --right-of "$HDMI" 2>/dev/null || true
-    fi
-    log "panel $SPI --auto"
+    xrandr --output "$SPI" --auto --pos 0x0 --on 2>/dev/null
+    log "SPI $SPI --auto @0+0 (preferred modes failed for $MODE)"
+    # List available modes for debugging
+    xrandr --query 2>/dev/null | awk -v n="$SPI" '
+      $0 ~ ("^" n " ") {p=1; print; next}
+      p && /^[[:space:]]+[0-9]+x/ {print; next}
+      p && /^[^ ]/ {exit}' | tee -a "$LOG" >&2
   fi
-  xrandr --output "$SPI" --on 2>/dev/null || true
-  echo "$SPI" >/tmp/digivice-panel-output 2>/dev/null
+  echo "$SPI" >/tmp/digivice-panel-output
   export ESP_HANDSET_PANEL_OUTPUT="$SPI"
 else
-  log "no SPI/Unknown panel found — HDMI-only is fine for recovery"
+  log "ERROR: SPI/Unknown not in connected list — wiring/overlay?"
+  log "  dmesg | grep -iE 'mipi|panel|spi'"
+  xrandr --query 2>&1 | tee -a "$LOG" >&2
 fi
 
-# Re-assert HDMI primary once more (never leave SPI-only dark world)
+# --- HDMI next to SPI (primary for desktop tools) ---
 if [[ -n "$HDMI" ]]; then
-  xrandr --output "$HDMI" --auto --primary --on 2>/dev/null
+  # Place HDMI to the RIGHT of 240-wide panel so desktop tools start on big screen
+  # but SPI plane exists at 0,0 for Digivice bind
+  SPIM=$(xrandr --query 2>/dev/null | awk -v n="${SPI:-}" '
+    $0 ~ ("^" n " connected") {
+      if (match($0, /([0-9]+)x([0-9]+)\+([0-9]+)\+([0-9]+)/, a))
+        { print a[1]; exit }
+    }')
+  SPIM="${SPIM:-240}"
+  xrandr --output "$HDMI" --auto --pos "${SPIM}x0" --on 2>/dev/null \
+    || xrandr --output "$HDMI" --auto --right-of "${SPI:-$HDMI}" --on 2>/dev/null \
+    || xrandr --output "$HDMI" --auto --on 2>/dev/null
+  xrandr --output "$HDMI" --primary 2>/dev/null
+  log "HDMI $HDMI on (primary), pos right of SPI width=${SPIM}"
 fi
 
+# Re-enable SPI (HDMI --primary must not disable it)
+if [[ -n "$SPI" ]]; then
+  xrandr --output "$SPI" --on 2>/dev/null || true
+  # ensure still has active geometry
+  active=$(xrandr --query 2>/dev/null | awk -v n="$SPI" '
+    $0 ~ ("^" n " connected") {
+      if (match($0, /[0-9]+x[0-9]+\+[0-9]+\+[0-9]+/))
+        print substr($0, RSTART, RLENGTH)
+    }')
+  if [[ -z "$active" ]]; then
+    log "WARN: SPI has no active WxH+X+Y after layout — panel CRTC dark"
+    xrandr --output "$SPI" --auto --pos 0x0 --on 2>/dev/null
+  else
+    log "SPI ACTIVE $active  ← Digivice will pin here"
+  fi
+fi
+
+unblank_backlight
+W="${MODE%x*}"; H="${MODE#*x}"
 export ESP_HANDSET_W="$W" ESP_HANDSET_H="$H"
-log "final (HDMI must stay on):"
+log "final:"
 xrandr --query 2>/dev/null | grep -E 'Screen | connected' | tee -a "$LOG" >&2
 exit 0

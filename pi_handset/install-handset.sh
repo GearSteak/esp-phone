@@ -63,6 +63,8 @@ install -m 755 "$ROOT/session/restore-desktop-displays.sh" "$PREFIX/session/rest
 install -m 755 "$ROOT/session/restore-desktop-displays.sh" /usr/local/bin/digivice-restore-desktop
 install -m 755 "$ROOT/session/unfuck-displays.sh" "$PREFIX/session/unfuck-displays.sh"
 install -m 755 "$ROOT/session/unfuck-displays.sh" /usr/local/bin/digivice-unfuck-displays
+install -m 755 "$ROOT/session/spi-test.sh" "$PREFIX/session/spi-test.sh"
+install -m 755 "$ROOT/session/spi-test.sh" /usr/local/bin/digivice-spi-test
 
 cat >/etc/udev/rules.d/99-esp-handset.rules <<'EOF'
 # Espressif USB CDC — Heltec LoRa / notify bridge
