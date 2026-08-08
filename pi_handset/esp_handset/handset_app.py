@@ -421,12 +421,26 @@ def main() -> int:
     kiosk = os.environ.get("ESP_HANDSET_KIOSK", "").strip() in ("1", "true", "yes")
     if kiosk:
         geom.apply_kiosk(win)
+        # Do NOT raise the phone canvas above fullscreen hosts — that caused
+        # the floating 240×320 "small portion" on HDMI.
+        try:
+            win.lower()
+        except Exception:
+            pass
+        ctl = getattr(win, "_kiosk_controller", None) or getattr(
+            win, "_multi_presenter", None
+        )
+        if ctl is not None and hasattr(ctl, "_raise_hosts"):
+            try:
+                ctl._raise_hosts()
+            except Exception:
+                pass
     else:
         win.resize(geom.W, geom.H)
         win.show()
-    win.raise_()
-    win.activateWindow()
-    win.setFocus()
+        win.raise_()
+        win.activateWindow()
+        win.setFocus()
     print("[handset] event loop starting", flush=True)
     code = app.exec_()
     if hasattr(win, "_spi_mirror") and win._spi_mirror:
