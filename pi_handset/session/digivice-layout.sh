@@ -71,31 +71,54 @@ ROT=0
 MODE=240x320
 case "$ROT" in 90|270) MODE=320x240 ;; esac
 
-log "enabling SPI=$SPI MODE=$MODE (HDMI stays ${HDMI:-none})"
+log "enabling panel=$SPI MODE=$MODE (HDMI stays ${HDMI:-none})"
 
-# CRITICAL: turn SPI on; do NOT turn it off or leave without a mode
+# Turn panel ON with an explicit mode (blank SPI is often "connected" without CRTC)
 ok=0
 for try in "$MODE" 240x320 320x240; do
   if xrandr --output "$SPI" --mode "$try" --pos 0x0 --rotate normal 2>/dev/null; then
-    MODE=$try; ok=1; log "SPI mode $MODE"; break
+    MODE=$try; ok=1; log "panel mode $MODE"; break
   fi
 done
-[[ "$ok" -eq 0 ]] && xrandr --output "$SPI" --auto --pos 0x0 2>/dev/null && log "SPI --auto"
-xrandr --output "$SPI" --primary 2>/dev/null
-xrandr --output "$SPI" --on 2>/dev/null
-
-# Keep HDMI on so software scale host can attach (extended is fine now)
-if [[ -n "$HDMI" ]]; then
-  xrandr --output "$HDMI" --auto 2>/dev/null
-  # Put HDMI to the right of SPI so they are distinct QScreens, not a crop
-  xrandr --output "$HDMI" --right-of "$SPI" 2>/dev/null \
-    || xrandr --output "$HDMI" --auto 2>/dev/null
-  log "HDMI on (extended); Digivice will scale full UI onto it"
+if [[ "$ok" -eq 0 ]]; then
+  xrandr --output "$SPI" --auto --pos 0x0 2>/dev/null && log "panel --auto"
+  # Preferred mode from first listed rate line
+  pref=$(xrandr --query 2>/dev/null | awk -v n="$SPI" '
+    $0 ~ ("^" n " connected") {p=1;next}
+    p && $1 ~ /^[0-9]+x[0-9]+/ {print $1; exit}
+    p && /^[^ ]/ {exit}')
+  if [[ -n "$pref" ]]; then
+    xrandr --output "$SPI" --mode "$pref" --pos 0x0 2>/dev/null && MODE=$pref && log "panel preferred $MODE"
+  fi
 fi
 
-# Re-assert SPI (some drivers re-primary HDMI)
-xrandr --output "$SPI" --primary 2>/dev/null
-xrandr --output "$SPI" --on 2>/dev/null
+# Explicit CRTC attach (some drivers leave output dark without this)
+xrandr --output "$SPI" --primary --on 2>/dev/null
+
+# HDMI extended to the RIGHT so rects are distinct (+0+0 panel, +W+0 HDMI)
+if [[ -n "$HDMI" && "$HDMI" != "$SPI" ]]; then
+  xrandr --output "$HDMI" --auto 2>/dev/null
+  xrandr --output "$HDMI" --right-of "$SPI" 2>/dev/null \
+    || xrandr --output "$HDMI" --pos "${MODE%x*}0" 2>/dev/null \
+    || xrandr --output "$HDMI" --auto 2>/dev/null
+  log "HDMI on extended right-of panel"
+fi
+
+# Panel primary again (some configs re-primary HDMI on --auto)
+xrandr --output "$SPI" --primary --pos 0x0 --on 2>/dev/null
+
+# Confirm panel has an active mode of form WxH+X+Y (not just "connected")
+active=$(xrandr --query 2>/dev/null | awk -v n="$SPI" '
+  $0 ~ ("^" n " connected") {
+    if (match($0, /[0-9]+x[0-9]+\+[0-9]+\+[0-9]+/)) print substr($0, RSTART, RLENGTH)
+  }')
+if [[ -z "$active" ]]; then
+  log "WARN: panel $SPI has no active WxH+X+Y — compositor may not scan out; SPI stays black"
+  log "Full xrandr:"
+  xrandr --query 2>&1 | tee -a "$LOG" >&2
+else
+  log "panel active geometry: $active"
+fi
 
 echo "$SPI" >/tmp/digivice-panel-output 2>/dev/null
 export ESP_HANDSET_PANEL_OUTPUT="$SPI"
@@ -105,5 +128,5 @@ export ESP_HANDSET_W="$W" ESP_HANDSET_H="$H"
 
 log "final layout:"
 xrandr --query 2>/dev/null | grep -E 'Screen | connected' | tee -a "$LOG" >&2
-log "SPI must say: connected … ${MODE} …  Digivice binds here; HDMI gets scaled copy"
+log "hosts paint full Digivice onto both $SPI and ${HDMI:-n/a}"
 exit 0
