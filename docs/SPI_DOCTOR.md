@@ -32,7 +32,31 @@ Qt layout hacks **cannot** light a panel that never got a DRM mode.
 
 ---
 
-## Fix path (do this)
+## Dual-head: HDMI works, SPI black
+
+Often the Pi only drives **one CRTC well** and HDMI keeps it. Prove it:
+
+```bash
+export DISPLAY=:0
+echo desktop > ~/.esp-handset/session_mode
+pkill -f handset_app 2>/dev/null
+
+# Temporarily: HDMI OFF, red on SPI for 6s, then HDMI back
+digivice-spi-prove
+```
+
+| Red on 2″? | Meaning |
+|------------|---------|
+| **Yes** | Dual-head starved SPI. Run Digivice as: **`handset-spi`** (SPI only, HDMI off) |
+| **No** | Kernel/firmware — `sudo digivice-spi-doctor --fix && sudo reboot` |
+
+SPI-only Digivice (what often worked when “SPI” was primary name):
+
+```bash
+handset-spi
+# = ESP_HANDSET_SPI_ONLY=1 handset-phone
+# Leave: handset-desktop  (restores HDMI)
+```
 
 ```bash
 cd ~/esp-phone && git pull

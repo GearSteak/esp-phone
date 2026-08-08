@@ -189,10 +189,40 @@ case "$cmd" in
     kill_phone_ui
     sleep 0.2
     pkill -9 -f handset_app.py 2>/dev/null || true
+    # Always restore HDMI after SPI-only digivice
+    digivice_display_env
+    for m in \
+      "$PREFIX/session/digivice-layout.sh" \
+      /usr/local/bin/digivice-layout
+    do
+      if [[ -f "$m" ]]; then
+        bash "$m" --hdmi-restore >>"$LOG" 2>&1 || true
+        break
+      fi
+    done
     show_desktop_chrome
-    command -v lxpanelctl >/dev/null 2>&1 && lxpanelctl show || true
     echo "Left Digivice. mode=desktop. Return: handset-phone"
     log "desktop ready"
+    ;;
+  spi-phone)
+    # Digivice with SPI as sole head (HDMI off) — use when dual-head blanks SPI
+    export ESP_HANDSET_SPI_ONLY=1
+    launch_phone
+    ;;
+  spi-prove)
+    digivice_display_env
+    for m in \
+      "$PREFIX/session/spi-prove.sh" \
+      /usr/local/bin/digivice-spi-prove \
+      "$(dirname "$0")/spi-prove.sh"
+    do
+      if [[ -f "$m" ]]; then
+        bash "$m"
+        exit $?
+      fi
+    done
+    echo "spi-prove script missing"
+    exit 1
     ;;
   kill|force-desktop)
     mode_set desktop

@@ -65,6 +65,8 @@ install -m 755 "$ROOT/session/unfuck-displays.sh" "$PREFIX/session/unfuck-displa
 install -m 755 "$ROOT/session/unfuck-displays.sh" /usr/local/bin/digivice-unfuck-displays
 install -m 755 "$ROOT/session/spi-test.sh" "$PREFIX/session/spi-test.sh"
 install -m 755 "$ROOT/session/spi-test.sh" /usr/local/bin/digivice-spi-test
+install -m 755 "$ROOT/session/spi-prove.sh" "$PREFIX/session/spi-prove.sh"
+install -m 755 "$ROOT/session/spi-prove.sh" /usr/local/bin/digivice-spi-prove
 
 cat >/etc/udev/rules.d/99-esp-handset.rules <<'EOF'
 # Espressif USB CDC — Heltec LoRa / notify bridge
@@ -109,6 +111,16 @@ install -m 755 "$ROOT/display/recover-hdmi.sh" /usr/local/bin/digivice-recover-h
 install -m 755 "$ROOT/display/set-panel-rotation.sh" /usr/local/bin/digivice-set-rotation
 install -m 755 "$ROOT/display/spi-doctor.sh" /usr/local/bin/digivice-spi-doctor
 install -m 755 "$ROOT/display/spi-doctor.sh" "$PREFIX/display/spi-doctor.sh"
+
+# Convenience
+cat >/usr/local/bin/handset-spi <<'EOF'
+#!/bin/bash
+# Digivice with SPI sole head (HDMI off) — use when dual-head leaves SPI black
+export ESP_HANDSET_SPI_ONLY=1
+export ESP_HANDSET_PREFIX="${ESP_HANDSET_PREFIX:-/opt/esp-handset}"
+exec /usr/local/bin/handset-session spi-phone
+EOF
+chmod +x /usr/local/bin/handset-spi
 bash "$ROOT/display/install-display.sh"
 
 mkdir -p "$USER_HOME/.esp-handset" "$USER_HOME/Pictures/phone" \
