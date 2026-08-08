@@ -77,10 +77,9 @@ def xrandr_connected_names() -> List[str]:
 
 
 def pick_panel_screen():
-    """Phone/SPI QScreen only. Returns None if nothing phone-sized is present.
+    """Phone/SPI QScreen. Match Unknown* by name even when 0×0 until mode is set.
 
-    Never returns the big HDMI screen — that made Digivice 'look like' it ran
-    when SPI was blank, then later a 240×320 chip on HDMI.
+    Never returns the big HDMI screen.
     """
     screens = _screens()
     if not screens:
@@ -94,25 +93,34 @@ def pick_panel_screen():
             name = ""
     if name:
         for s in screens:
-            if s.name() == name and _area(s) <= PHONE_AREA_MAX:
+            if s.name() == name:
+                # Accept even if size still 0 before layout/mode sticks
+                return s
+
+    # Prefer Unknown*/SPI by name first (0mm panels often still named Unknown19-1)
+    for s in screens:
+        if is_panel_name(s.name() or ""):
+            # Prefer real phone sizes among named panels
+            if (s.size().width(), s.size().height()) in {
+                (W, H),
+                (H, W),
+                (240, 320),
+                (320, 240),
+            } or _area(s) <= PHONE_AREA_MAX:
                 return s
 
     wanted = {(W, H), (H, W), (240, 320), (320, 240)}
     for s in screens:
         if (s.size().width(), s.size().height()) in wanted:
-            if is_panel_name(s.name() or "") or _area(s) <= PHONE_AREA_MAX:
-                # Reject accidental HDMI name even if mode wrong
-                if "HDMI" in (s.name() or "").upper():
-                    continue
-                return s
-
-    for s in screens:
-        if is_panel_name(s.name() or "") and _area(s) <= PHONE_AREA_MAX:
+            if "HDMI" in (s.name() or "").upper():
+                continue
             return s
 
-    small = [s for s in screens if _area(s) <= PHONE_AREA_MAX]
-    # Drop anything named HDMI
-    small = [s for s in small if "HDMI" not in (s.name() or "").upper()]
+    small = [
+        s
+        for s in screens
+        if _area(s) <= PHONE_AREA_MAX and "HDMI" not in (s.name() or "").upper()
+    ]
     if small:
         return min(small, key=_area)
     return None
