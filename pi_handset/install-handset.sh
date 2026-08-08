@@ -61,6 +61,8 @@ install -m 755 "$ROOT/session/digivice-layout.sh" "$PREFIX/session/digivice-layo
 install -m 755 "$ROOT/session/digivice-layout.sh" /usr/local/bin/digivice-layout
 install -m 755 "$ROOT/session/restore-desktop-displays.sh" "$PREFIX/session/restore-desktop-displays.sh"
 install -m 755 "$ROOT/session/restore-desktop-displays.sh" /usr/local/bin/digivice-restore-desktop
+install -m 755 "$ROOT/session/unfuck-displays.sh" "$PREFIX/session/unfuck-displays.sh"
+install -m 755 "$ROOT/session/unfuck-displays.sh" /usr/local/bin/digivice-unfuck-displays
 
 cat >/etc/udev/rules.d/99-esp-handset.rules <<'EOF'
 # Espressif USB CDC — Heltec LoRa / notify bridge
@@ -254,12 +256,10 @@ cat <<EOF
 
 === Digivice install complete ===
 DEFAULT boot: Digivice UI (phone).
-HDMI ON + SPI 2" — installer tries to MIRROR both (same Digivice picture).
-
-Mirror help:
-  handset-session mirror
-  digivice-mirror-displays
-  Best results: raspi-config → Advanced → Wayland → X11 (Openbox), then reboot
+HDMI + SPI: layout is HDMI-first (never --scale-from). If both black:
+  digivice-unfuck-displays
+  sudo digivice-recover-hdmi --now
+  sudo reboot
 
 Leave Digivice:
   handset-desktop · F12 · Ctrl+Shift+D · Settings→Linux

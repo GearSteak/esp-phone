@@ -1,13 +1,7 @@
-"""Digivice on the SPI panel (Unknown19-1 / mipi-dbi) — native fullscreen.
+"""Digivice on SPI panel when present; HDMI stays a normal desktop head.
 
-Working model (reverted from broken multi-host paint path):
-
-  1. digivice-layout turns SPI/Unknown on as *primary* 240×320
-  2. Digivice QMainWindow is shown fullscreen on that QScreen
-  3. HDMI optionally clones via xrandr --same-as / --scale-from
-
-Do not park a “source” window on HDMI and hope paint hosts reach SPI —
-that left SPI blank while HDMI looked fine.
+Layout script enables HDMI first (never scale-from). Digivice fullscreen
+on phone-sized / Unknown panel if available, otherwise primary screen.
 """
 
 from __future__ import annotations
