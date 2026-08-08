@@ -1,19 +1,13 @@
 #!/usr/bin/env bash
-# Digivice layout: SPI is the only desktop geometry for Digivice.
-#
-# Crop bug cause: big HDMI primary + small SPI viewport into same desktop.
-# Fix: while Digivice runs, X "world size" = phone resolution on SPI only.
-# Optional: after that, HDMI is reattached as scaled CLONE of SPI (same picture).
-#
-#   digivice-layout              # SPI-only canvas + try HDMI mirror
-#   ESP_HANDSET_MIRROR=0 digivice-layout   # SPI only, HDMI off
+# Digivice layout: SPI must end ON as primary with a real mode.
+# HDMI is optional scaled mirror. Never leave SPI blank.
 #
 set +e
 set -u
 
-log() { echo "[digivice-layout] $*" | tee -a "${HOME}/.esp-handset/handset.log" >&2; }
-
+LOG="${HOME}/.esp-handset/handset.log"
 mkdir -p "${HOME}/.esp-handset" 2>/dev/null
+log() { echo "[digivice-layout] $*" | tee -a "$LOG" >&2; }
 
 MIRROR="${ESP_HANDSET_MIRROR:-1}"
 ROT="0"
@@ -25,12 +19,32 @@ MODE="${W}x${H}"
 
 export DISPLAY="${DISPLAY:-:0}"
 
-if ! command -v xrandr >/dev/null 2>&1; then
-  log "xrandr missing — install x11-xserver-utils; use X11 not pure Wayland"
-  exit 0
-fi
-if ! xrandr --query >/dev/null 2>&1; then
-  log "cannot query X (DISPLAY=$DISPLAY). Start from desktop session."
+# --- backlight: unblank GPIO panel if present ---
+unblank_backlight() {
+  local d
+  for d in /sys/class/backlight/*; do
+    [[ -d "$d" ]] || continue
+    # 0 = full on for many panels; some use max brightness
+    if [[ -w "$d/bl_power" ]]; then
+      echo 0 >"$d/bl_power" 2>/dev/null || true
+    fi
+    if [[ -w "$d/brightness" && -r "$d/max_brightness" ]]; then
+      cat "$d/max_brightness" >"$d/brightness" 2>/dev/null || echo 255 >"$d/brightness" 2>/dev/null || true
+    fi
+    log "backlight: $d on"
+  done
+  # Some Waveshare overlays use gpio-backlight
+  if [[ -d /sys/class/leds ]]; then
+    for d in /sys/class/leds/*backlight* /sys/class/leds/*bl*; do
+      [[ -e "$d/brightness" ]] || continue
+      echo 1 >"$d/brightness" 2>/dev/null || echo 255 >"$d/brightness" 2>/dev/null || true
+    done
+  fi
+}
+
+if ! command -v xrandr >/dev/null 2>&1 || ! xrandr --query >/dev/null 2>&1; then
+  log "xrandr/X not available DISPLAY=$DISPLAY"
+  unblank_backlight
   exit 0
 fi
 
@@ -50,13 +64,10 @@ if [[ -z "$SPI" ]]; then
   best=999999999
   for o in "${OUTS[@]:-}"; do
     case "$o" in HDMI*|hdmi*) continue ;; esac
-    # current mode area from line with *
     area=$(xrandr --query 2>/dev/null | awk -v n="$o" '
       $0 ~ ("^" n " connected") { p=1; next }
-      p && $1 ~ /^[0-9]+x[0-9]+/ {
-        split($1,a,"x"); print (a[1]+0)*(a[2]+0); exit
-      }
-      p && NF==0 { p=0 }
+      p && $1 ~ /^[0-9]+x[0-9]+/ { split($1,a,"x"); print (a[1]+0)*(a[2]+0); exit }
+      p && /^[^ ]/ { exit }
     ')
     area="${area:-0}"
     if [[ "$area" -gt 1000 && "$area" -lt 500000 && "$area" -lt "$best" ]]; then
@@ -66,72 +77,72 @@ if [[ -z "$SPI" ]]; then
 fi
 
 if [[ -z "$SPI" ]]; then
-  log "ERROR: no SPI/small panel in xrandr — Digivice will crop if only HDMI exists"
-  log "Full xrandr:"; xrandr --query 2>&1 | tee -a "${HOME}/.esp-handset/handset.log" >&2
+  log "ERROR no SPI output in xrandr — panel may be dead to X (kernel/wiring)"
+  xrandr --query 2>&1 | tee -a "$LOG" >&2
+  unblank_backlight
   exit 0
 fi
 
-log "SPI=$SPI HDMI=${HDMI:-none} MODE=$MODE MIRROR=$MIRROR"
+log "SPI=$SPI HDMI=${HDMI:-none} MODE=$MODE"
 
-# --- Phase 1: tear down extended desktop (crop root cause) ---
-if [[ -n "$HDMI" ]]; then
-  xrandr --output "$HDMI" --off 2>/dev/null
-  log "HDMI off temporarily"
-  sleep 0.25
-fi
-
-# --- Phase 2: entire X framebuffer = phone size on SPI ---
-ok=0
-for try in "$MODE" 240x320 320x240; do
-  if xrandr --output "$SPI" --mode "$try" --primary --pos 0x0 2>/dev/null; then
-    MODE=$try
-    W="${MODE%x*}"; H="${MODE#*x}"
-    ok=1
-    log "SPI mode $MODE primary"
-    break
+# --- Bring SPI up FIRST and keep it on (blank SPI = we failed) ---
+spi_on() {
+  local try ok=0
+  for try in "$MODE" 240x320 320x240; do
+    if xrandr --output "$SPI" --mode "$try" --pos 0x0 --rotate normal 2>/dev/null; then
+      MODE=$try; W="${MODE%x*}"; H="${MODE#*x}"; ok=1
+      log "SPI mode $MODE"
+      break
+    fi
+  done
+  if [[ "$ok" -eq 0 ]]; then
+    xrandr --output "$SPI" --auto --pos 0x0 --rotate normal 2>/dev/null
+    log "SPI --auto"
   fi
-done
-if [[ "$ok" -eq 0 ]]; then
-  xrandr --output "$SPI" --auto --primary --pos 0x0 2>/dev/null
-  log "SPI --auto (mode strings failed — check preferred mode below)"
-  xrandr --query 2>/dev/null | awk -v n="$SPI" '
-    $0 ~ ("^" n " ") {print; p=1; next}
-    p && /^[^ ]/ {exit}
-    p {print}
-  ' | head -20 | tee -a "${HOME}/.esp-handset/handset.log" >&2
-fi
+  xrandr --output "$SPI" --primary 2>/dev/null
+  xrandr --output "$SPI" --on 2>/dev/null || true
+}
 
-# Force virtual screen size to phone (kills leftover 1920x1080 workspace)
-if xrandr --fb "${MODE}" 2>/dev/null; then
-  log "xrandr --fb $MODE OK"
-else
-  log "xrandr --fb $MODE failed (non-fatal)"
-fi
+spi_on
+unblank_backlight
 
-# SPI only again after --fb
-xrandr --output "$SPI" --primary --pos 0x0 2>/dev/null
-
-# --- Phase 3: HDMI as CLONE of SPI (optional) ---
+# Prefer: SPI primary, HDMI clone of SPI (big preview)
 if [[ -n "$HDMI" && "$MIRROR" != "0" ]]; then
-  sleep 0.2
+  # Do NOT leave SPI without CRTC: set clone without long HDMI-off
   if xrandr --output "$HDMI" --auto --scale-from "$MODE" --same-as "$SPI" 2>/dev/null; then
-    log "HDMI = scale-from $MODE same-as SPI (big mirror)"
+    log "HDMI scale-from $MODE same-as SPI"
   elif xrandr --output "$HDMI" --same-as "$SPI" 2>/dev/null; then
-    log "HDMI = same-as SPI"
+    log "HDMI same-as SPI"
   else
-    # Leave HDMI off — SPI has full uncropped Digivice world
-    log "HDMI clone failed — left OFF so SPI stays full canvas (no crop)"
-    log "Desk tip: VNC into Pi or use SPI; clone needs X11 + working scale-from"
+    # Side-by-side last resort — SPI still has CRTC/content
+    xrandr --output "$HDMI" --auto --right-of "$SPI" 2>/dev/null \
+      || xrandr --output "$HDMI" --auto 2>/dev/null
+    log "HDMI extended (clone failed); SPI remains primary"
   fi
+  # Re-assert SPI primary after HDMI ops (some drivers steal primary)
+  spi_on
+  unblank_backlight
+elif [[ -n "$HDMI" ]]; then
+  # MIRROR=0: keep HDMI for desktop install, SPI still primary for Digivice
+  xrandr --output "$HDMI" --auto --right-of "$SPI" 2>/dev/null || true
+  spi_on
 fi
 
-# Show final layout
-xrandr --query 2>/dev/null | grep -E 'connected|Screen ' | tee -a "${HOME}/.esp-handset/handset.log" >&2
+# Do NOT call xrandr --fb when it risks blanking SPI on Pi DRM — optional only if single output
+if [[ -z "$HDMI" || "$MIRROR" == "0" ]]; then
+  if xrandr --fb "$MODE" 2>/dev/null; then
+    log "fb $MODE"
+    spi_on
+  fi
+fi
 
 echo "$SPI" >/tmp/digivice-panel-output 2>/dev/null
 export ESP_HANDSET_PANEL_OUTPUT="$SPI"
 export ESP_HANDSET_W="$W"
 export ESP_HANDSET_H="$H"
 export ESP_HANDSET_TARGET=panel
-log "canvas=${W}x${H} panel=$SPI  (Digivice must fill this; no 1080p primary)"
+
+log "final:"
+xrandr --query 2>/dev/null | grep -E "Screen | connected| disconnected" | tee -a "$LOG" >&2
+log "SPI must be 'connected primary'. Digivice TARGET=panel → $SPI"
 exit 0
