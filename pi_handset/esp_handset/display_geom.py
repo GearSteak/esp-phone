@@ -1,8 +1,4 @@
-"""Digivice geometry — SPI phone panel is the real canvas.
-
-HDMI should only *mirror* SPI (see digivice-layout.sh), not host the app at 1080p.
-Default kiosk target = panel (SPI). Use ESP_HANDSET_TARGET=primary only to debug.
-"""
+"""Digivice: paint only the SPI phone canvas (never 1080p crop viewport)."""
 
 from __future__ import annotations
 
@@ -44,10 +40,10 @@ def _screens():
 
 
 def pick_panel_screen():
-    """Prefer native Digivice resolution / SPI-named output."""
     screens = _screens()
     if not screens:
         return None
+    # Prefer exactly phone modes
     wanted = {(W, H), (H, W), (240, 320), (320, 240)}
     for s in screens:
         sz = s.size()
@@ -67,27 +63,21 @@ def pick_panel_screen():
         for s in screens:
             if s.name() == name:
                 return s
-    # Smallest connected screen
+    # After digivice-layout, often only one screen left — use it
+    if len(screens) == 1:
+        return screens[0]
     return min(screens, key=lambda s: s.size().width() * s.size().height())
 
 
-def pick_kiosk_screen():
-    from PyQt5.QtGui import QGuiApplication
-
-    prefer = (os.environ.get("ESP_HANDSET_TARGET", "panel") or "panel").strip().lower()
-    primary = QGuiApplication.primaryScreen()
-    panel = pick_panel_screen()
-    if prefer in ("primary", "hdmi", "main", "desktop"):
-        return primary or panel
-    # default panel — SPI owns Digivice; HDMI should be a hardware/xrandr mirror
-    return panel or primary
-
-
 def apply_kiosk(win) -> None:
-    """Fullscreen Digivice on SPI (or forced target)."""
+    """Fill the phone canvas. Prefer not using multi-head partial geometry."""
     from PyQt5.QtCore import Qt, QTimer
     from PyQt5.QtGui import QGuiApplication
     from PyQt5.QtWidgets import QApplication
+
+    # Re-read W/H from env after digivice-layout
+    global W, H
+    W, H = _default_wh()
 
     try:
         win.setAttribute(Qt.WA_StyledBackground, True)
@@ -96,51 +86,76 @@ def apply_kiosk(win) -> None:
         pass
 
     screens = _screens()
-    print(f"[handset] screens={len(screens)}", flush=True)
+    print(f"[handset] screens={len(screens)} want={W}x{H}", flush=True)
     for s in screens:
         g = s.geometry()
-        flag = " PRIMARY" if s is QGuiApplication.primaryScreen() else ""
+        p = " PRIMARY" if s is QGuiApplication.primaryScreen() else ""
         print(
-            f"[handset]   {s.name()!r} {g.width()}x{g.height()}+{g.x()}+{g.y()}{flag}",
+            f"[handset]   {s.name()!r} {g.width()}x{g.height()}+{g.x()}+{g.y()}{p}",
             flush=True,
         )
 
-    screen = pick_kiosk_screen()
-    if screen is None:
-        win.resize(W, H)
-        win.showFullScreen()
-        return
-
+    screen = pick_panel_screen()
     win.setWindowFlags(Qt.Window)
-    try:
-        win.setScreen(screen)
-    except Exception:
-        pass
-    geo = screen.geometry()
-    win.setGeometry(geo)
-    print(
-        f"[handset] Digivice canvas → {screen.name()!r} "
-        f"{geo.width()}x{geo.height()} "
-        f"(target={os.environ.get('ESP_HANDSET_TARGET', 'panel')})",
-        flush=True,
-    )
+
+    if screen is not None:
+        try:
+            win.setScreen(screen)
+        except Exception:
+            pass
+        geo = screen.geometry()
+        # If layout failed and screen is still huge, force phone widget size
+        # at top-left of that screen (still wrong for SPI crop-as-viewport,
+        # but digivice-layout should have made screen phone-sized).
+        if geo.width() > W + 40 or geo.height() > H + 40:
+            print(
+                f"[handset] WARN screen still large {geo.width()}x{geo.height()} "
+                f"— forcing {W}x{H} window (run digivice-layout / use X11)",
+                flush=True,
+            )
+            win.setGeometry(geo.x(), geo.y(), W, H)
+            win.setFixedSize(W, H)
+        else:
+            win.setGeometry(geo)
+            try:
+                win.setFixedSize(geo.size())
+            except Exception:
+                pass
+        print(
+            f"[handset] Digivice → {screen.name()!r} "
+            f"win={win.width()}x{win.height()}",
+            flush=True,
+        )
+    else:
+        win.setFixedSize(W, H)
+        win.setGeometry(0, 0, W, H)
+
     win.show()
-    win.showFullScreen()
+    # Fullscreen only when the output itself is phone-sized
+    if screen is not None:
+        g = screen.geometry()
+        if g.width() <= W + 40 and g.height() <= H + 40:
+            win.showFullScreen()
     win.raise_()
     win.activateWindow()
     QApplication.processEvents()
 
-    def _refocus() -> None:
+    def _again() -> None:
         try:
-            h = win.windowHandle()
-            if h is not None:
-                h.setScreen(screen)
-            win.setGeometry(screen.geometry())
-            win.showFullScreen()
+            if screen is not None:
+                h = win.windowHandle()
+                if h is not None:
+                    h.setScreen(screen)
+                g = screen.geometry()
+                if g.width() <= W + 40 and g.height() <= H + 40:
+                    win.setGeometry(g)
+                    win.showFullScreen()
+                else:
+                    win.setGeometry(g.x(), g.y(), W, H)
             win.raise_()
             win.activateWindow()
         except Exception:
             pass
 
-    QTimer.singleShot(100, _refocus)
-    QTimer.singleShot(400, _refocus)
+    QTimer.singleShot(150, _again)
+    QTimer.singleShot(600, _again)

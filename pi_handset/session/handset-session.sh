@@ -79,14 +79,17 @@ apply_digivice_layout() {
 show_desktop_chrome() {
   command -v lxpanelctl >/dev/null 2>&1 && lxpanelctl show || true
   command -v wmctrl >/dev/null 2>&1 && wmctrl -k off || true
-  if command -v xrandr >/dev/null 2>&1; then
-    export DISPLAY="${DISPLAY:-:0}"
-    while read -r name; do
-      case "$name" in
-        HDMI*|hdmi*) xrandr --output "$name" --auto 2>/dev/null || true ;;
-      esac
-    done < <(xrandr --query 2>/dev/null | awk '/connected/{print $1}')
-  fi
+  local r
+  for r in \
+    "$PREFIX/session/restore-desktop-displays.sh" \
+    /usr/local/bin/digivice-restore-desktop \
+    "$(dirname "$0")/restore-desktop-displays.sh"
+  do
+    if [[ -f "$r" ]]; then
+      bash "$r" >>"$LOG" 2>&1 || true
+      break
+    fi
+  done
 }
 
 kill_phone_ui() {

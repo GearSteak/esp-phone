@@ -1,34 +1,36 @@
 #!/usr/bin/env bash
-# Digivice display model (correct direction):
+# Digivice layout: SPI is the only desktop geometry for Digivice.
 #
-#   SPI 2"  = PRIMARY  (true 240×320 / 320×240 phone canvas)
-#   HDMI    = MIRROR   (scaled clone of SPI so you can watch on a monitor)
+# Crop bug cause: big HDMI primary + small SPI viewport into same desktop.
+# Fix: while Digivice runs, X "world size" = phone resolution on SPI only.
+# Optional: after that, HDMI is reattached as scaled CLONE of SPI (same picture).
 #
-# Do NOT put Digivice fullscreen on HDMI first — that crops to trash on SPI.
-# Digivice Qt must target the SPI panel; HDMI only echoes that.
+#   digivice-layout              # SPI-only canvas + try HDMI mirror
+#   ESP_HANDSET_MIRROR=0 digivice-layout   # SPI only, HDMI off
 #
 set +e
 set -u
 
-log() { echo "[digivice-layout] $*" >&2; }
+log() { echo "[digivice-layout] $*" | tee -a "${HOME}/.esp-handset/handset.log" >&2; }
+
+mkdir -p "${HOME}/.esp-handset" 2>/dev/null
 
 MIRROR="${ESP_HANDSET_MIRROR:-1}"
 ROT="0"
 [[ -f /etc/esp-handset/panel-rotation ]] && \
   ROT="$(tr -d '[:space:]' </etc/esp-handset/panel-rotation 2>/dev/null || echo 0)"
-MODE="240x320"
-case "$ROT" in 90|270) MODE="320x240" ;; esac
+W=240; H=320
+case "$ROT" in 90|270) W=320; H=240 ;; esac
+MODE="${W}x${H}"
 
-if [[ -z "${DISPLAY:-}" ]]; then
-  export DISPLAY=:0
-fi
+export DISPLAY="${DISPLAY:-:0}"
 
 if ! command -v xrandr >/dev/null 2>&1; then
-  log "need xrandr (X11).: sudo raspi-config → Advanced → Wayland → X11"
+  log "xrandr missing — install x11-xserver-utils; use X11 not pure Wayland"
   exit 0
 fi
 if ! xrandr --query >/dev/null 2>&1; then
-  log "xrandr cannot talk to X (DISPLAY=$DISPLAY)"
+  log "cannot query X (DISPLAY=$DISPLAY). Start from desktop session."
   exit 0
 fi
 
@@ -44,72 +46,92 @@ for o in "${OUTS[@]:-}"; do
   esac
 done
 
-# Smallest non-HDMI under ~500k px as panel
 if [[ -z "$SPI" ]]; then
   best=999999999
   for o in "${OUTS[@]:-}"; do
     case "$o" in HDMI*|hdmi*) continue ;; esac
+    # current mode area from line with *
     area=$(xrandr --query 2>/dev/null | awk -v n="$o" '
-      $0 ~ ("^" n " connected") {
-        for (i=1;i<=NF;i++) if ($i ~ /^[0-9]+x[0-9]+/) {
-          split($i,a,"x"); print (a[1]+0)*(a[2]+0); exit
-        }
-      }')
+      $0 ~ ("^" n " connected") { p=1; next }
+      p && $1 ~ /^[0-9]+x[0-9]+/ {
+        split($1,a,"x"); print (a[1]+0)*(a[2]+0); exit
+      }
+      p && NF==0 { p=0 }
+    ')
     area="${area:-0}"
-    if [[ "$area" -gt 1000 && "$area" -lt 400000 && "$area" -lt "$best" ]]; then
+    if [[ "$area" -gt 1000 && "$area" -lt 500000 && "$area" -lt "$best" ]]; then
       best=$area; SPI=$o
     fi
   done
 fi
 
 if [[ -z "$SPI" ]]; then
-  log "SPI panel not found — cannot mirror. Digivice may only show if SPI is active."
-  log "Check: xrandr | grep connected"
-  exit 0
-fi
-if [[ -n "$HDMI" && "$SPI" == "$HDMI" ]]; then
-  log "panel==hdmi, abort"
+  log "ERROR: no SPI/small panel in xrandr — Digivice will crop if only HDMI exists"
+  log "Full xrandr:"; xrandr --query 2>&1 | tee -a "${HOME}/.esp-handset/handset.log" >&2
   exit 0
 fi
 
-log "PRIMARY(SPI)=$SPI  MIRROR(HDMI)=${HDMI:-none}  mode=$MODE"
+log "SPI=$SPI HDMI=${HDMI:-none} MODE=$MODE MIRROR=$MIRROR"
 
-# 1) SPI is the only layout source
+# --- Phase 1: tear down extended desktop (crop root cause) ---
+if [[ -n "$HDMI" ]]; then
+  xrandr --output "$HDMI" --off 2>/dev/null
+  log "HDMI off temporarily"
+  sleep 0.25
+fi
+
+# --- Phase 2: entire X framebuffer = phone size on SPI ---
+ok=0
 for try in "$MODE" 240x320 320x240; do
   if xrandr --output "$SPI" --mode "$try" --primary --pos 0x0 2>/dev/null; then
     MODE=$try
-    log "SPI mode $MODE primary @ 0,0"
+    W="${MODE%x*}"; H="${MODE#*x}"
+    ok=1
+    log "SPI mode $MODE primary"
     break
   fi
 done
-xrandr --output "$SPI" --primary --pos 0x0 2>/dev/null || \
+if [[ "$ok" -eq 0 ]]; then
   xrandr --output "$SPI" --auto --primary --pos 0x0 2>/dev/null
-
-# 2) HDMI is a scaled copy of SPI (same content, zoomed), not a second desktop
-if [[ -n "$HDMI" && "$MIRROR" != "0" ]]; then
-  # Detach HDMI from any extended layout first
-  xrandr --output "$HDMI" --off 2>/dev/null
-  sleep 0.15
-  if xrandr --output "$HDMI" --auto --scale-from "$MODE" --same-as "$SPI" 2>/dev/null; then
-    log "HDMI = scaled mirror of SPI ($MODE → HDMI)"
-  elif xrandr --output "$HDMI" --same-as "$SPI" 2>/dev/null; then
-    log "HDMI = --same-as SPI (may look blocky)"
-  else
-    # Re-enable HDMI without extended desktop mess: same-as was required
-    xrandr --output "$HDMI" --auto --same-as "$SPI" 2>/dev/null \
-      || xrandr --output "$HDMI" --auto --right-of "$SPI" 2>/dev/null
-    log "WARN: scale-from failed — try X11 if HDMI does not match SPI"
-  fi
-elif [[ -n "$HDMI" ]]; then
-  xrandr --output "$HDMI" --off 2>/dev/null
-  log "MIRROR=0 — HDMI off; Digivice lives on SPI only"
+  log "SPI --auto (mode strings failed — check preferred mode below)"
+  xrandr --query 2>/dev/null | awk -v n="$SPI" '
+    $0 ~ ("^" n " ") {print; p=1; next}
+    p && /^[^ ]/ {exit}
+    p {print}
+  ' | head -20 | tee -a "${HOME}/.esp-handset/handset.log" >&2
 fi
+
+# Force virtual screen size to phone (kills leftover 1920x1080 workspace)
+if xrandr --fb "${MODE}" 2>/dev/null; then
+  log "xrandr --fb $MODE OK"
+else
+  log "xrandr --fb $MODE failed (non-fatal)"
+fi
+
+# SPI only again after --fb
+xrandr --output "$SPI" --primary --pos 0x0 2>/dev/null
+
+# --- Phase 3: HDMI as CLONE of SPI (optional) ---
+if [[ -n "$HDMI" && "$MIRROR" != "0" ]]; then
+  sleep 0.2
+  if xrandr --output "$HDMI" --auto --scale-from "$MODE" --same-as "$SPI" 2>/dev/null; then
+    log "HDMI = scale-from $MODE same-as SPI (big mirror)"
+  elif xrandr --output "$HDMI" --same-as "$SPI" 2>/dev/null; then
+    log "HDMI = same-as SPI"
+  else
+    # Leave HDMI off — SPI has full uncropped Digivice world
+    log "HDMI clone failed — left OFF so SPI stays full canvas (no crop)"
+    log "Desk tip: VNC into Pi or use SPI; clone needs X11 + working scale-from"
+  fi
+fi
+
+# Show final layout
+xrandr --query 2>/dev/null | grep -E 'connected|Screen ' | tee -a "${HOME}/.esp-handset/handset.log" >&2
 
 echo "$SPI" >/tmp/digivice-panel-output 2>/dev/null
 export ESP_HANDSET_PANEL_OUTPUT="$SPI"
-export ESP_HANDSET_W="${MODE%x*}"
-export ESP_HANDSET_H="${MODE#*x}"
-# Soft hint for Qt (software still prefers panel by name/size)
+export ESP_HANDSET_W="$W"
+export ESP_HANDSET_H="$H"
 export ESP_HANDSET_TARGET=panel
-log "done: Digivice canvas ${ESP_HANDSET_W}x${ESP_HANDSET_H} on $SPI; HDMI mirrors it"
+log "canvas=${W}x${H} panel=$SPI  (Digivice must fill this; no 1080p primary)"
 exit 0
