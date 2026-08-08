@@ -13,8 +13,45 @@ import sys
 from pathlib import Path
 from typing import Optional
 
-from PyQt5.QtCore import QObject, pyqtSignal
-from PyQt5.QtWidgets import QApplication, QLabel, QMessageBox
+from PyQt5.QtCore import QObject, pyqtSignal, QEvent, Qt
+from PyQt5.QtWidgets import QApplication, QLabel, QMessageBox, QLineEdit, QTextEdit, QPlainTextEdit
+
+
+class _KioskKeyFilter(QObject):
+    """Route nav keys to Digivice when focus is not in a text field.
+
+    USB keyboards often land focus on labels/status chrome under X11/Wayland.
+    """
+
+    def __init__(self, shell: object):
+        super().__init__(shell)
+        self._shell = shell
+
+    def eventFilter(self, obj, event):  # noqa: N802
+        if event.type() != QEvent.KeyPress:
+            return False
+        w = QApplication.focusWidget()
+        if isinstance(w, (QLineEdit, QTextEdit, QPlainTextEdit)):
+            return False
+        nav = {
+            Qt.Key_Left,
+            Qt.Key_Right,
+            Qt.Key_Up,
+            Qt.Key_Down,
+            Qt.Key_Return,
+            Qt.Key_Enter,
+            Qt.Key_Escape,
+            Qt.Key_Home,
+            Qt.Key_F2,
+        }
+        if event.key() not in nav:
+            return False
+        # Games keep their own handlers via focused game widget
+        if w is not None and w.__class__.__module__.endswith("games_ui"):
+            return False
+        self._shell.keyPressEvent(event)
+        return True
+
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -69,7 +106,17 @@ def build_app(bridge: Optional[EspBridge], modem: Optional[Sim7600]) -> PhoneShe
         handset_apps.exit_to_desktop()
         QApplication.instance().quit()
 
+    def on_linux_now() -> None:
+        """F12 / emergency: no confirm dialog."""
+        try:
+            shell.releaseKeyboard()
+        except Exception:
+            pass
+        handset_apps.exit_to_desktop()
+        QApplication.instance().quit()
+
     shell.on_linux_desktop = on_linux  # type: ignore[attr-defined]
+    shell.on_linux_desktop_now = on_linux_now  # type: ignore[attr-defined]
     # Digivice: no on-screen toast banners — ESP ST7735 shows alerts
     if bridge:
         store.set_esp_notif_handler(
@@ -339,6 +386,7 @@ def main() -> int:
         modem = None
 
     win = build_app(bridge, modem)
+    app.installEventFilter(_KioskKeyFilter(win))
     # Skip modal PIN on tiny Digivice unless PIN already set & required
     if os.environ.get("ESP_HANDSET_SKIP_PIN", "").strip() not in ("1", "true", "yes"):
         if not features.verify_pin_dialog(win):
@@ -352,7 +400,18 @@ def main() -> int:
     else:
         win.resize(geom.W, geom.H)
         win.show()
+    win.raise_()
+    win.activateWindow()
+    win.setFocus()
+    try:
+        win.grabKeyboard()
+    except Exception:
+        pass
     code = app.exec_()
+    try:
+        win.releaseKeyboard()
+    except Exception:
+        pass
     if bridge:
         bridge.close()
     if modem:

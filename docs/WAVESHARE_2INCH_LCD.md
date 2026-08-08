@@ -29,7 +29,16 @@ Installer enables `mipi-dbi-spi` + `panel.bin` (`waveshare2inch`). After reboot 
 dmesg | grep panel-mipi-dbi
 ```
 
-If the image is rotated/wrong colors, edit `pi_handset/display/waveshare2inch.txt` MADCTL (`0x36`), rebuild with `install-display.sh`.
+If the image is upside-down or sideways, on the Pi:
+
+```bash
+cd /path/to/esp-phone/pi_handset/display   # or /opt/esp-handset/display
+sudo bash set-panel-rotation.sh c0         # try 180° first
+# other tries: 00  60  a0
+sudo reboot
+```
+
+Or edit `command 0x36 …` in `waveshare2inch.txt` and re-run `install-display.sh`.
 
 ## Navigation
 

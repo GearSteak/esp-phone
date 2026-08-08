@@ -590,7 +590,9 @@ def make_help_page(on_back) -> QWidget:
         "‹ › cycle (wraps) · grow/shrink\n"
         "Confirm / Back / Home buttons\n"
         "D-pad arrows move focus\n"
-        "Type with on-screen keyboard",
+        "Type with on-screen keyboard\n"
+        "F12 or Ctrl+Shift+D → desktop\n"
+        "Settings → Linux → confirm",
         on_back,
     )
 

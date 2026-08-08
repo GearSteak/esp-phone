@@ -71,6 +71,7 @@ class PhoneShell(QMainWindow):
         self._home: Optional[DigiviceHome] = None
         self._osk_target: Optional[QWidget] = None
         self.on_linux_desktop: Optional[Callable[[], None]] = None
+        self.on_linux_desktop_now: Optional[Callable[[], None]] = None
 
         root = QWidget()
         root.setObjectName("phoneRoot")
@@ -123,6 +124,36 @@ class PhoneShell(QMainWindow):
         self._timer.start(1000)
         self._tick_clock()
         self.setFocusPolicy(Qt.StrongFocus)
+        # External USB keyboards: keep keys on Digivice, not the desktop under it
+        self.setAttribute(Qt.WA_KeyboardFocusChange, True)
+
+    def showEvent(self, event) -> None:  # noqa: N802
+        super().showEvent(event)
+        self.raise_()
+        self.activateWindow()
+        self.setFocus(Qt.ActiveWindowFocusReason)
+        # Grab so X11/Wayland desktop under a fullscreen window doesn't eat keys
+        try:
+            self.grabKeyboard()
+        except Exception:
+            pass
+
+    def changeEvent(self, event) -> None:  # noqa: N802
+        super().changeEvent(event)
+        from PyQt5.QtCore import QEvent
+
+        if event.type() == QEvent.WindowActivate:
+            try:
+                self.grabKeyboard()
+            except Exception:
+                pass
+        elif event.type() == QEvent.WindowDeactivate:
+            # Allow leaving Digivice (handset-desktop) without sticky grab forever
+            try:
+                self.releaseKeyboard()
+            except Exception:
+                pass
+
 
     def show_toast(self, title: str, body: str, kind: str = "info") -> None:
         del kind
@@ -357,6 +388,24 @@ class PhoneShell(QMainWindow):
             self.toggle_osk()
             event.accept()
             return
+        # Always reachable desktop escape (USB keyboard / F12)
+        if key == Qt.Key_F12:
+            handler = self.on_linux_desktop_now or self.on_linux_desktop
+            if handler:
+                handler()
+                event.accept()
+                return
+        # Ctrl+Shift+D also → desktop (easy to remember)
+        if (
+            key == Qt.Key_D
+            and event.modifiers() & Qt.ControlModifier
+            and event.modifiers() & Qt.ShiftModifier
+        ):
+            handler = self.on_linux_desktop_now or self.on_linux_desktop
+            if handler:
+                handler()
+                event.accept()
+                return
         if self._osk.isVisible():
             mapping = {
                 Qt.Key_Left: "left",
@@ -430,11 +479,20 @@ class PhoneShell(QMainWindow):
                 radial.move_by(1)
                 event.accept()
                 return
+            if key == Qt.Key_Up:
+                radial.move_by(-1)
+                event.accept()
+                return
+            if key == Qt.Key_Down:
+                radial.move_by(1)
+                event.accept()
+                return
             if key in (Qt.Key_Return, Qt.Key_Enter):
                 radial.activate()
                 event.accept()
                 return
-            event.accept()
+            # Do not swallow letters / other keys (USB keyboard typing)
+            super().keyPressEvent(event)
             return
 
         page = self.pages.get(page_key)

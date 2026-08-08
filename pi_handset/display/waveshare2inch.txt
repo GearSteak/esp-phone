@@ -14,6 +14,11 @@ command 0x3A 0x55
 delay 10
 
 # Portrait 240 wide × 320 tall (phone)
+# MADCTL (0x36) if image is wrong — rebuild with set-panel-rotation.sh then reboot:
+#   0x00  default from Waveshare text
+#   0xC0  180° (most common if upside-down)
+#   0x60  ~90°  (if sideways; may need width/height swapped in config.txt)
+#   0xA0  ~270°
 command 0x36 0x00
 command 0x21
 delay 10

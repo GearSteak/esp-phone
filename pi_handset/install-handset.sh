@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Single installer for ESP Digivice handset on Raspberry Pi OS (Bookworm).
 # Waveshare 2" 240×320 SPI + 7 hard buttons + SIM7600 USB + Heltec USB LoRa.
-# Phone-first session; Exit to Desktop for emulators / apt.
+# Desktop-first; Digivice optional via handset-phone. HDMI always kept on.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
@@ -9,7 +9,7 @@ PREFIX="${PREFIX:-/opt/esp-handset}"
 USER_NAME="${SUDO_USER:-$USER}"
 USER_HOME="$(getent passwd "$USER_NAME" | cut -d: -f6)"
 
-echo "=== ESP Digivice installer (240x320 + hard buttons) ==="
+echo "=== ESP Digivice installer (HDMI + optional 2\" + buttons) ==="
 echo "Install prefix: $PREFIX"
 echo "User: $USER_NAME ($USER_HOME)"
 
@@ -86,16 +86,19 @@ SIP_DISPLAY=ESP Digivice
 EOF
 fi
 
-# ST7789 2" as DRM primary
+# SPI 2" as optional second panel — HDMI stays ON
 cp -a "$ROOT/display" "$PREFIX/display"
-chmod +x "$PREFIX/display/install-display.sh" "$PREFIX/display/mipi-dbi-cmd"
+chmod +x "$PREFIX/display/install-display.sh" "$PREFIX/display/mipi-dbi-cmd" \
+  "$PREFIX/display/recover-hdmi.sh" 2>/dev/null || true
+install -m 755 "$ROOT/display/recover-hdmi.sh" /usr/local/bin/digivice-recover-hdmi
 bash "$ROOT/display/install-display.sh"
 
 mkdir -p "$USER_HOME/.esp-handset" "$USER_HOME/Pictures/phone" \
   "$USER_HOME/.local/share/applications" "$USER_HOME/Desktop" \
   "$USER_HOME/.config/autostart"
-echo phone >"$USER_HOME/.esp-handset/session_mode"
-echo phone >/etc/esp-handset/ui_mode
+# DEFAULT: normal desktop (HDMI). Digivice only when you run handset-phone.
+echo desktop >"$USER_HOME/.esp-handset/session_mode"
+echo desktop >/etc/esp-handset/ui_mode
 chown "$USER_NAME:$USER_NAME" /etc/esp-handset/ui_mode
 chmod 664 /etc/esp-handset/ui_mode
 chown -R "$USER_NAME:$USER_NAME" "$USER_HOME/Pictures/phone" "$USER_HOME/.esp-handset"
@@ -230,15 +233,16 @@ chmod +x /usr/local/bin/handset-desktop
 cat <<EOF
 
 === Digivice install complete ===
-UI: 240×320 Waveshare 2" · 7 hard buttons
+DEFAULT: normal HDMI desktop (Digivice does NOT hijack boot).
+HDMI stays ON. SPI 2" panel is optional secondary.
 
-Wire display: docs/WAVESHARE_2INCH_LCD.md
-Wire buttons: docs/DIGI_BUTTONS.md
-  Up/Down/Left/Right/Confirm/Back/Home → GND
+Escape / desktop anytime:
+  handset-desktop
+  digivice-recover-hdmi   # if HDMI was killed by an older install
+  F12 or Ctrl+Shift+D inside Digivice
 
-1. SIM7600 USB; Heltec USB (optional LoRa)
-2. sudo reboot
-3. Edit: sudo nano /etc/esp-handset/sip.env
+Open Digivice when you want:  handset-phone
+Wiring: docs/DIGIVICE_WIRING.md · docs/DIGI_BUTTONS.md · docs/RECOVERY_HDMI.md
 
-Dev on PC: python3 esp_handset/handset_app.py  (arrow keys + Enter/Esc/Home)
+sudo reboot when ready. SIP: sudo nano /etc/esp-handset/sip.env
 EOF
