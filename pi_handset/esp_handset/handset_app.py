@@ -410,8 +410,8 @@ def main() -> int:
             return 1
     print("[handset] showing UI…", flush=True)
     if os.environ.get("ESP_HANDSET_KIOSK", "").strip() in ("1", "true", "yes"):
-        # Default: primary screen fullscreen so Digivice is obvious on HDMI/desktop
-        os.environ.setdefault("ESP_HANDSET_TARGET", "primary")
+        # SPI is the phone canvas; HDMI should mirror SPI via digivice-layout
+        os.environ.setdefault("ESP_HANDSET_TARGET", "panel")
         geom.apply_kiosk(win)
     else:
         win.resize(geom.W, geom.H)

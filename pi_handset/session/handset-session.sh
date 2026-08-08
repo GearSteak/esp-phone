@@ -34,8 +34,10 @@ digivice_display_env() {
   export QT_ENABLE_HIGHDPI_SCALING=0
   export ESP_HANDSET_MIRROR="${ESP_HANDSET_MIRROR:-1}"
   export ESP_HANDSET_SKIP_PIN="${ESP_HANDSET_SKIP_PIN:-1}"
-  # primary = HDMI/desktop (visible); panel = SPI only
-  export ESP_HANDSET_TARGET="${ESP_HANDSET_TARGET:-primary}"
+  # panel = SPI owns Digivice (correct). primary = debug on HDMI only.
+  export ESP_HANDSET_TARGET="${ESP_HANDSET_TARGET:-panel}"
+  # SPI primary, HDMI = scaled mirror of SPI
+  export ESP_HANDSET_MIRROR="${ESP_HANDSET_MIRROR:-1}"
 
   if [[ -z "${DISPLAY:-}" && -z "${WAYLAND_DISPLAY:-}" ]]; then
     export DISPLAY=:0

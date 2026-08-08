@@ -1,21 +1,28 @@
-# Mirror Digivice on SPI 2″ and HDMI
+# Digivice display model
 
-Same UI on both screens (clone / scale), not two different desktops.
+## Correct direction
 
-## If the small screen shows only the top-left corner
+```
+┌──────────── SPI 2" 240×320 ────────────┐     ┌──────── HDMI (big) ────────┐
+│  Digivice UI (true pixels)             │ ──► │  Same picture, scaled up   │
+│  PRIMARY                               │mirror│  (debug / desk monitor)   │
+└────────────────────────────────────────┘     └────────────────────────────┘
+```
 
-That means Digivice was fullscreen on **HDMI** and the 2″ only showed a **crop** of that big desktop. Fixed in software: Digivice pins to the **SPI/small** output. Update with `git pull` + reinstall scripts, then `handset-phone`.
+| Role | Display |
+|------|---------|
+| **Primary / app canvas** | Waveshare SPI panel |
+| **Mirror** | HDMI (clone of SPI, zoomed) |
 
-## What the software does
+**Wrong way (causes crop):** Digivice fullscreen on HDMI 1080p → SPI only shows the top-left corner.
 
-On `handset-phone` / Digivice autostart, `mirror-displays.sh` runs:
+**Right way:** Digivice fullscreen on SPI → `xrandr --output HDMI… --scale-from 240x320 --same-as SPI…`
 
-1. **X11** (best): `xrandr --scale-from 240x320 --same-as <SPI>` so HDMI is a big zoom of the 240×320 Digivice view  
-2. **Wayland**: best-effort (`wlr-randr` positions, optional `wl-mirror`)
+`digivice-layout.sh` + `ESP_HANDSET_TARGET=panel` implement this.
 
-## Prefer X11 for rock-solid mirror
+## Requirements for solid mirror
 
-Raspberry Pi OS Bookworm defaults to Wayland. For reliable clone:
+X11 is much more reliable than Wayland labwc for clone:
 
 ```bash
 sudo raspi-config
@@ -23,26 +30,27 @@ sudo raspi-config
 sudo reboot
 ```
 
-Then re-run installer or:
+Then:
 
 ```bash
-handset-session mirror
-handset-phone
+export DISPLAY=:0
+digivice-layout          # SPI primary, HDMI = scale-from SPI
+handset-phone            # Digivice on SPI canvas
 ```
 
-## Manual
+## Env
+
+| Variable | Default | Meaning |
+|----------|---------|---------|
+| `ESP_HANDSET_TARGET` | `panel` | Qt window on SPI |
+| `ESP_HANDSET_MIRROR` | `1` | Enable HDMI clone of SPI |
+| `ESP_HANDSET_TARGET=primary` | | Debug only: put UI on HDMI |
+
+## Debug
 
 ```bash
-digivice-mirror-displays
-# or
-handset-session mirror
-xrandr   # see connector names (SPI-1, HDMI-A-1, …)
+xrandr
+handset-session log
+# look for: PRIMARY(SPI)=…  HDMI = scaled mirror
+# and: Digivice canvas → 'SPI…' 240x320
 ```
-
-## Still different content?
-
-1. Confirm HDMI is on: `dtoverlay=vc4-kms-v3d` **without** `,nohdmi`  
-2. Use **X11** as above  
-3. In Screen Configuration GUI, set displays to **Mirror** if offered  
-
-HDMI shows the same 240×320 layout scaled up, so Digivice will look large and blocky on the monitor — that is expected for a true mirror of the phone panel.

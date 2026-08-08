@@ -1,7 +1,7 @@
-"""Digivice display placement.
+"""Digivice geometry — SPI phone panel is the real canvas.
 
-Default kiosk target is the **primary** screen (usually HDMI / what you look at).
-Set ESP_HANDSET_TARGET=panel to prefer the SPI 2\" panel instead.
+HDMI should only *mirror* SPI (see digivice-layout.sh), not host the app at 1080p.
+Default kiosk target = panel (SPI). Use ESP_HANDSET_TARGET=primary only to debug.
 """
 
 from __future__ import annotations
@@ -44,6 +44,7 @@ def _screens():
 
 
 def pick_panel_screen():
+    """Prefer native Digivice resolution / SPI-named output."""
     screens = _screens()
     if not screens:
         return None
@@ -66,38 +67,31 @@ def pick_panel_screen():
         for s in screens:
             if s.name() == name:
                 return s
+    # Smallest connected screen
     return min(screens, key=lambda s: s.size().width() * s.size().height())
 
 
 def pick_kiosk_screen():
-    """primary = what desktop uses (HDMI); panel = tiny SPI."""
     from PyQt5.QtGui import QGuiApplication
 
-    prefer = (os.environ.get("ESP_HANDSET_TARGET", "primary") or "primary").strip().lower()
-    screens = _screens()
+    prefer = (os.environ.get("ESP_HANDSET_TARGET", "panel") or "panel").strip().lower()
     primary = QGuiApplication.primaryScreen()
     panel = pick_panel_screen()
-
-    if prefer in ("panel", "spi", "small"):
-        return panel or primary
     if prefer in ("primary", "hdmi", "main", "desktop"):
         return primary or panel
-    # auto: if panel is distinct from primary, still use primary so user sees UI
-    return primary or panel
+    # default panel — SPI owns Digivice; HDMI should be a hardware/xrandr mirror
+    return panel or primary
 
 
 def apply_kiosk(win) -> None:
-    """Fullscreen Digivice on the chosen screen — always force visible on top."""
+    """Fullscreen Digivice on SPI (or forced target)."""
     from PyQt5.QtCore import Qt, QTimer
     from PyQt5.QtGui import QGuiApplication
     from PyQt5.QtWidgets import QApplication
 
-    # Opaque main window (avoids “transparent over desktop” illusion)
     try:
         win.setAttribute(Qt.WA_StyledBackground, True)
-        win.setStyleSheet(
-            "QMainWindow { background-color: #0b1a2a; color: #e8eef5; }"
-        )
+        win.setStyleSheet("QMainWindow { background-color: #0b1a2a; color: #e8eef5; }")
     except Exception:
         pass
 
@@ -105,37 +99,31 @@ def apply_kiosk(win) -> None:
     print(f"[handset] screens={len(screens)}", flush=True)
     for s in screens:
         g = s.geometry()
+        flag = " PRIMARY" if s is QGuiApplication.primaryScreen() else ""
         print(
-            f"[handset]   {s.name()!r} {g.width()}x{g.height()}+{g.x()}+{g.y()}"
-            f"{' PRIMARY' if s is QGuiApplication.primaryScreen() else ''}",
+            f"[handset]   {s.name()!r} {g.width()}x{g.height()}+{g.x()}+{g.y()}{flag}",
             flush=True,
         )
 
     screen = pick_kiosk_screen()
     if screen is None:
-        print("[handset] no QScreen — fallback showFullScreen", flush=True)
         win.resize(W, H)
         win.showFullScreen()
         return
 
-    # Normal top-level window (no weird flags that Wayland drops)
     win.setWindowFlags(Qt.Window)
     try:
         win.setScreen(screen)
     except Exception:
         pass
-
-    geo = screen.availableGeometry()
-    # Use full screen rect when possible
     geo = screen.geometry()
     win.setGeometry(geo)
     print(
-        f"[handset] kiosk on {screen.name()!r} "
-        f"{geo.width()}x{geo.height()}+{geo.x()}+{geo.y()} "
-        f"(ESP_HANDSET_TARGET={os.environ.get('ESP_HANDSET_TARGET', 'primary')})",
+        f"[handset] Digivice canvas → {screen.name()!r} "
+        f"{geo.width()}x{geo.height()} "
+        f"(target={os.environ.get('ESP_HANDSET_TARGET', 'panel')})",
         flush=True,
     )
-
     win.show()
     win.showFullScreen()
     win.raise_()
@@ -144,22 +132,15 @@ def apply_kiosk(win) -> None:
 
     def _refocus() -> None:
         try:
-            handle = win.windowHandle()
-            if handle is not None and screen is not None:
-                handle.setScreen(screen)
+            h = win.windowHandle()
+            if h is not None:
+                h.setScreen(screen)
             win.setGeometry(screen.geometry())
             win.showFullScreen()
             win.raise_()
             win.activateWindow()
-            win.setFocus(Qt.ActiveWindowFocusReason)
-            try:
-                win.grabKeyboard()
-            except Exception:
-                pass
-            print("[handset] re-raise fullscreen", flush=True)
-        except Exception as e:
-            print(f"[handset] refocus: {e}", flush=True)
+        except Exception:
+            pass
 
     QTimer.singleShot(100, _refocus)
-    QTimer.singleShot(500, _refocus)
-    QTimer.singleShot(1500, _refocus)
+    QTimer.singleShot(400, _refocus)
