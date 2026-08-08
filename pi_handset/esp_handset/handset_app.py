@@ -396,6 +396,11 @@ def main() -> int:
                 modem.close()
             return 1
     if os.environ.get("ESP_HANDSET_KIOSK", "").strip() in ("1", "true", "yes"):
+        # Pin to SPI panel (avoid HDMI primary → tiny crop of full desktop)
+        geom.place_on_panel(win)
+        win.showFullScreen()
+        QApplication.processEvents()
+        geom.place_on_panel(win)
         win.showFullScreen()
     else:
         win.resize(geom.W, geom.H)

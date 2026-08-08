@@ -1,107 +1,157 @@
 #!/usr/bin/env bash
-# Mirror Digivice: same picture on Waveshare SPI + HDMI.
-# Prefer SPI (240x320) as the layout source; HDMI scales that image up.
+# Make SPI 2" the PRIMARY desktop and clone it up to HDMI (same content).
+# Without this, Digivice fullscreen lands on HDMI and the tiny screen only
+# shows the top-left crop of 1080p — exactly the "1/6 of the corner" bug.
 #
-# Call once a graphical session exists (DISPLAY or WAYLAND_DISPLAY).
-# Safe to re-run.
+#   digivice-mirror-displays
+# Safe to re-run. Prefer X11: raspi-config → Advanced → Wayland → X11.
 set -euo pipefail
 
 log() { echo "[mirror-displays] $*" >&2; }
 
-# --- X11 / Xwayland-friendly path (best cloning support) -----------------
+prefer_modes() {
+  # modes that match Digivice panel / rotated panel
+  echo "240x320 320x240 240x240"
+}
+
+find_spi_hdmi() {
+  # Sets SPI_OUT HDMI_OUT from connected list
+  SPI_OUT=""
+  HDMI_OUT=""
+  local o
+  for o in "$@"; do
+    case "$o" in
+      *SPI*|*DPI*|*DSI*|*PANEL*) SPI_OUT="$o" ;;
+      HDMI*|hdmi*) HDMI_OUT="$o" ;;
+    esac
+  done
+}
+
+# Prefer smallest-area output as "panel" if names unknown
+pick_smallest() {
+  command -v xrandr >/dev/null 2>&1 || return 1
+  xrandr --query 2>/dev/null | awk '
+    / connected/ {
+      name=$1
+      # next line often has current mode WxH+X+Y
+    }
+    name != "" && $0 ~ /[0-9]+x[0-9]+\+[0-9]+\+[0-9]+/ {
+      split($1, a, "x")
+      w=a[1]+0; h=a[2]+0
+      if (w*h > 0 && (best == 0 || w*h < best)) { best=w*h; out=name }
+      name=""
+    }
+    END { if (out != "") print out }
+  '
+}
+
 mirror_x11() {
   command -v xrandr >/dev/null 2>&1 || return 1
   [[ -n "${DISPLAY:-}" ]] || return 1
 
-  # Collect connected names (strip trailing)
   mapfile -t outs < <(xrandr --query 2>/dev/null | awk '/ connected/{print $1}')
-  if [[ ${#outs[@]} -lt 2 ]]; then
-    log "X11: need two outputs for mirror (have ${#outs[@]})"
+  if [[ ${#outs[@]} -lt 1 ]]; then
+    log "X11: no connected outputs"
     return 1
   fi
 
-  local spi="" hdmi="" o
-  for o in "${outs[@]}"; do
-    case "$o" in
-      *SPI*|*DPI*|*DSI*|PANEL*|Writeback*) spi="$o" ;;
-      HDMI*|hdmi*) hdmi="$o" ;;
-    esac
+  find_spi_hdmi "${outs[@]}"
+  if [[ -z "$SPI_OUT" ]]; then
+    SPI_OUT="$(pick_smallest || true)"
+  fi
+  if [[ -z "$SPI_OUT" ]]; then
+    SPI_OUT="${outs[0]}"
+  fi
+  if [[ -z "$HDMI_OUT" ]]; then
+    for o in "${outs[@]}"; do
+      if [[ "$o" != "$SPI_OUT" ]]; then
+        HDMI_OUT="$o"
+        break
+      fi
+    done
+  fi
+
+  log "panel/primary=$SPI_OUT  hdmi=$HDMI_OUT"
+
+  # Turn SPI on as the *layout source* at native Digivice size
+  local mode_ok=0
+  for mode in 240x320 320x240 240x240; do
+    if xrandr --output "$SPI_OUT" --mode "$mode" --primary --pos 0x0 2>/dev/null; then
+      mode_ok=1
+      log "SPI mode $mode primary"
+      break
+    fi
   done
-  # Fallback: first two connected
-  if [[ -z "$spi" || -z "$hdmi" ]]; then
-    spi="${outs[0]}"
-    hdmi="${outs[1]}"
-    log "X11: guessed primary=$spi secondary=$hdmi"
-  else
-    log "X11: primary(SPI)=$spi  mirror→$hdmi"
+  if [[ "$mode_ok" -eq 0 ]]; then
+    xrandr --output "$SPI_OUT" --auto --primary --pos 0x0 2>/dev/null || true
+    log "SPI --auto primary"
   fi
 
-  # SPI preferred as content source (phone resolution)
-  xrandr --output "$spi" --auto --primary 2>/dev/null || \
-    xrandr --output "$spi" --mode 240x320 --primary 2>/dev/null || true
-
-  # HDMI shows a scaled clone of the 240×320 plane when --scale-from works
-  if xrandr --output "$hdmi" --auto --scale-from 240x320 --same-as "$spi" 2>/dev/null; then
-    log "X11: HDMI mirrored from 240x320 (scale-from)"
-    return 0
+  if [[ -n "$HDMI_OUT" && "$HDMI_OUT" != "$SPI_OUT" ]]; then
+    # Clone SPI plane onto HDMI (scaled). Failures fall through.
+    local sw sh
+    sw="$(xrandr --query | awk -v o="$SPI_OUT" '
+      $0 ~ o" connected" {getline; if (match($0,/([0-9]+)x([0-9]+)/,a)){print a[1]; exit}}
+    ')"
+    sh="$(xrandr --query | awk -v o="$SPI_OUT" '
+      $0 ~ o" connected" {getline; if (match($0,/([0-9]+)x([0-9]+)/,a)){print a[2]; exit}}
+    ')"
+    sw="${sw:-240}"
+    sh="${sh:-320}"
+    if xrandr --output "$HDMI_OUT" --auto --scale-from "${sw}x${sh}" --same-as "$SPI_OUT" 2>/dev/null; then
+      log "HDMI scaled clone of ${sw}x${sh}"
+      return 0
+    fi
+    if xrandr --output "$HDMI_OUT" --same-as "$SPI_OUT" 2>/dev/null; then
+      log "HDMI --same-as $SPI_OUT"
+      return 0
+    fi
+    # Move HDMI far away so it does not extend past SPI (avoids crop UX);
+    # user still gets SPI full Digivice. Optional dim secondary.
+    xrandr --output "$HDMI_OUT" --auto --pos 0x0 2>/dev/null || true
+    log "HDMI pos overlap (soft). Install X11 if clone failed."
   fi
-  if xrandr --output "$hdmi" --auto --same-as "$spi" 2>/dev/null; then
-    log "X11: HDMI --same-as $spi"
-    return 0
-  fi
-  # Last resort: both at 0,0
-  xrandr --output "$hdmi" --auto --pos 0x0 2>/dev/null || true
-  xrandr --output "$spi" --auto --pos 0x0 --primary 2>/dev/null || true
-  log "X11: overlapping pos 0,0 (soft mirror)"
   return 0
 }
 
-# --- Wayland / labwc ------------------------------------------------------
 mirror_wayland() {
-  [[ -n "${WAYLAND_DISPLAY:-}" || -n "${XDG_SESSION_TYPE:-}" ]] || return 1
-  # If pure Wayland (no xrandr targets), try wlr-randr + optional wl-mirror
   if command -v wlr-randr >/dev/null 2>&1; then
     mapfile -t outs < <(wlr-randr 2>/dev/null | awk '/^[^ ]/{print $1}')
-    if [[ ${#outs[@]} -ge 2 ]]; then
-      local a="${outs[0]}" b="${outs[1]}"
-      # Stack both at origin — some compositors then treat as clone
-      wlr-randr --output "$a" --pos 0,0 --on 2>/dev/null || true
-      wlr-randr --output "$b" --pos 0,0 --on 2>/dev/null || true
-      log "Wayland: wlr-randr both at 0,0 ($a, $b)"
+    local panel="" hdmi="" o
+    for o in "${outs[@]:-}"; do
+      case "$o" in
+        *SPI*|*DPI*|*DSI*) panel="$o" ;;
+        *HDMI*) hdmi="$o" ;;
+      esac
+    done
+    panel="${panel:-${outs[0]:-}}"
+    if [[ -n "$panel" ]]; then
+      # Prefer logical size close to Digivice
+      wlr-randr --output "$panel" --on --pos 0,0 2>/dev/null || true
+      if [[ -n "$hdmi" ]]; then
+        wlr-randr --output "$hdmi" --on --pos 0,0 2>/dev/null || true
+      fi
+      log "Wayland: panel=$panel at 0,0 (clone not guaranteed)"
     fi
   fi
-
-  # wl-mirror: real clone of one output into a fullscreen surface on the other
-  if command -v wl-mirror >/dev/null 2>&1; then
-    pkill -f 'wl-mirror' 2>/dev/null || true
-    # Prefer mirror SPI → fullscreen window (user can drag to HDMI if needed)
-    # Backend streaming often follows focused/fullscreen apps better mirrored via:
-    #   wl-mirror -F <source>
-    nohup wl-mirror -F -s 240x320 2>/dev/null &
-    log "Wayland: started wl-mirror (install fixed: sudo apt install wl-mirror)"
-    return 0
+  if command -v wl-mirror >/dev/null 2>&1 && [[ -n "${WAYLAND_DISPLAY:-}" ]]; then
+    pkill -x wl-mirror 2>/dev/null || true
+    # Mirror whatever is primary into a fullscreen window on the other output if supported
+    nohup wl-mirror -F 2>/dev/null &
+    log "started wl-mirror -F"
   fi
-
-  # Xwayland often still exposes xrandr under labwc
-  if mirror_x11; then
-    return 0
-  fi
-
-  log "Wayland: install wl-mirror or use raspi-config → Advanced → Wayland → X11 for better mirror"
-  return 1
+  # Xwayland xrandr often still works
+  mirror_x11 || true
+  return 0
 }
 
 main() {
-  # Prefer X11-style clone when available
-  if mirror_x11; then
+  if [[ -n "${DISPLAY:-}" ]] && mirror_x11; then
     exit 0
   fi
-  if mirror_wayland; then
-    exit 0
-  fi
-  log "Could not configure mirror automatically."
-  log "Manual (Screen Configuration GUI): set both displays to Mirror / Clone."
-  log "Or: sudo raspi-config → Advanced Options → Wayland → X11, reboot, retry."
+  mirror_wayland || true
+  log "Done. Digivice must fullscreen the *small* screen (handset does this in software)."
+  log "If tiny panel still crops: sudo raspi-config → Advanced → Wayland → X11, reboot."
   exit 0
 }
 
