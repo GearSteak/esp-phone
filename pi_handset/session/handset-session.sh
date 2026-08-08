@@ -1,6 +1,7 @@
 #!/bin/bash
-# Digivice session helpers — always try to launch with logs.
-# Exit Digivice: handset-desktop | F12 | Ctrl+Shift+D
+# Digivice session helpers.
+# Leave Digivice: Back×3 | Home×3 | Settings→Linux | handset-desktop | digivice-leave
+# Recovery with no keyboard: put empty file digivice-desktop on the SD boot partition.
 
 set +e
 set -u
@@ -28,21 +29,48 @@ mode_set() {
   fi
 }
 
+kill_phone_ui() {
+  pkill -f "$PREFIX/handset_app.py" 2>/dev/null || true
+  pkill -f "handset_app.py" 2>/dev/null || true
+}
+
+# Recovery flag on FAT boot partition (Windows can create this while SD is in a PC)
+boot_flag_desktop() {
+  local f
+  for f in \
+    /boot/firmware/digivice-desktop \
+    /boot/digivice-desktop \
+    /boot/firmware/DIGIVICE-DESKTOP \
+    /boot/DIGIVICE-DESKTOP
+  do
+    [[ -f "$f" ]] && return 0
+  done
+  return 1
+}
+
+force_desktop_from_boot_flag() {
+  if boot_flag_desktop; then
+    log "boot flag digivice-desktop present → force desktop"
+    mode_set desktop
+    kill_phone_ui
+    pkill -9 -f handset_app.py 2>/dev/null || true
+    return 0
+  fi
+  return 1
+}
+
 digivice_display_env() {
   export QT_AUTO_SCREEN_SCALE_FACTOR=0
   export QT_SCALE_FACTOR=1
   export QT_ENABLE_HIGHDPI_SCALING=0
-  # SPI primary + optional HDMI clone (layout). Digivice fullscreen on panel.
   export ESP_HANDSET_MIRROR="${ESP_HANDSET_MIRROR:-1}"
   export ESP_HANDSET_SKIP_PIN="${ESP_HANDSET_SKIP_PIN:-1}"
-  # Always run digivice-layout so Unknown/SPI is on as primary
   export ESP_HANDSET_SKIP_LAYOUT="${ESP_HANDSET_SKIP_LAYOUT:-0}"
 
   if [[ -z "${DISPLAY:-}" && -z "${WAYLAND_DISPLAY:-}" ]]; then
     export DISPLAY=:0
   fi
 
-  # Graphical session: NEVER fall through to linuxfb (that was hiding Digivice)
   if [[ -n "${DISPLAY:-}" || -n "${WAYLAND_DISPLAY:-}" ]]; then
     if [[ -n "${DISPLAY:-}" && -z "${WAYLAND_DISPLAY:-}" ]]; then
       export QT_QPA_PLATFORM="${QT_QPA_PLATFORM:-xcb}"
@@ -93,14 +121,18 @@ show_desktop_chrome() {
       break
     fi
   done
-}
-
-kill_phone_ui() {
-  pkill -f "$PREFIX/handset_app.py" 2>/dev/null || true
-  pkill -f "handset_app.py" 2>/dev/null || true
+  if command -v xrandr >/dev/null 2>&1; then
+    export DISPLAY="${DISPLAY:-:0}"
+    xrandr --auto 2>/dev/null || true
+  fi
 }
 
 launch_phone() {
+  if force_desktop_from_boot_flag; then
+    show_desktop_chrome
+    log "not launching Digivice (recovery flag)"
+    return 0
+  fi
   mode_set phone
   digivice_display_env
   apply_digivice_layout
@@ -108,7 +140,6 @@ launch_phone() {
   local app="$PREFIX/handset_app.py"
   if [[ ! -f "$app" ]]; then
     log "ERROR missing $app"
-    # Try repo-style path next to this script
     local alt
     alt="$(cd "$(dirname "$0")/.." 2>/dev/null && pwd)/esp_handset/handset_app.py"
     if [[ -f "$alt" ]]; then
@@ -120,8 +151,6 @@ launch_phone() {
     fi
   fi
   log "starting $app DISPLAY=${DISPLAY:-} WAYLAND=${WAYLAND_DISPLAY:-}"
-  # Do not use exec so we can log exit codes from autostart debugging —
-  # but phone interactive still wants exclusive process. Use exec for phone.
   exec /usr/bin/python3 "$app" >>"$LOG" 2>&1
 }
 
@@ -132,13 +161,18 @@ case "$cmd" in
   set-desktop) mode_set desktop; log "mode=desktop" ;;
   phone) launch_phone ;;
   autostart)
+    # Always honor recovery file on boot partition first
+    if force_desktop_from_boot_flag; then
+      show_desktop_chrome
+      log "autostart: desktop (boot recovery flag)"
+      exit 0
+    fi
     m="$(mode_get)"
     log "autostart mode=$m"
     if [[ "$m" != "phone" ]]; then
       show_desktop_chrome
       exit 0
     fi
-    # Wait for desktop/session display
     sleep 2
     digivice_display_env
     apply_digivice_layout
@@ -154,24 +188,13 @@ case "$cmd" in
     log "leaving Digivice → desktop"
     kill_phone_ui
     sleep 0.2
-    # Force-kill stuck UI
     pkill -9 -f handset_app.py 2>/dev/null || true
     show_desktop_chrome
-    # Unblank HDMI / panel for desktop use
-    if command -v xrandr >/dev/null 2>&1; then
-      export DISPLAY="${DISPLAY:-:0}"
-      while read -r name; do
-        xrandr --output "$name" --auto 2>/dev/null || true
-      done < <(xrandr --query 2>/dev/null | awk '/ connected/{print $1}')
-    fi
-    # Show panels / taskbars if present
     command -v lxpanelctl >/dev/null 2>&1 && lxpanelctl show || true
-    command -v wmctrl >/dev/null 2>&1 && wmctrl -k off || true
     echo "Left Digivice. mode=desktop. Return: handset-phone"
     log "desktop ready"
     ;;
   kill|force-desktop)
-    # Emergency from SSH/terminal when UI is stuck
     mode_set desktop
     kill_phone_ui
     pkill -9 -f handset_app.py 2>/dev/null || true
@@ -185,7 +208,16 @@ case "$cmd" in
   *)
     cat <<EOF
 Usage: handset-session <command>
-  phone / autostart / desktop / layout / set-phone / set-desktop / mode / log
+  phone / autostart / desktop / force-desktop / layout / set-phone / set-desktop / mode / log
+
+Hard buttons (no USB keyboard):
+  Back ×3 quickly  → desktop
+  Home ×3 quickly  → desktop
+
+No keyboard recovery: power off, put SD in PC, create empty file on boot volume:
+  digivice-desktop
+Then reinsert SD and boot (Linux desktop, Digivice stays off until you handset-phone).
+
 Mode file: $MODE_FILE
 Log: $LOG
 EOF

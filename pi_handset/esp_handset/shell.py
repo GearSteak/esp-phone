@@ -124,46 +124,26 @@ class PhoneShell(QMainWindow):
         self._timer.start(1000)
         self._tick_clock()
         self.setFocusPolicy(Qt.StrongFocus)
-        # External USB keyboards: keep keys on Digivice, not the desktop under it
         self.setAttribute(Qt.WA_KeyboardFocusChange, True)
-        # Escape (Back button) triple-tap → desktop
+        # Escape (Back button) triple-tap → desktop; Home triple → desktop
         self._esc_exits = 0
         self._esc_last_ms = 0
+        self._home_exits = 0
+        self._home_last_ms = 0
 
     def showEvent(self, event) -> None:  # noqa: N802
         super().showEvent(event)
         self.raise_()
         self.activateWindow()
         self.setFocus(Qt.ActiveWindowFocusReason)
-        # Grab so X11/Wayland desktop under a fullscreen window doesn't eat keys
-        try:
-            self.grabKeyboard()
-        except Exception:
-            pass
+        # Do NOT grabKeyboard — it bricks USB keyboards / Ctrl+Alt+F2 for recovery
 
     def changeEvent(self, event) -> None:  # noqa: N802
         super().changeEvent(event)
-        from PyQt5.QtCore import QEvent
-
-        if event.type() == QEvent.WindowActivate:
-            try:
-                self.grabKeyboard()
-            except Exception:
-                pass
-        elif event.type() == QEvent.WindowDeactivate:
-            # Allow leaving Digivice (handset-desktop) without sticky grab forever
-            try:
-                self.releaseKeyboard()
-            except Exception:
-                pass
 
     def _request_desktop(self) -> None:
         handler = self.on_linux_desktop_now or self.on_linux_desktop
         if handler:
-            try:
-                self.releaseKeyboard()
-            except Exception:
-                pass
             handler()
 
     def show_toast(self, title: str, body: str, kind: str = "info") -> None:
@@ -433,7 +413,27 @@ class PhoneShell(QMainWindow):
                 return
             # fall through to normal Back handling once for single Esc
         else:
-            self._esc_exits = 0
+            # don't reset esc on home taps — handled separately
+            if key not in (Qt.Key_Home,):
+                self._esc_exits = 0
+        # Triple Home button within 1.5s → desktop (no keyboard needed)
+        if key == Qt.Key_Home:
+            import time as _time
+
+            now = int(_time.time() * 1000)
+            if now - self._home_last_ms > 1500:
+                self._home_exits = 0
+            self._home_last_ms = now
+            self._home_exits += 1
+            if self._home_exits >= 3:
+                self._home_exits = 0
+                self._request_desktop()
+                event.accept()
+                return
+            # fall through to single-home → go home after this block
+        else:
+            if key != Qt.Key_Escape:
+                self._home_exits = 0
         if self._osk.isVisible():
             mapping = {
                 Qt.Key_Left: "left",

@@ -428,20 +428,7 @@ def main() -> int:
     win.raise_()
     win.activateWindow()
     win.setFocus()
-    try:
-        win.grabKeyboard()
-    except Exception:
-        pass
-    try:
-        import subprocess
-
-        subprocess.Popen(
-            ["wmctrl", "-a", "ESP Digivice"],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-    except Exception:
-        pass
+    # Never grabKeyboard — blocks USB keyboard / recovery
     print("[handset] event loop starting (panel fullscreen)", flush=True)
     code = app.exec_()
     if hasattr(win, "_multi_presenter") and win._multi_presenter:
