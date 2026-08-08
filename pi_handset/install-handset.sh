@@ -242,6 +242,14 @@ exec /usr/local/bin/handset-session desktop
 EOF
 chmod +x /usr/local/bin/handset-desktop
 
+cat >/usr/local/bin/digivice-leave <<'EOF'
+#!/bin/bash
+# Emergency: leave Digivice from SSH or a TTY when the UI is stuck.
+export DISPLAY="${DISPLAY:-:0}"
+exec /usr/local/bin/handset-session force-desktop
+EOF
+chmod +x /usr/local/bin/digivice-leave
+
 cat <<EOF
 
 === Digivice install complete ===

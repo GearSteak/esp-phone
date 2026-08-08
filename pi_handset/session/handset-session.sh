@@ -150,9 +150,34 @@ case "$cmd" in
     echo "Layout done — see $LOG"
     ;;
   desktop)
+    mode_set desktop
+    log "leaving Digivice → desktop"
     kill_phone_ui
+    sleep 0.2
+    # Force-kill stuck UI
+    pkill -9 -f handset_app.py 2>/dev/null || true
     show_desktop_chrome
-    echo "Left Digivice. mode=$(mode_get). Log: $LOG"
+    # Unblank HDMI / panel for desktop use
+    if command -v xrandr >/dev/null 2>&1; then
+      export DISPLAY="${DISPLAY:-:0}"
+      while read -r name; do
+        xrandr --output "$name" --auto 2>/dev/null || true
+      done < <(xrandr --query 2>/dev/null | awk '/ connected/{print $1}')
+    fi
+    # Show panels / taskbars if present
+    command -v lxpanelctl >/dev/null 2>&1 && lxpanelctl show || true
+    command -v wmctrl >/dev/null 2>&1 && wmctrl -k off || true
+    echo "Left Digivice. mode=desktop. Return: handset-phone"
+    log "desktop ready"
+    ;;
+  kill|force-desktop)
+    # Emergency from SSH/terminal when UI is stuck
+    mode_set desktop
+    kill_phone_ui
+    pkill -9 -f handset_app.py 2>/dev/null || true
+    pkill -9 -f "python3.*handset" 2>/dev/null || true
+    show_desktop_chrome
+    echo "Force-killed Digivice. mode=desktop"
     ;;
   log)
     tail -n 80 "$LOG" 2>/dev/null || echo "(no log yet at $LOG)"

@@ -126,6 +126,9 @@ class PhoneShell(QMainWindow):
         self.setFocusPolicy(Qt.StrongFocus)
         # External USB keyboards: keep keys on Digivice, not the desktop under it
         self.setAttribute(Qt.WA_KeyboardFocusChange, True)
+        # Escape (Back button) triple-tap → desktop
+        self._esc_exits = 0
+        self._esc_last_ms = 0
 
     def showEvent(self, event) -> None:  # noqa: N802
         super().showEvent(event)
@@ -154,6 +157,14 @@ class PhoneShell(QMainWindow):
             except Exception:
                 pass
 
+    def _request_desktop(self) -> None:
+        handler = self.on_linux_desktop_now or self.on_linux_desktop
+        if handler:
+            try:
+                self.releaseKeyboard()
+            except Exception:
+                pass
+            handler()
 
     def show_toast(self, title: str, body: str, kind: str = "info") -> None:
         del kind
@@ -388,24 +399,41 @@ class PhoneShell(QMainWindow):
             self.toggle_osk()
             event.accept()
             return
-        # Always reachable desktop escape (USB keyboard / F12)
-        if key == Qt.Key_F12:
-            handler = self.on_linux_desktop_now or self.on_linux_desktop
-            if handler:
-                handler()
-                event.accept()
-                return
-        # Ctrl+Shift+D also → desktop (easy to remember)
+        # Desktop escapes (must work with grabKeyboard + hard buttons)
+        if key in (Qt.Key_F12, Qt.Key_F10):
+            self._request_desktop()
+            event.accept()
+            return
+        if key == Qt.Key_Q and event.modifiers() & Qt.ControlModifier:
+            self._request_desktop()
+            event.accept()
+            return
+        # Ctrl+Shift+D also → desktop
         if (
             key == Qt.Key_D
             and event.modifiers() & Qt.ControlModifier
             and event.modifiers() & Qt.ShiftModifier
         ):
-            handler = self.on_linux_desktop_now or self.on_linux_desktop
-            if handler:
-                handler()
+            self._request_desktop()
+            event.accept()
+            return
+        # Triple Escape/Back within 1.5s → desktop (works with hard Back button)
+        if key == Qt.Key_Escape:
+            import time as _time
+
+            now = int(_time.time() * 1000)
+            if now - self._esc_last_ms > 1500:
+                self._esc_exits = 0
+            self._esc_last_ms = now
+            self._esc_exits += 1
+            if self._esc_exits >= 3:
+                self._esc_exits = 0
+                self._request_desktop()
                 event.accept()
                 return
+            # fall through to normal Back handling once for single Esc
+        else:
+            self._esc_exits = 0
         if self._osk.isVisible():
             mapping = {
                 Qt.Key_Left: "left",

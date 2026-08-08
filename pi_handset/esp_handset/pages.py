@@ -591,7 +591,10 @@ def make_help_page(on_back) -> QWidget:
         "Confirm / Back / Home buttons\n"
         "D-pad arrows move focus\n"
         "Type with on-screen keyboard\n"
-        "F12 or Ctrl+Shift+D → desktop\n"
+        "Back×3 (Escape) → desktop\n"
+        "F12 / F10 / Ctrl+Q → desktop\n"
+        "Settings → Linux → Exit\n"
+        "SSH: digivice-leave\n"
         "Settings → Linux → confirm",
         on_back,
     )

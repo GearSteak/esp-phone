@@ -21,6 +21,7 @@ class _KioskKeyFilter(QObject):
     """Route nav keys to Digivice when focus is not in a text field.
 
     USB keyboards often land focus on labels/status chrome under X11/Wayland.
+    Exit keys always reach the shell so Digivice can be left.
     """
 
     def __init__(self, shell: object):
@@ -30,8 +31,26 @@ class _KioskKeyFilter(QObject):
     def eventFilter(self, obj, event):  # noqa: N802
         if event.type() != QEvent.KeyPress:
             return False
+        key = event.key()
+        # Exit keys always — even if focus is weird
+        if key in (Qt.Key_F12, Qt.Key_F10) or (
+            key == Qt.Key_Q and event.modifiers() & Qt.ControlModifier
+        ):
+            self._shell.keyPressEvent(event)
+            return True
+        if (
+            key == Qt.Key_D
+            and event.modifiers() & Qt.ControlModifier
+            and event.modifiers() & Qt.ShiftModifier
+        ):
+            self._shell.keyPressEvent(event)
+            return True
         w = QApplication.focusWidget()
         if isinstance(w, (QLineEdit, QTextEdit, QPlainTextEdit)):
+            # Triple-Back (Esc) still leaves Digivice
+            if key == Qt.Key_Escape:
+                self._shell.keyPressEvent(event)
+                return True
             return False
         nav = {
             Qt.Key_Left,
@@ -44,7 +63,7 @@ class _KioskKeyFilter(QObject):
             Qt.Key_Home,
             Qt.Key_F2,
         }
-        if event.key() not in nav:
+        if key not in nav:
             return False
         # Games keep their own handlers via focused game widget
         if w is not None and w.__class__.__module__.endswith("games_ui"):
@@ -97,24 +116,12 @@ def build_app(bridge: Optional[EspBridge], modem: Optional[Sim7600]) -> PhoneShe
         shell.go(key)
 
     def on_linux() -> None:
-        reply = QMessageBox.question(
-            shell,
-            "Linux",
-            "Leave Digivice for full Linux desktop?\n(handset-phone to return)",
-        )
-        if reply != QMessageBox.Yes:
-            return
+        # No Yes/No dialog — hard buttons + grabKeyboard cannot answer MessageBox
         handset_apps.exit_to_desktop()
-        QApplication.instance().quit()
 
     def on_linux_now() -> None:
-        """F12 / emergency: no confirm dialog."""
-        try:
-            shell.releaseKeyboard()
-        except Exception:
-            pass
+        """F12 / Escape×3 / Settings→Linux: leave immediately."""
         handset_apps.exit_to_desktop()
-        QApplication.instance().quit()
 
     shell.on_linux_desktop = on_linux  # type: ignore[attr-defined]
     shell.on_linux_desktop_now = on_linux_now  # type: ignore[attr-defined]
