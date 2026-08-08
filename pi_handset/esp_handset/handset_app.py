@@ -399,15 +399,16 @@ def main() -> int:
 
     win = build_app(bridge, modem)
     app.installEventFilter(_KioskKeyFilter(win))
-    # Skip modal PIN on tiny Digivice unless PIN already set & required
-    if os.environ.get("ESP_HANDSET_SKIP_PIN", "").strip() not in ("1", "true", "yes"):
+    # Skip PIN unlock in kiosk by default (set ESP_HANDSET_SKIP_PIN=0 to require)
+    if os.environ.get("ESP_HANDSET_SKIP_PIN", "1").strip() not in ("1", "true", "yes"):
         if not features.verify_pin_dialog(win):
+            print("[handset] PIN cancelled — exit", flush=True)
             if bridge:
                 bridge.close()
             if modem:
                 modem.close()
             return 1
-    if os.environ.get("ESP_HANDSET_KIOSK", "").strip() in ("1", "true", "yes"):
+    print("[handset] showing UI…", flush=True)    if os.environ.get("ESP_HANDSET_KIOSK", "").strip() in ("1", "true", "yes"):
         geom.apply_kiosk(win)
     else:
         win.resize(geom.W, geom.H)

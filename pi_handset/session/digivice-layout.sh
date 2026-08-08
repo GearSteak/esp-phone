@@ -1,120 +1,125 @@
 #!/usr/bin/env bash
-# Force Digivice layout so the 2" SPI shows the FULL UI (not a crop of HDMI).
+# Digivice multi-display layout. NEVER leave the user with zero outputs.
 #
-# Strategy:
-#  1) Find SPI / DPI panel + HDMI
-#  2) SPI = primary at 240x320 (or 320x240 if rotated)
-#  3) Turn HDMI off briefly so Qt only has one screen
-#  4) If ESP_HANDSET_MIRROR!=0, re-enable HDMI as scaled clone of SPI
-#
-# Called by handset-session before launching Digivice.
-set -euo pipefail
+# - If SPI/DPI panel is found: make it primary; optionally clone to HDMI.
+# - If SPI is NOT found: do nothing (keep HDMI). Digivice still launches.
+# - Never assign SPI == HDMI. Never kill the only display.
+set +e
+set -u
 
 log() { echo "[digivice-layout] $*" >&2; }
 
 MIRROR="${ESP_HANDSET_MIRROR:-1}"
-ROT="$(tr -d '[:space:]' </etc/esp-handset/panel-rotation 2>/dev/null || echo 0)"
+ROT="0"
+if [[ -f /etc/esp-handset/panel-rotation ]]; then
+  ROT="$(tr -d '[:space:]' </etc/esp-handset/panel-rotation 2>/dev/null || echo 0)"
+fi
 MODE="240x320"
 case "$ROT" in
   90|270) MODE="320x240" ;;
 esac
 
-if ! command -v xrandr >/dev/null 2>&1 || [[ -z "${DISPLAY:-}" ]]; then
-  log "no xrandr/DISPLAY — try LinuxFB or start from desktop session"
-  # Wayland: turn off HDMI so only panel remains
-  if command -v wlr-randr >/dev/null 2>&1; then
-    while read -r name; do
-      case "$name" in
-        *HDMI*|*hdmi*)
-          wlr-randr --output "$name" --off 2>/dev/null || true
-          log "Wayland off: $name"
-          ;;
-        *SPI*|*DPI*|*DSI*)
-          wlr-randr --output "$name" --on --pos 0,0 2>/dev/null || true
-          log "Wayland on primary-ish: $name"
-          ;;
-      esac
-    done < <(wlr-randr 2>/dev/null | awk '/^[^ ]/{print $1}')
-  fi
+if ! command -v xrandr >/dev/null 2>&1; then
+  log "xrandr missing — skip"
+  exit 0
+fi
+
+if [[ -z "${DISPLAY:-}" ]]; then
+  # Try common desktop display for autostart
+  export DISPLAY="${DISPLAY:-:0}"
+fi
+
+if ! xrandr --query >/dev/null 2>&1; then
+  log "xrandr cannot query (no X?). skip layout"
   exit 0
 fi
 
 mapfile -t OUTS < <(xrandr --query 2>/dev/null | awk '/ connected/{print $1}')
+if [[ ${#OUTS[@]} -eq 0 ]]; then
+  log "no connected outputs"
+  exit 0
+fi
+
 SPI=""
 HDMI=""
-for o in "${OUTS[@]:-}"; do
+for o in "${OUTS[@]}"; do
   case "$o" in
-    *SPI*|*DPI*|*DSI*|*PANEL*) SPI="$o" ;;
+    *SPI*|*DPI*|*DSI*|*PANEL*|*Writeback*) SPI="$o" ;;
     HDMI*|hdmi*) HDMI="$o" ;;
   esac
 done
 
-# Smallest non-HDMI as panel fallback
+# Smallest non-HDMI as panel when name unknown (area < 200k ≈ under ~500x400)
 if [[ -z "$SPI" ]]; then
   best=999999999
-  for o in "${OUTS[@]:-}"; do
+  for o in "${OUTS[@]}"; do
     case "$o" in HDMI*|hdmi*) continue ;; esac
-    # shellcheck disable=SC2016
-    area=$(xrandr --query | awk -v n="$o" '
-      $0 ~ n" connected" {getline; if (match($0,/([0-9]+)x([0-9]+)/,a)) print a[1]*a[2]}
+    area=$(xrandr --query 2>/dev/null | awk -v n="$o" '
+      index($0, n " connected")==1 {
+        for(i=1;i<=NF;i++) if ($i ~ /^[0-9]+x[0-9]+/) {
+          split($i,a,"x"); print (a[1]+0)*(a[2]+0); exit
+        }
+      }
     ')
     area="${area:-0}"
-    if [[ "$area" -gt 0 && "$area" -lt "$best" ]]; then
+    if [[ "$area" -gt 0 && "$area" -lt 300000 && "$area" -lt "$best" ]]; then
       best=$area
       SPI=$o
     fi
   done
 fi
 
-if [[ -z "$SPI" && ${#OUTS[@]} -gt 0 ]]; then
-  SPI="${OUTS[0]}"
-fi
+log "outputs=${OUTS[*]}  panel=${SPI:-none}  hdmi=${HDMI:-none}"
+
+# No separate SPI panel → do NOT touch layout (HDMI stays, Digivice can still open)
 if [[ -z "$SPI" ]]; then
-  log "no outputs — nothing to do"
+  log "no SPI/small panel detected — leave displays alone"
+  exit 0
+fi
+if [[ -n "$HDMI" && "$SPI" == "$HDMI" ]]; then
+  log "refusing layout (panel==hdmi)"
   exit 0
 fi
 
-log "panel=$SPI mode=$MODE  hdmi=${HDMI:-none}  mirror=$MIRROR"
-
-# --- Critical: do not leave a large primary with SPI as a small viewport ---
-if [[ -n "$HDMI" ]]; then
-  xrandr --output "$HDMI" --off 2>/dev/null || true
-  log "HDMI off (so Digivice cannot bind to 1080p primary)"
-  sleep 0.2
+# Only one output and it's the panel
+if [[ ${#OUTS[@]} -eq 1 ]]; then
+  xrandr --output "$SPI" --auto --primary --pos 0x0 2>/dev/null
+  for try in "$MODE" 240x320 320x240; do
+    xrandr --output "$SPI" --mode "$try" --primary 2>/dev/null && break
+  done
+  log "single output $SPI"
+  exit 0
 fi
 
-# SPI only, fixed Digivice resolution
-ok=0
+# Multi: set SPI primary (do not blank HDMI unless clone will replace it)
 for try in "$MODE" 240x320 320x240; do
   if xrandr --output "$SPI" --mode "$try" --primary --pos 0x0 2>/dev/null; then
-    log "SPI mode $try primary"
-    ok=1
     MODE=$try
+    log "SPI $SPI mode $MODE primary"
     break
   fi
 done
-if [[ "$ok" -eq 0 ]]; then
-  xrandr --output "$SPI" --auto --primary --pos 0x0 2>/dev/null || true
-  log "SPI --auto primary"
-fi
+xrandr --output "$SPI" --auto --primary --pos 0x0 2>/dev/null
 
-# Optional: bring HDMI back as *clone* of the SPI plane (same full UI, scaled)
 if [[ -n "$HDMI" && "$MIRROR" != "0" ]]; then
-  sleep 0.2
   if xrandr --output "$HDMI" --auto --scale-from "$MODE" --same-as "$SPI" 2>/dev/null; then
-    log "HDMI mirror scale-from $MODE"
+    log "HDMI clone scale-from $MODE"
   elif xrandr --output "$HDMI" --same-as "$SPI" 2>/dev/null; then
     log "HDMI --same-as $SPI"
   else
-    # Leave HDMI off — user still has full Digivice on SPI (not a crop)
-    log "HDMI stay off (clone failed) — SPI has full Digivice"
+    # Keep HDMI on auto — better a side-by-side than a black monitor
+    xrandr --output "$HDMI" --auto --right-of "$SPI" 2>/dev/null \
+      || xrandr --output "$HDMI" --auto 2>/dev/null
+    log "HDMI kept on (clone failed) — Digivice targets SPI in software"
   fi
+elif [[ -n "$HDMI" ]]; then
+  xrandr --output "$HDMI" --auto 2>/dev/null
+  log "HDMI left auto (MIRROR=0)"
 fi
 
-# Export for Qt (single-geometry hint)
+echo "$SPI" >/tmp/digivice-panel-output 2>/dev/null
 export ESP_HANDSET_PANEL_OUTPUT="$SPI"
 export ESP_HANDSET_W="${MODE%x*}"
 export ESP_HANDSET_H="${MODE#*x}"
-echo "$SPI" >/tmp/digivice-panel-output 2>/dev/null || true
-
-log "done  ESP_HANDSET=${ESP_HANDSET_W}x${ESP_HANDSET_H} panel=$SPI"
+log "done panel=$SPI ${ESP_HANDSET_W}x${ESP_HANDSET_H}"
+exit 0

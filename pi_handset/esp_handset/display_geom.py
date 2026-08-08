@@ -1,4 +1,4 @@
-"""Digivice panel geometry — always render at native SPI size, not HDMI crop."""
+"""Digivice panel geometry — prefer SPI panel without blanking the only display."""
 
 from __future__ import annotations
 
@@ -51,26 +51,29 @@ def pick_panel_screen():
         n = (s.name() or "").upper()
         if any(k in n for k in ("SPI", "DPI", "DSI", "PANEL")):
             return s
-    # Prefer file drop from digivice-layout.sh
-    try:
-        name = open("/tmp/digivice-panel-output", encoding="utf-8").read().strip()
-    except OSError:
-        name = os.environ.get("ESP_HANDSET_PANEL_OUTPUT", "")
+    name = os.environ.get("ESP_HANDSET_PANEL_OUTPUT", "")
+    if not name:
+        try:
+            name = open("/tmp/digivice-panel-output", encoding="utf-8").read().strip()
+        except OSError:
+            name = ""
     if name:
         for s in screens:
             if s.name() == name:
                 return s
-    return min(screens, key=lambda s: s.size().width() * s.size().height())
+    # Single screen or no SPI: use primary / first so window still appears
+    return QGuiApplication.primaryScreen() or screens[0]
 
 
 def place_on_panel(win) -> Optional[object]:
-    """Force Digivice window = entire SPI geometry, never 'fullscreen HDMI' crop."""
     from PyQt5.QtCore import Qt
 
     screen = pick_panel_screen()
-    flags = Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint
+    # Keep Window bit so Qt actually maps a top-level window
     try:
-        win.setWindowFlags(flags)
+        win.setWindowFlags(
+            Qt.Window | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint
+        )
     except Exception:
         pass
 
@@ -80,49 +83,41 @@ def place_on_panel(win) -> Optional[object]:
         except Exception:
             pass
         geo = screen.geometry()
-        # Hard bind to this output's pixel rect
-        win.setGeometry(geo)
-        wh = screen.windowHandle() if hasattr(win, "windowHandle") else None
-        # After create
+        # If screen is huge (HDMI only), use phone-sized window, not 1080p fullscreen
+        if geo.width() * geo.height() > 300_000:
+            win.setGeometry(geo.x(), geo.y(), W, H)
+            print(
+                f"[handset] large screen {screen.name()!r} "
+                f"→ window {W}x{H} (not crop full HD)",
+                flush=True,
+            )
+        else:
+            win.setGeometry(geo)
+            print(
+                f"[handset] panel={screen.name()!r} "
+                f"{geo.width()}x{geo.height()}+{geo.x()}+{geo.y()}",
+                flush=True,
+            )
         try:
             handle = win.windowHandle()
             if handle is not None:
                 handle.setScreen(screen)
         except Exception:
             pass
-        print(
-            f"[handset] panel={screen.name()!r} "
-            f"geo={geo.width()}x{geo.height()}+{geo.x()}+{geo.y()} "
-            f"screens={len(__import__('PyQt5.QtGui', fromlist=['QGuiApplication']).QGuiApplication.screens())}",
-            flush=True,
-        )
         return screen
 
-    # No multihead info — force logical phone size at 0,0
     win.setGeometry(0, 0, W, H)
-    print(f"[handset] fallback geometry {W}x{H}", flush=True)
+    print(f"[handset] fallback {W}x{H}", flush=True)
     return None
 
 
 def apply_kiosk(win) -> None:
-    """Show Digivice filling the SPI panel without Qt fullscreen-on-wrong-screen."""
-    from PyQt5.QtCore import Qt
     from PyQt5.QtWidgets import QApplication
 
     place_on_panel(win)
-    # Prefer normal show + exact geometry over showFullScreen (which often
-    # picks HDMI primary and crops SPI).
     win.show()
     QApplication.processEvents()
     place_on_panel(win)
-    try:
-        handle = win.windowHandle()
-        screen = pick_panel_screen()
-        if handle is not None and screen is not None:
-            handle.setScreen(screen)
-            win.setGeometry(screen.geometry())
-    except Exception:
-        pass
     win.show()
     win.raise_()
     win.activateWindow()
