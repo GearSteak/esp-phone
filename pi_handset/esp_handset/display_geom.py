@@ -1,21 +1,22 @@
-"""Digivice multi-output: render once at phone size, scale to every screen.
+"""Digivice multi-output display.
 
-Correct pipeline (works with or without HDMI / with or without SPI xrandr clone):
+Canonical pipeline:
+  1. Digivice always paints a fixed 240×320 (phone) UI.
+  2. That real window lives on the SPI panel when Qt can see it (native 1:1).
+  3. Every *large* screen (HDMI) gets a fullscreen host that scales the full
+     240×320 frame (no crop).
 
-  1. Digivice paints at fixed 240×320 (phone UI)
-  2. Each QScreen gets a fullscreen host that scales that full frame onto itself
-
-So SPI always gets the *entire* UI (scaled 1:1 or fit), never a crop of 1080p.
-HDMI gets the same UI scaled up for the desk monitor.
+If SPI is not a QScreen, we only get HDMI — run digivice-layout so SPI is on.
 """
 
 from __future__ import annotations
 
 import os
+import subprocess
 from typing import List, Optional, Tuple
 
-from PyQt5.QtCore import Qt, QTimer
-from PyQt5.QtGui import QPainter, QImage, QGuiApplication
+from PyQt5.QtCore import Qt, QTimer, QPoint, QEvent
+from PyQt5.QtGui import QPainter, QImage, QGuiApplication, QMouseEvent
 from PyQt5.QtWidgets import QWidget, QApplication, QMainWindow
 
 
@@ -42,166 +43,30 @@ def _default_wh() -> Tuple[int, int]:
 
 W, H = _default_wh()
 
-
-class ScaledScreenHost(QWidget):
-    """Fullscreen host: paints a scaled copy of the Digivice 240×320 source."""
-
-    def __init__(self, source: QWidget, screen, parent=None):
-        super().__init__(parent)
-        self._source = source
-        self._screen = screen
-        self.setWindowTitle("ESP Digivice")
-        self.setAttribute(Qt.WA_StyledBackground, True)
-        self.setStyleSheet("background-color: #000;")
-        self.setWindowFlags(Qt.Window | Qt.FramelessWindowHint)
-        self.setFocusPolicy(Qt.StrongFocus)
-        try:
-            self.setScreen(screen)
-        except Exception:
-            pass
-        geo = screen.geometry()
-        self.setGeometry(geo)
-
-    def keyPressEvent(self, event) -> None:  # noqa: N802
-        # Forward keys into the real Digivice shell
-        src = self._source
-        if src is not None:
-            QApplication.sendEvent(src, event)
-            if event.isAccepted():
-                return
-        super().keyPressEvent(event)
-
-    def mousePressEvent(self, event) -> None:  # noqa: N802
-        self._map_mouse(event, press=True)
-
-    def mouseReleaseEvent(self, event) -> None:  # noqa: N802
-        self._map_mouse(event, press=False)
-
-    def _map_mouse(self, event, press: bool) -> None:
-        """Map clicks on scaled host into 240×320 source coords."""
-        from PyQt5.QtCore import QEvent, QPoint
-        from PyQt5.QtGui import QMouseEvent
-
-        src = self._source
-        if src is None:
-            return
-        # Same math as paint: KeepAspectRatio letterbox
-        tw, th = self.width(), self.height()
-        sw, sh = src.width(), src.height()
-        if sw < 1 or sh < 1:
-            return
-        scale = min(tw / sw, th / sh)
-        dw, dh = int(sw * scale), int(sh * scale)
-        ox, oy = (tw - dw) // 2, (th - dh) // 2
-        x = event.x() - ox
-        y = event.y() - oy
-        if x < 0 or y < 0 or x >= dw or y >= dh:
-            return
-        sx = int(x / scale)
-        sy = int(y / scale)
-        local = QPoint(sx, sy)
-        et = QEvent.MouseButtonPress if press else QEvent.MouseButtonRelease
-        me = QMouseEvent(et, local, event.button(), event.buttons(), event.modifiers())
-        child = src.childAt(local)
-        target = child if child is not None else src
-        QApplication.sendEvent(target, me)
-
-    def paintEvent(self, _event) -> None:  # noqa: N802
-        p = QPainter(self)
-        p.fillRect(self.rect(), Qt.black)
-        src = self._source
-        if src is None:
-            return
-        img: QImage = src.grab().toImage()
-        if img.isNull():
-            return
-        target = self.rect()
-        scaled = img.scaled(
-            target.size(),
-            Qt.KeepAspectRatio,
-            Qt.SmoothTransformation,
-        )
-        x = (target.width() - scaled.width()) // 2
-        y = (target.height() - scaled.height()) // 2
-        p.drawImage(x, y, scaled)
+# Screens larger than this area (px) get a *scaled* copy of the phone UI.
+# SPI 240×320 = 76800; 320×240 = 76800; 480×320 ≈ 150k; HDMI is millions.
+PHONE_AREA_MAX = 200_000
 
 
-class MultiScreenPresenter:
-    """Keeps source Digivice at phone size; mirrors scaled to all screens."""
-
-    def __init__(self, source: QMainWindow):
-        self.source = source
-        self.hosts: List[ScaledScreenHost] = []
-        self._timer = QTimer()
-        self._timer.setInterval(33)  # ~30 fps mirror
-        self._timer.timeout.connect(self._tick)
-
-    def start(self) -> None:
-        global W, H
-        W, H = _default_wh()
-
-        # Source is the real Digivice UI at native phone resolution
-        self.source.setWindowFlags(Qt.Window)
-        self.source.setFixedSize(W, H)
-        self.source.resize(W, H)
-        # Keep off visible desktop so only scaled hosts show (avoids double)
-        # Still need show() for proper grab(); put it off-screen
-        self.source.move(-10000, -10000)
-        self.source.show()
-        try:
-            self.source.setAttribute(Qt.WA_DontShowOnScreen, False)
-        except Exception:
-            pass
-
-        self._rebuild_hosts()
-        self._timer.start()
-        print(
-            f"[handset] multi-screen: source {W}x{H}, hosts={len(self.hosts)} "
-            f"(scale full UI onto each display)",
-            flush=True,
-        )
-        for h in self.hosts:
-            g = h.geometry()
-            print(
-                f"[handset]   host {h._screen.name()!r} "
-                f"{g.width()}x{g.height()}+{g.x()}+{g.y()}",
-                flush=True,
-            )
-
-    def _rebuild_hosts(self) -> None:
-        for h in self.hosts:
-            h.close()
-            h.deleteLater()
-        self.hosts.clear()
-        screens = list(QGuiApplication.screens() or [])
-        if not screens:
-            # No multi-head: show source normally
-            self.source.move(0, 0)
-            self.source.show()
-            print("[handset] no QScreens — source window only", flush=True)
-            return
-        for screen in screens:
-            host = ScaledScreenHost(self.source, screen)
-            host.showFullScreen()
-            host.raise_()
-            self.hosts.append(host)
-
-    def _tick(self) -> None:
-        # Keep source processing layout; repaint all hosts
-        for h in self.hosts:
-            h.update()
-
-    def stop(self) -> None:
-        self._timer.stop()
-        for h in self.hosts:
-            h.close()
-        self.hosts.clear()
+def _area(screen) -> int:
+    s = screen.size()
+    return max(1, s.width() * s.height())
 
 
-# --- legacy helpers kept for import compatibility ---
+def _screens():
+    return list(QGuiApplication.screens() or [])
+
+
+def is_phone_screen(screen) -> bool:
+    if _area(screen) <= PHONE_AREA_MAX:
+        return True
+    n = (screen.name() or "").upper()
+    return any(k in n for k in ("SPI", "DPI", "DSI", "PANEL"))
+
 
 def pick_panel_screen():
-    screens = list(QGuiApplication.screens() or [])
+    """Prefer SPI / small panel for the real Digivice window."""
+    screens = _screens()
     if not screens:
         return None
     wanted = {(W, H), (H, W), (240, 320), (320, 240)}
@@ -212,39 +77,274 @@ def pick_panel_screen():
         n = (s.name() or "").upper()
         if any(k in n for k in ("SPI", "DPI", "DSI", "PANEL")):
             return s
-    return min(screens, key=lambda s: s.size().width() * s.size().height())
+    name = os.environ.get("ESP_HANDSET_PANEL_OUTPUT", "")
+    if not name:
+        try:
+            name = open("/tmp/digivice-panel-output", encoding="utf-8").read().strip()
+        except OSError:
+            name = ""
+    if name:
+        for s in screens:
+            if s.name() == name:
+                return s
+    small = [s for s in screens if is_phone_screen(s)]
+    if small:
+        return min(small, key=_area)
+    return None
+
+
+def ensure_spi_via_xrandr() -> None:
+    """Best-effort: turn SPI on before Qt builds screen list (and on demand)."""
+    if os.environ.get("ESP_HANDSET_SKIP_LAYOUT", "").strip() in ("1", "true", "yes"):
+        return
+    display = os.environ.get("DISPLAY", ":0")
+    script = "/usr/local/bin/digivice-layout"
+    if not os.path.isfile(script):
+        script = os.path.join(
+            os.path.dirname(__file__), "..", "session", "digivice-layout.sh"
+        )
+    if not os.path.isfile(script):
+        return
+    try:
+        subprocess.run(
+            ["bash", script],
+            env={**os.environ, "DISPLAY": display, "ESP_HANDSET_MIRROR": "0"},
+            timeout=15,
+            check=False,
+            capture_output=True,
+        )
+    except Exception as e:
+        print(f"[handset] ensure_spi: {e}", flush=True)
+
+
+class ScaledScreenHost(QWidget):
+    """Fullscreen: scale full Digivice 240×320 frame onto this large screen."""
+
+    def __init__(self, source: QWidget, screen, parent=None):
+        super().__init__(parent)
+        self._source = source
+        self._screen = screen
+        self.setWindowTitle("ESP Digivice (HDMI preview)")
+        self.setAttribute(Qt.WA_StyledBackground, True)
+        self.setStyleSheet("background-color: #000;")
+        self.setWindowFlags(Qt.Window | Qt.FramelessWindowHint)
+        self.setFocusPolicy(Qt.StrongFocus)
+        try:
+            self.setScreen(screen)
+        except Exception:
+            pass
+        self.setGeometry(screen.geometry())
+
+    def keyPressEvent(self, event) -> None:  # noqa: N802
+        src = self._source
+        if src is not None:
+            QApplication.sendEvent(src, event)
+            if event.isAccepted():
+                return
+        super().keyPressEvent(event)
+
+    def mousePressEvent(self, event) -> None:  # noqa: N802
+        self._map_mouse(event, True)
+
+    def mouseReleaseEvent(self, event) -> None:  # noqa: N802
+        self._map_mouse(event, False)
+
+    def _map_mouse(self, event, press: bool) -> None:
+        src = self._source
+        if src is None:
+            return
+        tw, th = self.width(), self.height()
+        sw, sh = max(1, src.width()), max(1, src.height())
+        scale = min(tw / sw, th / sh)
+        dw, dh = int(sw * scale), int(sh * scale)
+        ox, oy = (tw - dw) // 2, (th - dh) // 2
+        x, y = event.x() - ox, event.y() - oy
+        if x < 0 or y < 0 or x >= dw or y >= dh:
+            return
+        local = QPoint(int(x / scale), int(y / scale))
+        et = QEvent.MouseButtonPress if press else QEvent.MouseButtonRelease
+        me = QMouseEvent(et, local, event.button(), event.buttons(), event.modifiers())
+        child = src.childAt(local)
+        QApplication.sendEvent(child if child is not None else src, me)
+
+    def paintEvent(self, _event) -> None:  # noqa: N802
+        p = QPainter(self)
+        p.fillRect(self.rect(), Qt.black)
+        src = self._source
+        if src is None:
+            return
+        img: QImage = src.grab().toImage()
+        if img.isNull():
+            return
+        scaled = img.scaled(
+            self.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation
+        )
+        x = (self.width() - scaled.width()) // 2
+        y = (self.height() - scaled.height()) // 2
+        p.drawImage(x, y, scaled)
+
+
+class MultiScreenPresenter:
+    """Digivice on SPI (native); scaled full-frame previews on HDMI."""
+
+    def __init__(self, source: QMainWindow):
+        self.source = source
+        self.hosts: List[ScaledScreenHost] = []
+        self._timer = QTimer()
+        self._timer.setInterval(33)
+        self._timer.timeout.connect(self._tick)
+
+    def start(self) -> None:
+        global W, H
+        W, H = _default_wh()
+
+        ensure_spi_via_xrandr()
+        # Give the server a moment / refresh screen list
+        QApplication.processEvents()
+
+        self.source.setWindowFlags(Qt.Window)
+        try:
+            self.source.setAttribute(Qt.WA_StyledBackground, True)
+            self.source.setStyleSheet(
+                "QMainWindow { background-color: #0b1a2a; color: #e8eef5; }"
+            )
+        except Exception:
+            pass
+
+        self.source.setFixedSize(W, H)
+        self.source.resize(W, H)
+
+        panel = pick_panel_screen()
+        screens = _screens()
+        print(f"[handset] screens={len(screens)} source={W}x{H}", flush=True)
+        for s in screens:
+            g = s.geometry()
+            tag = "PHONE" if is_phone_screen(s) else "LARGE"
+            print(
+                f"[handset]   [{tag}] {s.name()!r} "
+                f"{g.width()}x{g.height()}+{g.x()}+{g.y()}",
+                flush=True,
+            )
+
+        if panel is not None:
+            # Real Digivice window lives ON the SPI panel (native pixels)
+            try:
+                self.source.setScreen(panel)
+            except Exception:
+                pass
+            geo = panel.geometry()
+            # Use full phone panel surface
+            if geo.width() <= W + 16 and geo.height() <= H + 16:
+                self.source.setFixedSize(geo.size())
+                self.source.setGeometry(geo)
+                self.source.showFullScreen()
+            else:
+                # Panel reported odd size: pin phone rect top-left of that screen
+                self.source.setFixedSize(W, H)
+                self.source.setGeometry(geo.x(), geo.y(), W, H)
+                self.source.show()
+            print(
+                f"[handset] Digivice LIVE on panel {panel.name()!r} "
+                f"{self.source.width()}x{self.source.height()}+{geo.x()}+{geo.y()}",
+                flush=True,
+            )
+        else:
+            # No SPI in Qt — still show UI on primary so HDMI works;
+            # SPI stays blank until digivice-layout exposes SPI as a QScreen.
+            primary = QGuiApplication.primaryScreen()
+            self.source.setFixedSize(W, H)
+            if primary is not None:
+                g = primary.geometry()
+                self.source.move(g.x() + 20, g.y() + 20)
+            self.source.show()
+            print(
+                "[handset] WARN: no SPI/phone QScreen — Digivice on primary only. "
+                "SPI blank until xrandr shows SPI connected. Run: digivice-layout",
+                flush=True,
+            )
+
+        # Scaled full-frame copy on every LARGE screen (HDMI…)
+        self._rebuild_hosts(panel)
+        self._timer.start()
+
+        # Retry: layout may attach SPI late
+        QTimer.singleShot(1500, self._retry_panel)
+        QTimer.singleShot(3500, self._retry_panel)
+
+    def _rebuild_hosts(self, panel) -> None:
+        for h in self.hosts:
+            h.close()
+            h.deleteLater()
+        self.hosts.clear()
+        for s in _screens():
+            if panel is not None and s.name() == panel.name():
+                continue  # already has live Digivice window
+            if is_phone_screen(s):
+                # Extra phone-sized screen without live window: scale host
+                host = ScaledScreenHost(self.source, s)
+                host.showFullScreen()
+                self.hosts.append(host)
+                print(f"[handset] scale-host (phone) → {s.name()!r}", flush=True)
+                continue
+            host = ScaledScreenHost(self.source, s)
+            host.showFullScreen()
+            self.hosts.append(host)
+            print(f"[handset] scale-host (HDMI) → {s.name()!r}", flush=True)
+
+    def _retry_panel(self) -> None:
+        if pick_panel_screen() is None:
+            print("[handset] retry ensure SPI…", flush=True)
+            ensure_spi_via_xrandr()
+            QApplication.processEvents()
+        panel = pick_panel_screen()
+        if panel is None:
+            return
+        # Move Digivice onto SPI if we were only on HDMI
+        try:
+            self.source.setScreen(panel)
+            geo = panel.geometry()
+            self.source.setFixedSize(W, H)
+            if geo.width() <= W + 16 and geo.height() <= H + 16:
+                self.source.setFixedSize(geo.size())
+                self.source.setGeometry(geo)
+                self.source.showFullScreen()
+            else:
+                self.source.setGeometry(geo.x(), geo.y(), W, H)
+                self.source.show()
+            print(f"[handset] moved Digivice onto {panel.name()!r}", flush=True)
+            self._rebuild_hosts(panel)
+        except Exception as e:
+            print(f"[handset] retry_panel: {e}", flush=True)
+
+    def _tick(self) -> None:
+        for h in self.hosts:
+            h.update()
+
+    def stop(self) -> None:
+        self._timer.stop()
+        for h in self.hosts:
+            h.close()
+        self.hosts.clear()
 
 
 def apply_kiosk(win) -> Optional[object]:
-    """Start multi-screen scaled presenter (preferred Digivice path)."""
-    try:
-        win.setAttribute(Qt.WA_StyledBackground, True)
-        win.setStyleSheet("QMainWindow { background-color: #0b1a2a; color: #e8eef5; }")
-    except Exception:
-        pass
-
-    # Prefer multi-scale path unless disabled
     mode = (os.environ.get("ESP_HANDSET_DISPLAY", "scale") or "scale").strip().lower()
     if mode in ("0", "legacy", "single"):
         return _apply_kiosk_legacy(win)
-
     presenter = MultiScreenPresenter(win)
     presenter.start()
-    # Keep reference on window so it isn't GC'd
     win._multi_presenter = presenter  # type: ignore[attr-defined]
     return presenter
 
 
 def _apply_kiosk_legacy(win) -> None:
-    """Old single-window fullscreen (avoid unless debugging)."""
-    screen = pick_panel_screen() or QGuiApplication.primaryScreen()
+    panel = pick_panel_screen() or QGuiApplication.primaryScreen()
     win.setWindowFlags(Qt.Window)
-    if screen is not None:
+    win.setFixedSize(W, H)
+    if panel is not None:
         try:
-            win.setScreen(screen)
+            win.setScreen(panel)
         except Exception:
             pass
-        win.setGeometry(screen.geometry())
-    win.setFixedSize(W, H)
+        win.setGeometry(panel.geometry().x(), panel.geometry().y(), W, H)
     win.show()
-    win.showFullScreen()

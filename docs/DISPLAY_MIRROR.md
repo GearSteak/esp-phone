@@ -1,30 +1,37 @@
-# Digivice display — scale to all screens
+# Digivice SPI + HDMI
 
-## Pipeline
+## What you should see
 
-```
-Digivice paints fixed 240×320
-        │
-        ├─► SPI fullscreen host  (scale whole UI into 240×320)
-        └─► HDMI fullscreen host (scale whole UI into monitor)
-```
+| Display | Role |
+|---------|------|
+| **SPI 2″** | Real Digivice window at 240×320 (live UI, not a crop) |
+| **HDMI** | Same UI, **scaled up** (software host, refreshes ~30 fps) |
 
-- **Not** “fullscreen on HDMI then crop SPI.”
-- **Not** requiring xrandr clone.
-- Full UI on **both** displays.
+## If HDMI is right but SPI is black
 
-Default: `ESP_HANDSET_DISPLAY=scale`
-
-## Launch
+Qt often never saw the SPI screen. Turn SPI on, then relaunch:
 
 ```bash
 export DISPLAY=:0
-git pull && sudo bash pi_handset/install-handset.sh   # or copy esp_handset
-handset-phone
+digivice-layout          # turns SPI on, keeps HDMI
+xrandr | grep connected  # SPI-… must appear
+handset-desktop; pkill -f handset_app; handset-phone
 ```
 
-Log:
+Log should include:
 
 ```text
-multi-screen: source 240x320, hosts=2
+Digivice LIVE on panel 'SPI-…' 240x320
+scale-host (HDMI) → 'HDMI-…'
+```
+
+If log only has one screen and no SPI name, the panel is not active in X — check wiring, `dmesg | grep -i mipi`, backlight.
+
+## Backlight
+
+```bash
+for d in /sys/class/backlight/*; do
+  echo 0 | sudo tee $d/bl_power
+  cat $d/max_brightness | sudo tee $d/brightness
+done
 ```

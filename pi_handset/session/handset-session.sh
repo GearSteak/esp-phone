@@ -33,11 +33,11 @@ digivice_display_env() {
   export QT_SCALE_FACTOR=1
   export QT_ENABLE_HIGHDPI_SCALING=0
   export ESP_HANDSET_MIRROR="${ESP_HANDSET_MIRROR:-1}"
-  # Software multi-screen scale (default). Digivice at 240x320 → each display.
+  # Software multi-screen: Digivice on SPI (or primary), scale full UI on large screens
   export ESP_HANDSET_DISPLAY="${ESP_HANDSET_DISPLAY:-scale}"
   export ESP_HANDSET_SKIP_PIN="${ESP_HANDSET_SKIP_PIN:-1}"
-  # Layout script is optional (scale path does not need SPI primary)
-  export ESP_HANDSET_SKIP_LAYOUT="${ESP_HANDSET_SKIP_LAYOUT:-1}"
+  # Layout ON by default so SPI is enabled as a QScreen (else SPI stays blank)
+  export ESP_HANDSET_SKIP_LAYOUT="${ESP_HANDSET_SKIP_LAYOUT:-0}"
 
   if [[ -z "${DISPLAY:-}" && -z "${WAYLAND_DISPLAY:-}" ]]; then
     export DISPLAY=:0
