@@ -32,11 +32,10 @@ digivice_display_env() {
   export QT_AUTO_SCREEN_SCALE_FACTOR=0
   export QT_SCALE_FACTOR=1
   export QT_ENABLE_HIGHDPI_SCALING=0
+  # SPI primary + optional HDMI clone (layout). Digivice fullscreen on panel.
   export ESP_HANDSET_MIRROR="${ESP_HANDSET_MIRROR:-1}"
-  # Software multi-screen: Digivice on SPI (or primary), scale full UI on large screens
-  export ESP_HANDSET_DISPLAY="${ESP_HANDSET_DISPLAY:-scale}"
   export ESP_HANDSET_SKIP_PIN="${ESP_HANDSET_SKIP_PIN:-1}"
-  # Layout ON by default so SPI is enabled as a QScreen (else SPI stays blank)
+  # Always run digivice-layout so Unknown/SPI is on as primary
   export ESP_HANDSET_SKIP_LAYOUT="${ESP_HANDSET_SKIP_LAYOUT:-0}"
 
   if [[ -z "${DISPLAY:-}" && -z "${WAYLAND_DISPLAY:-}" ]]; then
@@ -61,8 +60,8 @@ digivice_display_env() {
 }
 
 apply_digivice_layout() {
-  if [[ "${ESP_HANDSET_SKIP_LAYOUT:-1}" == "1" ]]; then
-    log "skip xrandr layout (software scale mode)"
+  if [[ "${ESP_HANDSET_SKIP_LAYOUT:-0}" == "1" ]]; then
+    log "skip digivice-layout"
     return 0
   fi
   local m

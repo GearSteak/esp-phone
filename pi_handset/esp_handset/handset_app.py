@@ -413,25 +413,29 @@ def main() -> int:
     print("[handset] showing UI…", flush=True)
     kiosk = os.environ.get("ESP_HANDSET_KIOSK", "").strip() in ("1", "true", "yes")
     if kiosk:
-        # 240×320 canvas + paint host on every output (SPI/Unknown19-1 + HDMI)
-        os.environ.setdefault("ESP_HANDSET_DISPLAY", "scale")
+        # Fullscreen Digivice on SPI/Unknown panel (not multi-host paint)
         geom.apply_kiosk(win)
-        # Do not raise/grab the source over the paint hosts — that left SPI blank
-        try:
-            win.lower()
-        except Exception:
-            pass
     else:
         win.resize(geom.W, geom.H)
         win.show()
-        win.raise_()
-        win.activateWindow()
-        win.setFocus()
-        try:
-            win.grabKeyboard()
-        except Exception:
-            pass
-    print("[handset] event loop starting (scale hosts on all outputs)", flush=True)
+    win.raise_()
+    win.activateWindow()
+    win.setFocus()
+    try:
+        win.grabKeyboard()
+    except Exception:
+        pass
+    try:
+        import subprocess
+
+        subprocess.Popen(
+            ["wmctrl", "-a", "ESP Digivice"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    except Exception:
+        pass
+    print("[handset] event loop starting (panel fullscreen)", flush=True)
     code = app.exec_()
     if hasattr(win, "_multi_presenter") and win._multi_presenter:
         try:
