@@ -1,63 +1,30 @@
-# Digivice display model — SPI primary canvas
+# Digivice display — scale to all screens
 
-## Why it looked “cut off”
-
-With HDMI (1080p) as a big desktop and SPI as a **window into that desktop**, the 2″ panel only shows the **top-left ~240×320 of 1080p**. That is not Digivice drawing wrong — the whole X screen was still huge.
-
-## Correct model
+## Pipeline
 
 ```
-1) While Digivice runs:
-   - HDMI off (or pure clone)
-   - SPI = only display, mode 240×320 (or 320×240)
-   - xrandr --fb 240x320   ← entire desktop IS phone-sized
-   - Digivice fullscreen fills that world → no crop
-
-2) Optional: HDMI back with
-   --scale-from 240x320 --same-as SPI
-   = big monitor shows the SAME phone UI zoomed
+Digivice paints fixed 240×320
+        │
+        ├─► SPI fullscreen host  (scale whole UI into 240×320)
+        └─► HDMI fullscreen host (scale whole UI into monitor)
 ```
 
-## Requirements
+- **Not** “fullscreen on HDMI then crop SPI.”
+- **Not** requiring xrandr clone.
+- Full UI on **both** displays.
 
-**Use X11** for reliable `xrandr --fb` / clone:
+Default: `ESP_HANDSET_DISPLAY=scale`
 
-```bash
-sudo raspi-config   # Advanced → Wayland → X11 → finish → reboot
-```
-
-## Commands
+## Launch
 
 ```bash
 export DISPLAY=:0
-digivice-layout          # shrink world to SPI; try HDMI mirror
-# check:
-xrandr
-# Expect: Screen 0: minimum … current 240 x 320 …
-# And SPI connected primary 240x320
-
+git pull && sudo bash pi_handset/install-handset.sh   # or copy esp_handset
 handset-phone
 ```
 
-Leave Digivice (restore HDMI for normal desktop):
+Log:
 
-```bash
-handset-desktop
+```text
+multi-screen: source 240x320, hosts=2
 ```
-
-SPI only (HDMI stays black — always full UI on panel):
-
-```bash
-export ESP_HANDSET_MIRROR=0
-digivice-layout
-handset-phone
-```
-
-## Logs
-
-```bash
-handset-session log
-# look for: xrandr --fb 240x320 OK  and  Digivice → … 240x320
-```
-
-If `Screen` still says `1920 x 1080`, layout never stuck — stay on X11 and paste `xrandr` output.

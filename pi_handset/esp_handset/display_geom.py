@@ -14,7 +14,7 @@ from __future__ import annotations
 import os
 from typing import List, Optional, Tuple
 
-from PyQt5.QtCore import Qt, QTimer, QRect
+from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtGui import QPainter, QImage, QGuiApplication
 from PyQt5.QtWidgets import QWidget, QApplication, QMainWindow
 
@@ -54,6 +54,7 @@ class ScaledScreenHost(QWidget):
         self.setAttribute(Qt.WA_StyledBackground, True)
         self.setStyleSheet("background-color: #000;")
         self.setWindowFlags(Qt.Window | Qt.FramelessWindowHint)
+        self.setFocusPolicy(Qt.StrongFocus)
         try:
             self.setScreen(screen)
         except Exception:
@@ -61,17 +62,59 @@ class ScaledScreenHost(QWidget):
         geo = screen.geometry()
         self.setGeometry(geo)
 
+    def keyPressEvent(self, event) -> None:  # noqa: N802
+        # Forward keys into the real Digivice shell
+        src = self._source
+        if src is not None:
+            QApplication.sendEvent(src, event)
+            if event.isAccepted():
+                return
+        super().keyPressEvent(event)
+
+    def mousePressEvent(self, event) -> None:  # noqa: N802
+        self._map_mouse(event, press=True)
+
+    def mouseReleaseEvent(self, event) -> None:  # noqa: N802
+        self._map_mouse(event, press=False)
+
+    def _map_mouse(self, event, press: bool) -> None:
+        """Map clicks on scaled host into 240×320 source coords."""
+        from PyQt5.QtCore import QEvent, QPoint
+        from PyQt5.QtGui import QMouseEvent
+
+        src = self._source
+        if src is None:
+            return
+        # Same math as paint: KeepAspectRatio letterbox
+        tw, th = self.width(), self.height()
+        sw, sh = src.width(), src.height()
+        if sw < 1 or sh < 1:
+            return
+        scale = min(tw / sw, th / sh)
+        dw, dh = int(sw * scale), int(sh * scale)
+        ox, oy = (tw - dw) // 2, (th - dh) // 2
+        x = event.x() - ox
+        y = event.y() - oy
+        if x < 0 or y < 0 or x >= dw or y >= dh:
+            return
+        sx = int(x / scale)
+        sy = int(y / scale)
+        local = QPoint(sx, sy)
+        et = QEvent.MouseButtonPress if press else QEvent.MouseButtonRelease
+        me = QMouseEvent(et, local, event.button(), event.buttons(), event.modifiers())
+        child = src.childAt(local)
+        target = child if child is not None else src
+        QApplication.sendEvent(target, me)
+
     def paintEvent(self, _event) -> None:  # noqa: N802
         p = QPainter(self)
         p.fillRect(self.rect(), Qt.black)
         src = self._source
         if src is None:
             return
-        # Ensure source has painted (off-screen ok)
         img: QImage = src.grab().toImage()
         if img.isNull():
             return
-        # Scale full Digivice frame into this screen (fill; phone aspect letterbox)
         target = self.rect()
         scaled = img.scaled(
             target.size(),
