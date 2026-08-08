@@ -27,6 +27,12 @@ mode_set() {
 
 # Prefer running desktop/session (HDMI works). Only bare linuxfb if no GUI session.
 digivice_display_env() {
+  # Always prevent HiDPI crop of phone UI
+  export QT_AUTO_SCREEN_SCALE_FACTOR=0
+  export QT_SCALE_FACTOR=1
+  export QT_ENABLE_HIGHDPI_SCALING=0
+  export ESP_HANDSET_MIRROR="${ESP_HANDSET_MIRROR:-1}"
+
   if [[ -n "${DISPLAY:-}" || -n "${WAYLAND_DISPLAY:-}" ]]; then
     unset QT_QPA_PLATFORM 2>/dev/null || true
     export QT_XCB_NO_XI2_MOUSE="${QT_XCB_NO_XI2_MOUSE:-0}"
@@ -40,6 +46,32 @@ digivice_display_env() {
   fi
 }
 
+# SPI primary + optional HDMI clone (must run before Digivice)
+apply_digivice_layout() {
+  local m=""
+  for m in \
+    "$PREFIX/session/digivice-layout.sh" \
+    /usr/local/bin/digivice-layout \
+    "$(dirname "$0")/digivice-layout.sh"
+  do
+    if [[ -f "$m" ]]; then
+      # shellcheck disable=SC1090
+      bash "$m" 2>&1 || true
+      return 0
+    fi
+  done
+  # Fallback old mirror script
+  for m in \
+    "$PREFIX/session/mirror-displays.sh" \
+    /usr/local/bin/digivice-mirror-displays
+  do
+    if [[ -f "$m" ]]; then
+      bash "$m" 2>/dev/null || true
+      return 0
+    fi
+  done
+}
+
 hide_desktop_chrome() {
   command -v lxpanelctl >/dev/null 2>&1 && lxpanelctl hide || true
   command -v wmctrl >/dev/null 2>&1 && wmctrl -k on || true
@@ -48,27 +80,22 @@ hide_desktop_chrome() {
 show_desktop_chrome() {
   command -v lxpanelctl >/dev/null 2>&1 && lxpanelctl show || true
   command -v wmctrl >/dev/null 2>&1 && wmctrl -k off || true
+  # Restore HDMI if layout turned it off
+  if command -v xrandr >/dev/null 2>&1 && [[ -n "${DISPLAY:-}" ]]; then
+    mapfile -t outs < <(xrandr --query 2>/dev/null | awk '/ connected|disconnected/{print $1,$2}')
+    # turn on any HDMI currently disconnected from config... use --auto on HDMI names
+    while read -r name rest; do
+      case "$name" in
+        HDMI*|hdmi*) xrandr --output "$name" --auto 2>/dev/null || true ;;
+      esac
+    done < <(xrandr --query 2>/dev/null | awk '/^(HDMI|hdmi)/{print $1}')
+  fi
 }
 
 kill_phone_ui() {
   pkill -f "$PREFIX/handset_app.py" 2>/dev/null || true
   pkill -f "handset_app.py" 2>/dev/null || true
   pkill -f "esp_handset/handset_app.py" 2>/dev/null || true
-}
-
-# Same picture on SPI 2" + HDMI (xrandr scale-from / best-effort Wayland)
-apply_mirror() {
-  local m=""
-  for m in \
-    "$PREFIX/session/mirror-displays.sh" \
-    /usr/local/bin/digivice-mirror-displays \
-    "$(dirname "$0")/mirror-displays.sh"
-  do
-    if [[ -f "$m" ]]; then
-      bash "$m" 2>/dev/null || true
-      return 0
-    fi
-  done
 }
 
 cmd="${1:-}"
@@ -85,7 +112,7 @@ case "$cmd" in
   phone)
     mode_set phone
     digivice_display_env
-    apply_mirror
+    apply_digivice_layout
     export ESP_HANDSET_KIOSK=1
     exec /usr/bin/python3 "$PREFIX/handset_app.py"
     ;;
@@ -96,20 +123,17 @@ case "$cmd" in
       exit 0
     fi
     digivice_display_env
-    # Display layout may settle a moment after login
-    ( sleep 2; apply_mirror ) &
-    apply_mirror
+    apply_digivice_layout
+    ( sleep 2; apply_digivice_layout ) &
     export ESP_HANDSET_KIOSK=1
     exec /usr/bin/python3 "$PREFIX/handset_app.py"
     ;;
-  mirror)
+  mirror|layout)
     digivice_display_env
-    apply_mirror
-    echo "Mirror applied (if dual outputs present)."
+    apply_digivice_layout
+    echo "Digivice display layout applied (SPI primary; HDMI clone if possible)."
     ;;
   desktop)
-    # Leave Digivice for now; does NOT change next-login default unless you want that.
-    # Use set-desktop only if you want desktop at every boot.
     kill_phone_ui
     show_desktop_chrome
     echo "Left Digivice (UI). Default login is still: $(mode_get)"

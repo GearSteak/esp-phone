@@ -57,6 +57,8 @@ install -m 755 "$ROOT/session/handset-session.sh" "$PREFIX/session/handset-sessi
 install -m 755 "$ROOT/session/handset-session.sh" /usr/local/bin/handset-session
 install -m 755 "$ROOT/session/mirror-displays.sh" "$PREFIX/session/mirror-displays.sh"
 install -m 755 "$ROOT/session/mirror-displays.sh" /usr/local/bin/digivice-mirror-displays
+install -m 755 "$ROOT/session/digivice-layout.sh" "$PREFIX/session/digivice-layout.sh"
+install -m 755 "$ROOT/session/digivice-layout.sh" /usr/local/bin/digivice-layout
 
 cat >/etc/udev/rules.d/99-esp-handset.rules <<'EOF'
 # Espressif USB CDC — Heltec LoRa / notify bridge

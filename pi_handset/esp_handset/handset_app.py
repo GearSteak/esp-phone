@@ -368,6 +368,18 @@ def build_app(bridge: Optional[EspBridge], modem: Optional[Sim7600]) -> PhoneShe
 
 
 def main() -> int:
+    # Kill HiDPI / dual-screen scale that crops 240×320 into a corner of 1080p
+    os.environ.setdefault("QT_AUTO_SCREEN_SCALE_FACTOR", "0")
+    os.environ.setdefault("QT_SCALE_FACTOR", "1")
+    os.environ.setdefault("QT_SCREEN_SCALE_FACTORS", "1")
+    os.environ.setdefault("QT_ENABLE_HIGHDPI_SCALING", "0")
+    try:
+        from PyQt5.QtCore import Qt as _Qt
+
+        QApplication.setAttribute(_Qt.AA_DisableHighDpiScaling, True)
+    except Exception:
+        pass
+
     app = QApplication(sys.argv)
     store.ensure()
     bridge: Optional[EspBridge] = None
@@ -396,12 +408,7 @@ def main() -> int:
                 modem.close()
             return 1
     if os.environ.get("ESP_HANDSET_KIOSK", "").strip() in ("1", "true", "yes"):
-        # Pin to SPI panel (avoid HDMI primary → tiny crop of full desktop)
-        geom.place_on_panel(win)
-        win.showFullScreen()
-        QApplication.processEvents()
-        geom.place_on_panel(win)
-        win.showFullScreen()
+        geom.apply_kiosk(win)
     else:
         win.resize(geom.W, geom.H)
         win.show()
