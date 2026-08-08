@@ -1,51 +1,40 @@
-# Recover HDMI / normal desktop (no OS reinstall)
+# HDMI + Digivice (no reinstall)
 
-If Digivice install left you with **no HDMI** or only a tiny SPI screen:
+**Goal:** Digivice boots by default **and** HDMI works.
 
-## Fix now (SSH or any working terminal)
+| Setting | Value |
+|---------|--------|
+| Boot UI | Digivice (`session_mode=phone`) |
+| HDMI | ON (`vc4-kms-v3d` **without** `nohdmi`) |
+| 2″ SPI | Optional second panel (same config block) |
+
+Leave Digivice: `handset-desktop` · **F12** · **Ctrl+Shift+D** · Settings → Linux  
+Return: `handset-phone` (and stay default with `handset-session set-phone`)
+
+## Fix HDMI only (keep Digivice default)
 
 ```bash
-# Prefer the shipped fixer after git pull / reinstall scripts:
-sudo digivice-recover-hdmi
-sudo reboot
-```
-
-If that command is missing, one-shot repair:
-
-```bash
+# One-shot if you don't have the script yet:
 CFG=/boot/firmware/config.txt
 [ -f "$CFG" ] || CFG=/boot/config.txt
-
-# 1) HDMI on (remove nohdmi)
 sudo sed -i -E 's/^dtoverlay=vc4-kms-v3d(|,.*)$/dtoverlay=vc4-kms-v3d/' "$CFG"
-
-# 2) Do not auto-start Digivice
+# Digivice default:
 mkdir -p ~/.esp-handset
-echo desktop > ~/.esp-handset/session_mode
-echo desktop | sudo tee /etc/esp-handset/ui_mode >/dev/null
-
-# 3) Kill Digivice UI if stuck
-pkill -f handset_app.py || true
-
+echo phone > ~/.esp-handset/session_mode
+echo phone | sudo tee /etc/esp-handset/ui_mode >/dev/null
 sudo reboot
 ```
 
-Optional: **comment out** every line between  
-`# --- ESP Digivice display` and `# --- END ESP Digivice display`  
-in that same `config.txt` so only HDMI is used until you re-enable the 2″ later.
-
-## After reboot
-
-- Use **HDMI desktop** as usual.
-- Digivice: `handset-phone`
-- Leave Digivice: `handset-desktop` or **F12** / **Ctrl+Shift+D** in the app  
-  · Settings → Linux
-
-## Re-enable the 2″ panel later (HDMI stays on)
+Or after `git pull`:
 
 ```bash
-sudo bash /opt/esp-handset/display/install-display.sh
+sudo bash /path/to/esp-phone/pi_handset/display/recover-hdmi.sh --keep-phone
 sudo reboot
 ```
 
-Updated installers never set `nohdmi` and default session mode to **desktop**.
+`--keep-phone` sets Digivice as login default.  
+Default recover **does not** switch you to desktop-only.
+
+## Comment
+
+Old installs used `nohdmi`, so HDMI died. Current `install-display.sh` never does that.

@@ -1,7 +1,8 @@
 #!/bin/bash
-# Digivice session helpers. Default boot mode is DESKTOP (normal Pi UI on HDMI).
-# Enter phone UI with: handset-phone
-# Exit phone UI with:  handset-desktop   or F12 inside Digivice
+# Digivice session helpers.
+# Default when mode file missing: phone (Digivice).
+# HDMI is never disabled by this script — display is kernel config only.
+# Exit Digivice: handset-desktop | F12 | Ctrl+Shift+D
 
 set -euo pipefail
 
@@ -13,8 +14,7 @@ mode_get() {
   if [[ -f "$MODE_FILE" ]]; then
     tr -d '[:space:]' <"$MODE_FILE"
   else
-    # Safe default: never trap on Digivice after install
-    echo desktop
+    echo phone
   fi
 }
 
@@ -25,8 +25,7 @@ mode_set() {
   fi
 }
 
-# Prefer the running desktop/session display (HDMI). Only fall back to bare
-# linuxfb when there is no graphical session at all.
+# Prefer running desktop/session (HDMI works). Only bare linuxfb if no GUI session.
 digivice_display_env() {
   if [[ -n "${DISPLAY:-}" || -n "${WAYLAND_DISPLAY:-}" ]]; then
     unset QT_QPA_PLATFORM 2>/dev/null || true
@@ -75,7 +74,6 @@ case "$cmd" in
     exec /usr/bin/python3 "$PREFIX/handset_app.py"
     ;;
   autostart)
-    # Only auto-launch Digivice when explicitly set to phone
     m="$(mode_get)"
     if [[ "$m" != "phone" ]]; then
       show_desktop_chrome
@@ -86,10 +84,13 @@ case "$cmd" in
     exec /usr/bin/python3 "$PREFIX/handset_app.py"
     ;;
   desktop)
-    mode_set desktop
+    # Leave Digivice for now; does NOT change next-login default unless you want that.
+    # Use set-desktop only if you want desktop at every boot.
     kill_phone_ui
     show_desktop_chrome
-    echo "Desktop mode (HDMI/session). handset-phone to open Digivice again."
+    echo "Left Digivice (UI). Default login is still: $(mode_get)"
+    echo "  set-desktop  → make desktop the boot default"
+    echo "  set-phone / handset-phone → Digivice"
     ;;
   maps)
     for bin in organicmaps osmAnd coMaps gnome-maps; do
@@ -115,7 +116,6 @@ case "$cmd" in
   emulators)
     for bin in retroarch emulationstation mednafen; do
       if command -v "$bin" >/dev/null 2>&1; then
-        mode_set desktop
         show_desktop_chrome
         exec "$bin" "$@"
       fi
@@ -127,15 +127,15 @@ case "$cmd" in
     cat <<EOF
 Usage: handset-session <command>
 
-  desktop       Kill Digivice, stay on normal Pi desktop (default / safe)
-  phone         Launch Digivice UI
-  autostart     Login hook — only opens Digivice if session_mode=phone
+  phone         Launch Digivice + set login default to phone
+  desktop       Kill Digivice UI only (default login mode unchanged)
+  set-phone     Digivice default at next login/boot
+  set-desktop   Desktop default at next login/boot
   mode          Print phone|desktop
-  set-phone / set-desktop
 
-  digivice-recover-hdmi   (separate cmd) restore HDMI if nohdmi was set
+Escape Digivice UI: F12 · Ctrl+Shift+D · Settings→Linux · handset-desktop
 
-Mode file: $MODE_FILE
+Mode: $MODE_FILE
 EOF
     exit 1
     ;;

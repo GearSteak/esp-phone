@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Single installer for ESP Digivice handset on Raspberry Pi OS (Bookworm).
 # Waveshare 2" 240×320 SPI + 7 hard buttons + SIM7600 USB + Heltec USB LoRa.
-# Desktop-first; Digivice optional via handset-phone. HDMI always kept on.
+# 2" SPI panel + HDMI both on. Default session = Digivice (handset-desktop to leave).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
@@ -9,7 +9,7 @@ PREFIX="${PREFIX:-/opt/esp-handset}"
 USER_NAME="${SUDO_USER:-$USER}"
 USER_HOME="$(getent passwd "$USER_NAME" | cut -d: -f6)"
 
-echo "=== ESP Digivice installer (HDMI + optional 2\" + buttons) ==="
+echo "=== ESP Digivice installer (Digivice default · HDMI kept on) ==="
 echo "Install prefix: $PREFIX"
 echo "User: $USER_NAME ($USER_HOME)"
 
@@ -96,9 +96,9 @@ bash "$ROOT/display/install-display.sh"
 mkdir -p "$USER_HOME/.esp-handset" "$USER_HOME/Pictures/phone" \
   "$USER_HOME/.local/share/applications" "$USER_HOME/Desktop" \
   "$USER_HOME/.config/autostart"
-# DEFAULT: normal desktop (HDMI). Digivice only when you run handset-phone.
-echo desktop >"$USER_HOME/.esp-handset/session_mode"
-echo desktop >/etc/esp-handset/ui_mode
+# Default: Digivice on boot. HDMI stays enabled next to SPI panel.
+echo phone >"$USER_HOME/.esp-handset/session_mode"
+echo phone >/etc/esp-handset/ui_mode
 chown "$USER_NAME:$USER_NAME" /etc/esp-handset/ui_mode
 chmod 664 /etc/esp-handset/ui_mode
 chown -R "$USER_NAME:$USER_NAME" "$USER_HOME/Pictures/phone" "$USER_HOME/.esp-handset"
@@ -233,16 +233,21 @@ chmod +x /usr/local/bin/handset-desktop
 cat <<EOF
 
 === Digivice install complete ===
-DEFAULT: normal HDMI desktop (Digivice does NOT hijack boot).
-HDMI stays ON. SPI 2" panel is optional secondary.
+DEFAULT boot: Digivice UI (phone).
+HDMI stays ON (no nohdmi) — monitor works in parallel / when you exit Digivice.
 
-Escape / desktop anytime:
+Leave Digivice anytime:
   handset-desktop
-  digivice-recover-hdmi   # if HDMI was killed by an older install
   F12 or Ctrl+Shift+D inside Digivice
+  Settings → Linux
 
-Open Digivice when you want:  handset-phone
-Wiring: docs/DIGIVICE_WIRING.md · docs/DIGI_BUTTONS.md · docs/RECOVERY_HDMI.md
+Return to Digivice:  handset-phone
+  (or reboot / login with session_mode=phone)
 
-sudo reboot when ready. SIP: sudo nano /etc/esp-handset/sip.env
+If HDMI ever dies from an old config only:
+  sudo digivice-recover-hdmi   # fixes HDMI; use --keep-phone to stay Digivice-default
+  docs/RECOVERY_HDMI.md
+
+Wiring: docs/DIGIVICE_WIRING.md · docs/DIGI_BUTTONS.md
+SIP: sudo nano /etc/esp-handset/sip.env
 EOF
