@@ -44,3 +44,4 @@ python3 esp_handset/handset_app.py
 | SPI DRM panel | Digivice fullscreen UI |
 | `/dev/sim7600-at` | SIM7600 USB AT |
 | `/dev/esp-bridge` | Heltec LoRa |
+| Tools → AI | Ollama + small DeepSeek (optional) — [`docs/OLLAMA.md`](../docs/OLLAMA.md) |

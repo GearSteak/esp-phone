@@ -61,6 +61,7 @@ from esp_handset import apps as handset_apps  # noqa: E402
 from esp_handset import pages  # noqa: E402
 from esp_handset import features  # noqa: E402
 from esp_handset import games_ui  # noqa: E402
+from esp_handset import ollama_chat  # noqa: E402
 from esp_handset import store  # noqa: E402
 from esp_handset import display_geom as geom  # noqa: E402
 from esp_handset.shell import (  # noqa: E402
@@ -182,6 +183,7 @@ def build_app(bridge: Optional[EspBridge], modem: Optional[Sim7600]) -> PhoneShe
     shell.register_page("todos", pages.make_todos_page(back))
     shell.register_page("clock_face", pages.make_clock_page(back))
     shell.register_page("calc", pages.make_calc_page(back))
+    shell.register_page("ai", ollama_chat.make_ollama_page(back))
     shell.register_page(
         "settings",
         pages.make_settings_hub(back, open_page, on_linux),

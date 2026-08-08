@@ -46,6 +46,7 @@ CLOCK_APPS = [
 
 TOOLS_APPS = [
     AppEntry("calc", "Calculator", "", "+"),
+    AppEntry("ai", "AI", "Ollama · DeepSeek", "✦"),
     AppEntry("convert", "Converter", "", "⇄"),
     AppEntry("weather", "Weather", "", "☁"),
     AppEntry("steps", "Steps", "Tilt SW-520D", "👟"),
