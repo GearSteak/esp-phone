@@ -420,7 +420,6 @@ def main() -> int:
     print("[handset] showing UI…", flush=True)
     kiosk = os.environ.get("ESP_HANDSET_KIOSK", "").strip() in ("1", "true", "yes")
     if kiosk:
-        # Fullscreen Digivice on SPI/Unknown panel (not multi-host paint)
         geom.apply_kiosk(win)
     else:
         win.resize(geom.W, geom.H)
@@ -428,8 +427,7 @@ def main() -> int:
     win.raise_()
     win.activateWindow()
     win.setFocus()
-    # Never grabKeyboard — blocks USB keyboard / recovery
-    print("[handset] event loop starting (panel fullscreen)", flush=True)
+    print("[handset] event loop starting", flush=True)
     code = app.exec_()
     if hasattr(win, "_multi_presenter") and win._multi_presenter:
         try:
