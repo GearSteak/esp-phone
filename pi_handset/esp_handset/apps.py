@@ -86,48 +86,25 @@ def _release_all_keyboards() -> None:
 
 
 def exit_to_desktop() -> None:
-    """Leave Digivice hard: mode=desktop, restore displays, kill phone UI, quit."""
-    print("[handset] EXIT → Linux desktop", flush=True)
+    """Leave Digivice: mode=desktop, hand off SPI to desktop mirror, quit."""
+    print("[handset] EXIT → Linux desktop (SPI will mirror desktop)", flush=True)
     _release_all_keyboards()
     _write_mode_desktop()
+
+    # Release SPI bus without blanking — handset-session starts desktop_spi_mirror
+    try:
+        from esp_handset import st7789_spi as st
+
+        if st.ready():
+            st.close(blank_panel=False)
+    except Exception as e:
+        print(f"[handset] spi handoff: {e}", flush=True)
 
     env = os.environ.copy()
     env.setdefault("DISPLAY", ":0")
 
-    # Prefer full session helper; also do emergency kill locally so we always leave
+    # Session: kill app, restore chrome, start desktop→SPI mirror
     run_session("desktop")
-
-    # Local hard guarantee even if handset-session is missing/broken
-    try:
-        subprocess.Popen(
-            ["bash", "-c", "sleep 0.3; pkill -f handset_app.py || true"],
-            start_new_session=True,
-            env=env,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-    except Exception:
-        pass
-
-    # Restore HDMI if possible without waiting for session script
-    try:
-        restore = "/usr/local/bin/digivice-restore-desktop"
-        if not os.path.isfile(restore):
-            restore = str(
-                Path(__file__).resolve().parents[1]
-                / "session"
-                / "restore-desktop-displays.sh"
-            )
-        if os.path.isfile(restore):
-            subprocess.Popen(
-                ["bash", restore],
-                start_new_session=True,
-                env=env,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            )
-    except Exception:
-        pass
 
     try:
         from PyQt5.QtWidgets import QApplication
@@ -138,7 +115,6 @@ def exit_to_desktop() -> None:
     except Exception:
         pass
 
-    # Nuclear: if quit is ignored by a stuck dialog, die after a beat
     try:
         time.sleep(0.15)
         os._exit(0)

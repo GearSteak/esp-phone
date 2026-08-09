@@ -34,6 +34,55 @@ kill_phone_ui() {
   pkill -f "handset_app.py" 2>/dev/null || true
 }
 
+spi_userspace_on() {
+  [[ -f /etc/esp-handset/spi-userspace ]] \
+    || [[ "${ESP_HANDSET_SPI_BACKEND:-}" == "userspace" ]] \
+    || grep -q 'ESP_HANDSET_SPI_BACKEND=userspace' /etc/esp-handset/env 2>/dev/null
+}
+
+desktop_mirror_bin() {
+  for m in \
+    "$PREFIX/session/desktop-spi-mirror.sh" \
+    /usr/local/bin/digivice-desktop-mirror \
+    "$(dirname "$0")/desktop-spi-mirror.sh"
+  do
+    if [[ -f "$m" ]]; then
+      echo "$m"
+      return 0
+    fi
+  done
+  echo ""
+}
+
+stop_desktop_spi_mirror() {
+  local m
+  m="$(desktop_mirror_bin)"
+  if [[ -n "$m" ]]; then
+    bash "$m" stop >>"$LOG" 2>&1 || true
+  else
+    pkill -f "desktop_spi_mirror.py" 2>/dev/null || true
+  fi
+}
+
+start_desktop_spi_mirror() {
+  if ! spi_userspace_on; then
+    log "desktop SPI mirror skipped (not userspace SPI)"
+    return 0
+  fi
+  export DISPLAY="${DISPLAY:-:0}"
+  export ESP_HANDSET_SPI_BACKEND=userspace
+  local m
+  m="$(desktop_mirror_bin)"
+  if [[ -z "$m" ]]; then
+    log "desktop-spi-mirror.sh missing"
+    return 1
+  fi
+  # Free SPI briefly after Digivice release
+  sleep 0.4
+  bash "$m" start >>"$LOG" 2>&1 || true
+  log "desktop → SPI mirror started"
+}
+
 # Recovery flag on FAT boot partition (Windows can create this while SD is in a PC)
 boot_flag_desktop() {
   local f
@@ -148,9 +197,12 @@ show_desktop_chrome() {
 launch_phone() {
   if force_desktop_from_boot_flag; then
     show_desktop_chrome
+    start_desktop_spi_mirror
     log "not launching Digivice (recovery flag)"
     return 0
   fi
+  # Digivice owns SPI — stop desktop mirror first
+  stop_desktop_spi_mirror
   mode_set phone
   digivice_display_env
   apply_digivice_layout
@@ -182,13 +234,16 @@ case "$cmd" in
     # Always honor recovery file on boot partition first
     if force_desktop_from_boot_flag; then
       show_desktop_chrome
-      log "autostart: desktop (boot recovery flag)"
+      start_desktop_spi_mirror
+      log "autostart: desktop (boot recovery flag) + SPI mirror"
       exit 0
     fi
     m="$(mode_get)"
     log "autostart mode=$m"
     if [[ "$m" != "phone" ]]; then
       show_desktop_chrome
+      start_desktop_spi_mirror
+      log "autostart: desktop + SPI mirror"
       exit 0
     fi
     sleep 2
@@ -203,9 +258,9 @@ case "$cmd" in
     ;;
   desktop)
     mode_set desktop
-    log "leaving Digivice → desktop"
+    log "leaving Digivice → desktop (SPI mirrors desktop)"
     kill_phone_ui
-    sleep 0.2
+    sleep 0.3
     pkill -9 -f handset_app.py 2>/dev/null || true
     # Always restore HDMI after SPI-only digivice
     digivice_display_env
@@ -219,8 +274,9 @@ case "$cmd" in
       fi
     done
     show_desktop_chrome
-    echo "Left Digivice. mode=desktop. Return: handset-phone"
-    log "desktop ready"
+    start_desktop_spi_mirror
+    echo "Left Digivice. SPI shows desktop mirror. Return: handset-phone"
+    log "desktop ready + SPI mirror"
     ;;
   spi-phone)
     # Digivice with SPI as sole head (HDMI off) — use when dual-head blanks SPI
@@ -248,7 +304,8 @@ case "$cmd" in
     pkill -9 -f handset_app.py 2>/dev/null || true
     pkill -9 -f "python3.*handset" 2>/dev/null || true
     show_desktop_chrome
-    echo "Force-killed Digivice. mode=desktop"
+    start_desktop_spi_mirror
+    echo "Force-killed Digivice. mode=desktop (SPI mirrors desktop)"
     ;;
   log)
     tail -n 80 "$LOG" 2>/dev/null || echo "(no log yet at $LOG)"
@@ -262,6 +319,7 @@ Usage: handset-session <command>
   spi-phone  — Digivice on SPI only (HDMI off). handset-desktop restores HDMI.
 
 Hard exit Digivice: Back×3 or Home×3 or handset-desktop
+On desktop, 2\" SPI mirrors the Linux desktop (userspace ST7789).
 EOF
     exit 1
     ;;

@@ -271,8 +271,41 @@ def fill(r: int, g: int, b: int) -> None:
     blit_qimage(img)
 
 
-def close() -> None:
+def blank(*, backlight_off: bool = True) -> None:
+    """Clear last Digivice frame (ST7789 keeps RAM until overwritten)."""
+    if not _ok:
+        # try init just to blank (desktop exit may have closed already)
+        if not init():
+            return
+    try:
+        fill(0, 0, 0)
+    except Exception as e:
+        print(f"[st7789] blank fill: {e}", flush=True)
+    # Display off + sleep optional; then backlight
+    dc = _env_int("ESP_ST7789_DC", 25)
+    bl = _env_int("ESP_ST7789_BL", 18)
+    try:
+        _cmd(dc, 0x28)  # DISPOFF
+        time.sleep(0.02)
+        _cmd(dc, 0x10)  # SLPIN
+    except Exception:
+        pass
+    if backlight_off and _gpio is not None:
+        try:
+            _gpio.output(bl, 0)
+        except Exception:
+            pass
+    print("[st7789] blanked (black + backlight off)", flush=True)
+
+
+def close(*, blank_panel: bool = False) -> None:
+    """Release SPI. blank_panel=True only when you want a black/off panel (not desktop hand-off)."""
     global _spi, _ok
+    if blank_panel and _ok:
+        try:
+            blank(backlight_off=True)
+        except Exception:
+            pass
     try:
         if _spi is not None:
             _spi.close()
@@ -280,3 +313,22 @@ def close() -> None:
         pass
     _spi = None
     _ok = False
+
+
+def wake_display() -> None:
+    """Ensure display on + backlight after blank or cold init."""
+    if not _ok and not init():
+        return
+    dc = _env_int("ESP_ST7789_DC", 25)
+    bl = _env_int("ESP_ST7789_BL", 18)
+    try:
+        _cmd(dc, 0x11)  # SLPOUT
+        time.sleep(0.05)
+        _cmd(dc, 0x29)  # DISPON
+    except Exception:
+        pass
+    if _gpio is not None:
+        try:
+            _gpio.output(bl, 1)
+        except Exception:
+            pass

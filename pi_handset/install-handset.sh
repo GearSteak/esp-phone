@@ -67,6 +67,10 @@ install -m 755 "$ROOT/session/spi-test.sh" "$PREFIX/session/spi-test.sh"
 install -m 755 "$ROOT/session/spi-test.sh" /usr/local/bin/digivice-spi-test
 install -m 755 "$ROOT/session/spi-prove.sh" "$PREFIX/session/spi-prove.sh"
 install -m 755 "$ROOT/session/spi-prove.sh" /usr/local/bin/digivice-spi-prove
+install -m 755 "$ROOT/session/spi-blank.sh" "$PREFIX/session/spi-blank.sh"
+install -m 755 "$ROOT/session/spi-blank.sh" /usr/local/bin/digivice-spi-blank
+install -m 755 "$ROOT/session/desktop-spi-mirror.sh" "$PREFIX/session/desktop-spi-mirror.sh"
+install -m 755 "$ROOT/session/desktop-spi-mirror.sh" /usr/local/bin/digivice-desktop-mirror
 
 cat >/etc/udev/rules.d/99-esp-handset.rules <<'EOF'
 # Espressif USB CDC — Heltec LoRa / notify bridge
@@ -281,6 +285,7 @@ HDMI + SPI: layout is HDMI-first (never --scale-from). If both black:
 
 Leave Digivice:
   handset-desktop · F12 · Ctrl+Shift+D · Settings→Linux
+  (2\" SPI mirrors the full Linux desktop when you leave)
 
 Return: handset-phone
 

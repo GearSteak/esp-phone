@@ -210,12 +210,15 @@ class SpiUserspaceMirror:
         self._active = False
         if self._timer is not None:
             self._timer.stop()
+            self._timer = None
         try:
             if self._st is not None:
-                self._st.close()
-        except Exception:
-            pass
-
+                # Leave panel as-is so desktop_spi_mirror can take over without black flash
+                self._st.close(blank_panel=False)
+        except Exception as e:
+            print(f"[handset] spi stop: {e}", flush=True)
+        self._st = None
+        print("[handset] SPI mirror stopped (hand off SPI)", flush=True)
 
 class MultiDisplayKiosk:
     """Source W×H + fullscreen scale hosts on large screens + optional SPI."""
