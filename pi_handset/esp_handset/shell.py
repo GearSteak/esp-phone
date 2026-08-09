@@ -42,6 +42,8 @@ from esp_handset.shell_data import (
 from esp_handset.toasts import ToastHost
 
 _GAME_PAGES = {e.key for e in GAMES_APPS}
+# Live boards (timers + own keys) — not button-driven solitaire/uno
+_ARCADE_PAGES = {"snake", "pong", "tetris"}
 
 __all__ = [
     "PhoneShell",
@@ -135,7 +137,17 @@ class PhoneShell(QMainWindow):
         super().showEvent(event)
         self.raise_()
         self.activateWindow()
-        self.setFocus(Qt.ActiveWindowFocusReason)
+        # Restore digi page focus — do not leave focus only on PhoneShell
+        # (that made Confirm click the first Back chrome control).
+        key = self._nav[-1] if self._nav else "home"
+        if key == "home" and self._home:
+            self._home.setFocus(Qt.OtherFocusReason)
+        elif key in self._radials:
+            self._radials[key].setFocus(Qt.OtherFocusReason)
+        elif key in _ARCADE_PAGES and key in self.pages:
+            pass  # board focuses itself
+        elif key in self.pages:
+            digi_nav.ensure_page_focus(self.pages[key])
         # Do NOT grabKeyboard — it bricks USB keyboards / Ctrl+Alt+F2 for recovery
 
     def changeEvent(self, event) -> None:  # noqa: N802
@@ -234,12 +246,15 @@ class PhoneShell(QMainWindow):
         self.stack.setCurrentWidget(self.pages[key])
         self.hide_osk()
         if key == "home" and self._home:
-            self._home.setFocus()
+            self._home.setFocus(Qt.OtherFocusReason)
         elif key in self._radials:
-            self._radials[key].setFocus()
+            self._radials[key].setFocus(Qt.OtherFocusReason)
+        elif key in _ARCADE_PAGES:
+            # Game boards take focus themselves on showEvent; don't land on Back chrome
+            pass
         else:
+            # Keep focus on the page control (do NOT steal to shell — breaks Confirm/lists)
             digi_nav.ensure_page_focus(self.pages[key])
-            self.setFocus()
 
     def back(self) -> None:
         self.hide_osk()
@@ -248,9 +263,11 @@ class PhoneShell(QMainWindow):
             key = self._nav[-1]
             self.stack.setCurrentWidget(self.pages[key])
             if key == "home" and self._home:
-                self._home.setFocus()
+                self._home.setFocus(Qt.OtherFocusReason)
             elif key in self._radials:
-                self._radials[key].setFocus()
+                self._radials[key].setFocus(Qt.OtherFocusReason)
+            elif key in _ARCADE_PAGES:
+                pass
             else:
                 digi_nav.ensure_page_focus(self.pages[key])
         else:
@@ -525,15 +542,24 @@ class PhoneShell(QMainWindow):
 
         page = self.pages.get(page_key)
         if page is not None and page_key not in self._radials and page_key != "home":
-            if page_key in _GAME_PAGES:
+            if page_key in _ARCADE_PAGES:
+                # Route arrows / Space to the living game board under the page
+                for w in page.findChildren(QWidget):
+                    mod = getattr(w.__class__, "__module__", "") or ""
+                    if mod.endswith("games_ui") and hasattr(w, "keyPressEvent"):
+                        w.keyPressEvent(event)
+                        if not w.hasFocus():
+                            w.setFocus(Qt.OtherFocusReason)
+                        event.accept()
+                        return
                 super().keyPressEvent(event)
                 return
 
-            fw = self.focusWidget()
+            cur = digi_nav.digi_current(page)
             if key in (Qt.Key_Up, Qt.Key_Down):
                 delta = -1 if key == Qt.Key_Up else 1
-                if isinstance(fw, QListWidget):
-                    if digi_nav.list_nudge(fw, delta):
+                if isinstance(cur, QListWidget):
+                    if digi_nav.list_nudge(cur, delta):
                         event.accept()
                         return
                 if digi_nav.move_focus(page, delta):
@@ -545,11 +571,11 @@ class PhoneShell(QMainWindow):
                     event.accept()
                     return
             if key in (Qt.Key_Return, Qt.Key_Enter):
-                if digi_nav.activate_focused(fw, self.show_osk_for):
+                if digi_nav.activate_page(page, self.show_osk_for):
                     event.accept()
                     return
                 digi_nav.ensure_page_focus(page)
-                if digi_nav.activate_focused(self.focusWidget(), self.show_osk_for):
+                if digi_nav.activate_page(page, self.show_osk_for):
                     event.accept()
                     return
 

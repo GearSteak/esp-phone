@@ -80,6 +80,24 @@ def clear_highlights(root: QWidget) -> None:
             _highlight(w, False)
 
 
+def digi_current(root: QWidget) -> Optional[QWidget]:
+    """Highlighted digi target, even if Qt focus was stolen by shell/kiosk host."""
+    items = focusables(root)
+    if not items:
+        return None
+    for w in items:
+        if w.property("digiFocus") == "1":
+            return w
+    cur = QApplication.focusWidget()
+    if cur is not None:
+        w: Optional[QWidget] = cur
+        while w is not None:
+            if w in items:
+                return w
+            w = w.parentWidget()
+    return items[0]
+
+
 def focus_index(items: List[QWidget], current: Optional[QWidget]) -> int:
     if not items:
         return -1
@@ -99,7 +117,7 @@ def move_focus(root: QWidget, delta: int) -> bool:
     items = focusables(root)
     if not items:
         return False
-    cur = QApplication.focusWidget()
+    cur = digi_current(root)
     idx = focus_index(items, cur)
     if idx < 0:
         idx = 0
@@ -163,13 +181,21 @@ def activate_focused(w: Optional[QWidget], open_osk) -> bool:
     return False
 
 
+def activate_page(root: QWidget, open_osk) -> bool:
+    """Confirm the digi-highlighted control on a page (ignore stolen Qt focus)."""
+    return activate_focused(digi_current(root), open_osk)
+
+
 def ensure_page_focus(root: QWidget) -> None:
-    """On entering an app page, land on first control."""
+    """On entering an app page, land on first content control (skip back chrome if possible)."""
     items = focusables(root)
     if not items:
         return
     clear_highlights(root)
+    # Prefer first non-Back control when chrome Back is first (sorted top-left)
     w = items[0]
+    if len(items) > 1 and isinstance(w, QAbstractButton) and (w.text() or "") in ("←", "← ", "<"):
+        w = items[1]
     w.setFocus(Qt.OtherFocusReason)
     _highlight(w, True)
     if isinstance(w, QListWidget) and w.count() > 0:

@@ -23,7 +23,17 @@ class SnakeBoard(QWidget):
         self.reset()
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.tick)
+        # Timer only while page is visible — pages are built at app start.
+
+    def showEvent(self, e):  # noqa: N802
+        super().showEvent(e)
+        self.reset()
         self.timer.start(120)
+        self.setFocus(Qt.OtherFocusReason)
+
+    def hideEvent(self, e):  # noqa: N802
+        self.timer.stop()
+        super().hideEvent(e)
 
     def reset(self):
         self.snake: List[Tuple[int, int]] = [(5, 10), (4, 10), (3, 10)]
@@ -93,7 +103,16 @@ class PongBoard(QWidget):
         self.reset()
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.tick)
+
+    def showEvent(self, e):  # noqa: N802
+        super().showEvent(e)
+        self.reset()
         self.timer.start(16)
+        self.setFocus(Qt.OtherFocusReason)
+
+    def hideEvent(self, e):  # noqa: N802
+        self.timer.stop()
+        super().hideEvent(e)
 
     def reset(self):
         self.w = 320
@@ -162,7 +181,16 @@ class TetrisBoard(QWidget):
         self.reset()
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.tick)
+
+    def showEvent(self, e):  # noqa: N802
+        super().showEvent(e)
+        self.reset()
         self.timer.start(450)
+        self.setFocus(Qt.OtherFocusReason)
+
+    def hideEvent(self, e):  # noqa: N802
+        self.timer.stop()
+        super().hideEvent(e)
 
     def reset(self):
         self.grid = [[0] * self.cols for _ in range(self.rows)]
@@ -357,7 +385,7 @@ def _wrap_game(title: str, board: QWidget, on_back: Callable[[], None], extra_bt
         for b in extra_btns:
             row.addWidget(b)
         lay.addLayout(row)
-    board.setFocus()
+    # Focus when shown (board showEvent) — not at build-time registration
     return page_chrome(title, body, on_back)
 
 

@@ -142,10 +142,13 @@ class ScaledScreenHost(QWidget):
         if x < 0 or y < 0 or x >= dw or y >= dh:
             return
         local = QPoint(int(x / scale), int(y / scale))
-        et = QEvent.MouseButtonPress if press else QEvent.MouseButtonRelease
-        me = QMouseEvent(et, local, event.button(), event.buttons(), event.modifiers())
         child = src.childAt(local)
-        QApplication.sendEvent(child if child is not None else src, me)
+        target = child if child is not None else src
+        # Event coords must be local to the receiving widget (not source top-left)
+        pos = target.mapFrom(src, local) if child is not None else local
+        et = QEvent.MouseButtonPress if press else QEvent.MouseButtonRelease
+        me = QMouseEvent(et, pos, event.button(), event.buttons(), event.modifiers())
+        QApplication.sendEvent(target, me)
 
     def paintEvent(self, _event) -> None:  # noqa: N802
         p = QPainter(self)
