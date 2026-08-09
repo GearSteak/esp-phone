@@ -71,6 +71,22 @@ install -m 755 "$ROOT/session/spi-blank.sh" "$PREFIX/session/spi-blank.sh"
 install -m 755 "$ROOT/session/spi-blank.sh" /usr/local/bin/digivice-spi-blank
 install -m 755 "$ROOT/session/desktop-spi-mirror.sh" "$PREFIX/session/desktop-spi-mirror.sh"
 install -m 755 "$ROOT/session/desktop-spi-mirror.sh" /usr/local/bin/digivice-desktop-mirror
+install -m 755 "$ROOT/session/update-handset.sh" "$PREFIX/session/update-handset.sh"
+install -m 755 "$ROOT/session/update-handset.sh" /usr/local/bin/digivice-update
+
+# Settings → Update can run without a password prompt on the handset
+cat >/etc/sudoers.d/esp-handset-update <<EOF
+# Digivice Settings → Update
+$USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-update
+$USER_NAME ALL=(root) NOPASSWD: $PREFIX/session/update-handset.sh
+EOF
+chmod 440 /etc/sudoers.d/esp-handset-update
+
+# Remember git checkout for digivice-update (if installer was run from a clone)
+if [[ -d "$ROOT/../.git" ]]; then
+  REPO_ROOT="$(cd "$ROOT/.." && pwd)"
+  echo "$REPO_ROOT" >/etc/esp-handset/repo.path
+fi
 
 cat >/etc/udev/rules.d/99-esp-handset.rules <<'EOF'
 # Espressif USB CDC — Heltec LoRa / notify bridge

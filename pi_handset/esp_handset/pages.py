@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from PyQt5.QtCore import Qt
-from PyQt5.QtGui import QPixmap
+from PyQt5.QtGui import QPixmap, QTextCursor
 from PyQt5.QtWidgets import (
     QHBoxLayout,
     QLabel,
@@ -544,6 +544,7 @@ def make_settings_hub(on_back, open_page: Callable[[str], None], on_linux) -> QW
         ("set_network", "Network / modem status"),
         ("set_accounts", "Accounts (SIP)"),
         ("set_sounds", "Sounds"),
+        ("set_update", "Update Digivice"),
         ("set_about", "About"),
         ("help", "Help / Keys"),
     ]:
@@ -555,6 +556,122 @@ def make_settings_hub(on_back, open_page: Callable[[str], None], on_linux) -> QW
     lay.addWidget(desk)
     lay.addStretch(1)
     return page_chrome("Settings", body, on_back)
+
+
+def make_update_page(on_back: Callable[[], None]) -> QWidget:
+    """Download latest from GitHub and reinstall Digivice software."""
+    from PyQt5.QtCore import QProcess, QProcessEnvironment
+
+    body = QWidget()
+    lay = QVBoxLayout(body)
+    tip = QLabel(
+        "Pulls GearSteak/esp-phone and reinstalls Digivice "
+        "(keeps userspace SPI). Needs network + sudo."
+    )
+    tip.setWordWrap(True)
+    tip.setStyleSheet("color:#9ab;font-size:11px;")
+    status = QLabel("Ready.")
+    status.setWordWrap(True)
+    log = QTextEdit()
+    log.setReadOnly(True)
+    log.setMaximumHeight(140)
+    log.setStyleSheet("font-size:10px; font-family: monospace;")
+    check_btn = QPushButton("Check for updates")
+    run_btn = QPushButton("Download & install")
+    run_btn.setStyleSheet("font-weight:700;")
+    lay.addWidget(tip)
+    lay.addWidget(status)
+    lay.addWidget(log, 1)
+    lay.addWidget(check_btn)
+    lay.addWidget(run_btn)
+
+    proc = QProcess(body)
+    env = QProcessEnvironment.systemEnvironment()
+    env.insert("DISPLAY", os.environ.get("DISPLAY", ":0"))
+    proc.setProcessEnvironment(env)
+
+    def _update_bin() -> list:
+        for p in (
+            "/usr/local/bin/digivice-update",
+            "/opt/esp-handset/session/update-handset.sh",
+        ):
+            if os.path.isfile(p):
+                # Prefer passwordless sudo so Settings works without a tty
+                return ["sudo", "-n", p]
+        # Fallback: run from sibling of this package (dev checkout)
+        here = Path(__file__).resolve().parents[1] / "session" / "update-handset.sh"
+        if here.is_file():
+            return ["bash", str(here)]
+        return ["sudo", "-n", "digivice-update"]
+
+    def append_out():
+        data = bytes(proc.readAllStandardOutput()).decode("utf-8", "replace")
+        if data:
+            log.moveCursor(QTextCursor.End)
+            log.insertPlainText(data)
+
+    def append_err():
+        data = bytes(proc.readAllStandardError()).decode("utf-8", "replace")
+        if data:
+            log.moveCursor(QTextCursor.End)
+            log.insertPlainText(data)
+
+    def on_finished(code: int, _status) -> None:
+        check_btn.setEnabled(True)
+        run_btn.setEnabled(True)
+        if code == 0:
+            status.setText("Done. Digivice will restart if install used --restart.")
+        else:
+            status.setText(
+                f"Failed (exit {code}). Need network + passwordless sudo for digivice-update."
+            )
+
+    proc.readyReadStandardOutput.connect(append_out)
+    proc.readyReadStandardError.connect(append_err)
+    proc.finished.connect(on_finished)
+
+    def start(args: list, label: str) -> None:
+        if proc.state() != QProcess.NotRunning:
+            return
+        bin_cmd = _update_bin()
+        log.clear()
+        status.setText(label)
+        check_btn.setEnabled(False)
+        run_btn.setEnabled(False)
+        prog = bin_cmd[0]
+        argv = bin_cmd[1:] + args
+        log.append(f"$ {' '.join(bin_cmd + args)}\n")
+        proc.start(prog, argv)
+        if not proc.waitForStarted(4000):
+            status.setText("Could not start digivice-update")
+            check_btn.setEnabled(True)
+            run_btn.setEnabled(True)
+            log.append(
+                "Install update script first:\n"
+                "  sudo bash pi_handset/session/update-handset.sh\n"
+                "Or re-run install-handset.sh\n"
+            )
+
+    def do_check():
+        start(["--check"], "Checking GitHub…")
+
+    def do_run():
+        r = QMessageBox.question(
+            body,
+            "Update Digivice",
+            "Download latest from GitHub and install?\n"
+            "Display config is kept (SPI userspace safe).\n"
+            "UI restarts when finished.",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.Yes,
+        )
+        if r != QMessageBox.Yes:
+            return
+        start(["--restart"], "Updating… (may take a minute)")
+
+    check_btn.clicked.connect(do_check)
+    run_btn.clicked.connect(do_run)
+    return page_chrome("Update", body, on_back)
 
 
 def make_about_page(modem, on_back) -> QWidget:
@@ -594,6 +711,7 @@ def make_help_page(on_back) -> QWidget:
         "Back×3 (Escape) → desktop\n"
         "F12 / F10 / Ctrl+Q → desktop\n"
         "Settings → Linux → Exit\n"
+        "Settings → Update → download\n"
         "SSH: digivice-leave\n"
         "Settings → Linux → confirm",
         on_back,

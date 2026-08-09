@@ -59,6 +59,7 @@ SETTINGS_APPS = [
     AppEntry("set_network", "Network", "Wi‑Fi / LTE", "⌁"),
     AppEntry("set_accounts", "Accounts", "SIP", "@"),
     AppEntry("set_sounds", "Sounds", "", "♪"),
+    AppEntry("set_update", "Update", "GitHub install", "↓"),
     AppEntry("set_about", "About", "", "i"),
     AppEntry("help", "Help", "Joystick map", "?"),
     AppEntry("linux", "Linux", "Full desktop", "▤"),
