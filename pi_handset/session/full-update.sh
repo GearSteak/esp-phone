@@ -176,6 +176,7 @@ install -m 755 "$ROOT/session/ensure-buttons.sh" /usr/local/bin/digivice-ensure-
 install -m 755 "$ROOT/session/fix-cursor.sh" /usr/local/bin/digivice-fix-cursor 2>/dev/null || true
 install -m 755 "$ROOT/session/restore-desktop-displays.sh" /usr/local/bin/digivice-restore-desktop 2>/dev/null || true
 install -m 755 "$ROOT/session/desktop-spi-mirror.sh" /usr/local/bin/digivice-desktop-mirror 2>/dev/null || true
+install -m 755 "$ROOT/session/fix-desktop-spi-now.sh" /usr/local/bin/digivice-fix-desktop-spi 2>/dev/null || true
 install -m 755 "$ROOT/session/digivice-layout.sh" /usr/local/bin/digivice-layout 2>/dev/null || true
 install -m 755 "$ROOT/session/unfuck-displays.sh" /usr/local/bin/digivice-unfuck-displays 2>/dev/null || true
 install -m 755 "$ROOT/session/spi-blank.sh" /usr/local/bin/digivice-spi-blank 2>/dev/null || true
