@@ -11,12 +11,14 @@ from typing import Callable, Optional
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QPixmap, QTextCursor
 from PyQt5.QtWidgets import (
+    QFrame,
     QHBoxLayout,
     QLabel,
     QLineEdit,
     QListWidget,
     QMessageBox,
     QPushButton,
+    QScrollArea,
     QTextEdit,
     QVBoxLayout,
     QWidget,
@@ -538,24 +540,41 @@ def make_appearance_page(shell, on_back) -> QWidget:
 def make_settings_hub(on_back, open_page: Callable[[str], None], on_linux) -> QWidget:
     body = QWidget()
     lay = QVBoxLayout(body)
-    lay.addWidget(QLabel(f"SIP config: {CONFIG}"))
+    lay.setSpacing(4)
+    tip = QLabel("Settings — scroll for more")
+    tip.setStyleSheet("color:#9ab;font-size:10px;")
+    lay.addWidget(tip)
+    # Update first so it’s always on-screen on 240×320
     for key, label in [
-        ("set_appearance", "Appearance (wallpaper)"),
-        ("set_network", "Network / modem status"),
+        ("set_update", "★ Update Digivice"),
+        ("set_appearance", "Appearance"),
+        ("set_network", "Network / modem"),
         ("set_accounts", "Accounts (SIP)"),
         ("set_sounds", "Sounds"),
-        ("set_update", "Update Digivice"),
+        ("set_security", "Security (PIN)"),
         ("set_about", "About"),
         ("help", "Help / Keys"),
     ]:
         b = QPushButton(label)
+        b.setMinimumHeight(28)
         b.clicked.connect(lambda _=False, k=key: open_page(k))
         lay.addWidget(b)
     desk = QPushButton("Exit to Linux Desktop")
+    desk.setMinimumHeight(28)
     desk.clicked.connect(on_linux)
     lay.addWidget(desk)
     lay.addStretch(1)
-    return page_chrome("Settings", body, on_back)
+
+    scroll = QScrollArea()
+    scroll.setWidgetResizable(True)
+    scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+    scroll.setFrameShape(QFrame.NoFrame)
+    scroll.setWidget(body)
+    wrap = QWidget()
+    wlay = QVBoxLayout(wrap)
+    wlay.setContentsMargins(0, 0, 0, 0)
+    wlay.addWidget(scroll)
+    return page_chrome("Settings", wrap, on_back)
 
 
 def make_update_page(on_back: Callable[[], None]) -> QWidget:
