@@ -582,17 +582,24 @@ class PhoneShell(QMainWindow):
                 return
 
             cur = digi_nav.digi_current(page)
+            if key in (Qt.Key_Left, Qt.Key_Right):
+                delta = -1 if key == Qt.Key_Left else 1
+                # Gallery full-screen viewer: L/R = prev/next photo
+                seek = getattr(page, "digi_seek", None)
+                active = getattr(page, "digi_seek_active", None)
+                if callable(seek) and (active() if callable(active) else False):
+                    if seek(delta):
+                        event.accept()
+                        return
+                if digi_nav.move_focus(page, delta):
+                    event.accept()
+                    return
             if key in (Qt.Key_Up, Qt.Key_Down):
                 delta = -1 if key == Qt.Key_Up else 1
                 if isinstance(cur, QListWidget):
                     if digi_nav.list_nudge(cur, delta):
                         event.accept()
                         return
-                if digi_nav.move_focus(page, delta):
-                    event.accept()
-                    return
-            if key in (Qt.Key_Left, Qt.Key_Right):
-                delta = -1 if key == Qt.Key_Left else 1
                 if digi_nav.move_focus(page, delta):
                     event.accept()
                     return

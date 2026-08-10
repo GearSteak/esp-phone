@@ -267,56 +267,375 @@ def make_call_log_page(on_back) -> QWidget:
     return page_chrome("Call Log", body, on_back)
 
 
-def make_camera_page(on_back, on_status) -> QWidget:
+def make_camera_page(on_back, on_status, open_gallery: Optional[Callable[[], None]] = None) -> QWidget:
+    """Live CSI preview + Snap. Gallery is a separate page (no list under camera)."""
+    from PyQt5.QtCore import QTimer, pyqtSignal, QObject
+    from PyQt5.QtGui import QImage, QPixmap
+
+    class _FrameBridge(QObject):
+        frame = pyqtSignal(object, int, int)  # bytes, w, h
+        err = pyqtSignal(str)
+
     body = QWidget()
     lay = QVBoxLayout(body)
-    preview = QLabel("No photo yet")
+    lay.setSpacing(4)
+    lay.setContentsMargins(2, 2, 2, 2)
+
+    tip = QLabel("Live preview · Snap saves to Gallery")
+    tip.setStyleSheet("color:#9ab;font-size:10px;")
+    tip.setWordWrap(True)
+    preview = QLabel("Starting camera…")
     preview.setAlignment(Qt.AlignCenter)
-    preview.setMinimumHeight(120)
-    preview.setStyleSheet("background:#111; border-radius:12px; color:#888;")
-    gallery = QListWidget()
-    snap = QPushButton("Snap (rear CSI)")
-    refresh = QPushButton("Refresh gallery")
+    preview.setMinimumHeight(140)
+    preview.setStyleSheet(
+        "background:#0a0a0a; border: 2px solid #333; border-radius: 8px; color:#888;"
+    )
+    status = QLabel("")
+    status.setStyleSheet("color:#9ab;font-size:10px;")
+    status.setWordWrap(True)
+    snap = QPushButton("Snap photo")
+    snap.setMinimumHeight(34)
+    snap.setStyleSheet("font-weight:700;")
+    gallery_btn = QPushButton("Open Gallery →")
+    gallery_btn.setMinimumHeight(30)
+
+    lay.addWidget(tip)
+    lay.addWidget(preview, 1)
+    lay.addWidget(status)
     lay.addWidget(snap)
-    lay.addWidget(preview)
-    lay.addWidget(QLabel("Gallery ~/Pictures/phone"))
-    lay.addWidget(gallery, 1)
-    lay.addWidget(refresh)
+    if open_gallery is not None:
+        lay.addWidget(gallery_btn)
+    else:
+        gallery_btn.hide()
 
-    def show_path(path: Path):
-        pix = QPixmap(str(path))
-        preview.setPixmap(
-            pix.scaled(400, 280, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-        )
-        on_status(f"Saved {path.name}")
+    bridge = _FrameBridge(body)
+    live = pi_camera.LivePreview(width=320, height=240, fps=8.0)
+    last_path: list[Optional[Path]] = [None]
+    _started = [False]
 
-    def do_snap():
+    def on_frame_bytes(rgb: bytes, w: int, h: int) -> None:
+        bridge.frame.emit(rgb, w, h)
+
+    def on_frame_ui(rgb, w: int, h: int) -> None:
         try:
-            path = pi_camera.capture_rear()
-            show_path(path)
-            do_refresh()
-        except Exception as e:
-            QMessageBox.warning(body, "Camera", str(e))
+            img = QImage(rgb, w, h, w * 3, QImage.Format_RGB888)
+            if img.isNull():
+                return
+            pix = QPixmap.fromImage(img.copy())
+            preview.setPixmap(
+                pix.scaled(
+                    preview.width() or 220,
+                    preview.height() or 160,
+                    Qt.KeepAspectRatio,
+                    Qt.SmoothTransformation,
+                )
+            )
+        except Exception:
+            pass
 
-    def do_refresh():
-        gallery.clear()
-        for p in pi_camera.list_photos():
-            gallery.addItem(p.name)
+    def on_err(msg: str) -> None:
+        status.setText(msg)
+        preview.setText(msg[:80])
 
-    def show_sel():
-        items = gallery.selectedItems()
-        if not items:
+    bridge.frame.connect(on_frame_ui)
+    bridge.err.connect(on_err)
+
+    def start_live() -> None:
+        if _started[0]:
             return
-        path = PHOTOS / items[0].text()
-        if path.exists():
-            show_path(path)
+        status.setText("Starting preview…")
+        ok = live.start(
+            on_frame_bytes,
+            on_error=lambda m: bridge.err.emit(m),
+        )
+        _started[0] = ok
+        if ok:
+            status.setText("Live")
+        else:
+            status.setText("No live preview — Snap still works if camera tools installed")
+            preview.setText("Preview unavailable\nUse Snap to capture")
+
+    def stop_live() -> None:
+        live.stop()
+        _started[0] = False
+
+    def do_snap() -> None:
+        status.setText("Capturing…")
+        snap.setEnabled(False)
+
+        def work() -> None:
+            try:
+                if live.running:
+                    path = live.capture_still()
+                else:
+                    path = pi_camera.capture_rear()
+                last_path[0] = path
+                # flash last shot briefly
+                pix = QPixmap(str(path))
+                if not pix.isNull():
+                    preview.setPixmap(
+                        pix.scaled(
+                            preview.width() or 220,
+                            preview.height() or 160,
+                            Qt.KeepAspectRatio,
+                            Qt.SmoothTransformation,
+                        )
+                    )
+                status.setText(f"Saved {path.name}")
+                on_status(f"Photo {path.name}")
+            except Exception as e:
+                status.setText(str(e)[:120])
+                on_status(f"Camera: {e}")
+            finally:
+                snap.setEnabled(True)
+
+        # Keep UI responsive (still can take a moment)
+        QTimer.singleShot(20, work)
+
+    def go_gallery() -> None:
+        stop_live()
+        if open_gallery:
+            open_gallery()
 
     snap.clicked.connect(do_snap)
-    refresh.clicked.connect(do_refresh)
-    gallery.itemSelectionChanged.connect(show_sel)
-    PHOTOS.mkdir(parents=True, exist_ok=True)
-    do_refresh()
-    return page_chrome("Camera", body, on_back)
+    gallery_btn.clicked.connect(go_gallery)
+
+    # Start/stop preview when page is shown/hidden
+    _orig_show = body.showEvent
+    _orig_hide = body.hideEvent
+
+    def showEvent(e) -> None:  # noqa: N802
+        if _orig_show:
+            _orig_show(e)
+        else:
+            QWidget.showEvent(body, e)
+        QTimer.singleShot(100, start_live)
+
+    def hideEvent(e) -> None:  # noqa: N802
+        stop_live()
+        if _orig_hide:
+            _orig_hide(e)
+        else:
+            QWidget.hideEvent(body, e)
+
+    body.showEvent = showEvent  # type: ignore
+    body.hideEvent = hideEvent  # type: ignore
+
+    # Also stop when chrome is torn down
+    body.destroyed.connect(lambda *_: stop_live())
+
+    return page_chrome("Camera", body, on_back, scroll=False)
+
+
+def make_gallery_page(on_back: Callable[[], None], on_status) -> QWidget:
+    """Thumbnail list → full-screen viewer; left/right for prev/next photo."""
+    from PyQt5.QtCore import QSize
+    from PyQt5.QtGui import QIcon, QPixmap
+    from PyQt5.QtWidgets import QListWidgetItem, QSizePolicy, QStackedWidget
+
+    root = QWidget()
+    root_lay = QVBoxLayout(root)
+    root_lay.setContentsMargins(0, 0, 0, 0)
+    root_lay.setSpacing(0)
+    stack = QStackedWidget()
+    root_lay.addWidget(stack, 1)
+
+    # --- list page ---
+    list_page = QWidget()
+    ll = QVBoxLayout(list_page)
+    ll.setContentsMargins(2, 2, 2, 2)
+    ll.setSpacing(4)
+    tip = QLabel("Confirm opens photo · refresh reloads")
+    tip.setStyleSheet("color:#9ab;font-size:10px;")
+    tip.setWordWrap(True)
+    lst = QListWidget()
+    lst.setIconSize(QSize(72, 54))
+    lst.setSpacing(2)
+    lst.setUniformItemSizes(True)
+    lst.setResizeMode(QListWidget.Adjust)
+    lst.setWordWrap(True)
+    refresh = QPushButton("Refresh")
+    refresh.setMinimumHeight(28)
+    empty = QLabel("No photos yet.\nCamera → Snap")
+    empty.setAlignment(Qt.AlignCenter)
+    empty.setStyleSheet("color:#888;")
+    empty.hide()
+    ll.addWidget(tip)
+    ll.addWidget(lst, 1)
+    ll.addWidget(empty)
+    ll.addWidget(refresh)
+
+    # --- viewer page ---
+    view_page = QWidget()
+    vl = QVBoxLayout(view_page)
+    vl.setContentsMargins(0, 0, 0, 0)
+    vl.setSpacing(2)
+    img_lab = QLabel("…")
+    img_lab.setAlignment(Qt.AlignCenter)
+    img_lab.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+    img_lab.setStyleSheet("background:#000; color:#888;")
+    img_lab.setMinimumHeight(160)
+    meta = QLabel("")
+    meta.setAlignment(Qt.AlignCenter)
+    meta.setStyleSheet("color:#e8eef5;font-size:10px;font-weight:700;")
+    meta.setWordWrap(True)
+    hint = QLabel("← → prev/next · Back = list")
+    hint.setAlignment(Qt.AlignCenter)
+    hint.setStyleSheet("color:#9ab;font-size:9px;")
+    row = QHBoxLayout()
+    prev_btn = QPushButton("◀ Prev")
+    next_btn = QPushButton("Next ▶")
+    prev_btn.setMinimumHeight(30)
+    next_btn.setMinimumHeight(30)
+    row.addWidget(prev_btn)
+    row.addWidget(next_btn)
+    close_btn = QPushButton("Back to list")
+    close_btn.setMinimumHeight(28)
+    vl.addWidget(img_lab, 1)
+    vl.addWidget(meta)
+    vl.addWidget(hint)
+    vl.addLayout(row)
+    vl.addWidget(close_btn)
+
+    stack.addWidget(list_page)
+    stack.addWidget(view_page)
+
+    photos: list[Path] = []
+    index = [0]
+
+    def load_list() -> None:
+        photos.clear()
+        photos.extend(pi_camera.list_photos(limit=200))
+        lst.clear()
+        if not photos:
+            empty.show()
+            lst.hide()
+            on_status("Gallery empty")
+            return
+        empty.hide()
+        lst.show()
+        for p in photos:
+            item = QListWidgetItem(p.name)
+            pix = QPixmap(str(p))
+            if not pix.isNull():
+                item.setIcon(
+                    QIcon(
+                        pix.scaled(
+                            72, 54, Qt.KeepAspectRatio, Qt.SmoothTransformation
+                        )
+                    )
+                )
+            item.setData(Qt.UserRole, str(p))
+            item.setSizeHint(QSize(200, 58))
+            lst.addItem(item)
+        if lst.count() > 0 and lst.currentRow() < 0:
+            lst.setCurrentRow(0)
+        on_status(f"{len(photos)} photos")
+
+    def show_list_mode() -> None:
+        stack.setCurrentWidget(list_page)
+        root.setProperty("digiSeekActive", False)
+        # prefer list for digi focus
+        try:
+            from esp_handset import digi_nav
+
+            digi_nav.ensure_page_focus(root)
+        except Exception:
+            lst.setFocus()
+
+    def paint_viewer() -> None:
+        if not photos:
+            return
+        i = max(0, min(index[0], len(photos) - 1))
+        index[0] = i
+        path = photos[i]
+        pix = QPixmap(str(path))
+        if pix.isNull():
+            img_lab.setText("Cannot load")
+            meta.setText(path.name)
+            return
+        # fill available label area
+        w = max(img_lab.width(), 200)
+        h = max(img_lab.height(), 140)
+        img_lab.setPixmap(
+            pix.scaled(w, h, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        )
+        meta.setText(f"{i + 1} / {len(photos)}\n{path.name}")
+        on_status(f"Photo {i + 1}/{len(photos)}")
+        prev_btn.setEnabled(len(photos) > 1)
+        next_btn.setEnabled(len(photos) > 1)
+
+    def open_index(i: int) -> None:
+        if not photos:
+            return
+        index[0] = i % len(photos)
+        stack.setCurrentWidget(view_page)
+        root.setProperty("digiSeekActive", True)
+        paint_viewer()
+        # digi: land on Next for confirm cycling; L/R still seek
+        next_btn.setFocus()
+
+    def open_selected() -> None:
+        row = lst.currentRow()
+        if row < 0 and photos:
+            row = 0
+        if 0 <= row < len(photos):
+            open_index(row)
+
+    def digi_seek(delta: int) -> bool:
+        """Left/right in viewer. Returns True if handled."""
+        if stack.currentWidget() is not view_page or not photos:
+            return False
+        index[0] = (index[0] + delta) % len(photos)
+        paint_viewer()
+        return True
+
+    root.digi_seek = digi_seek  # type: ignore[attr-defined]
+    root.digi_seek_active = lambda: stack.currentWidget() is view_page  # type: ignore
+
+    def handle_back() -> None:
+        if stack.currentWidget() is view_page:
+            show_list_mode()
+        else:
+            on_back()
+
+    prev_btn.clicked.connect(lambda: digi_seek(-1))
+    next_btn.clicked.connect(lambda: digi_seek(1))
+    close_btn.clicked.connect(show_list_mode)
+    refresh.clicked.connect(load_list)
+    lst.itemActivated.connect(lambda _i: open_selected())
+    lst.itemClicked.connect(lambda _i: open_selected())
+
+    # resize viewer image when showing
+    def on_view_resize(e) -> None:
+        QWidget.resizeEvent(view_page, e)
+        if stack.currentWidget() is view_page:
+            paint_viewer()
+
+    view_page.resizeEvent = on_view_resize  # type: ignore
+
+    load_list()
+
+    # page_chrome with custom back
+    chrome = page_chrome("Gallery", root, handle_back, scroll=False)
+    # expose seek on chrome for shell key routing
+    chrome.digi_seek = digi_seek  # type: ignore[attr-defined]
+    chrome.digi_seek_active = (  # type: ignore[attr-defined]
+        lambda: stack.currentWidget() is view_page
+    )
+    # re-load thumbs when page is shown again
+    _show = chrome.showEvent
+
+    def show_ev(e) -> None:  # noqa: N802
+        if _show:
+            _show(e)
+        else:
+            QWidget.showEvent(chrome, e)
+        if stack.currentWidget() is list_page:
+            load_list()
+
+    chrome.showEvent = show_ev  # type: ignore
+    return chrome
 
 
 def make_lora_page(bridge, on_back, on_status) -> QWidget:

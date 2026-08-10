@@ -181,8 +181,11 @@ def build_app(bridge: Optional[EspBridge], modem: Optional[Sim7600]) -> PhoneShe
 
     shell.register_page("contacts", pages.make_contacts_page(back, open_dial))
     shell.register_page("call_log", pages.make_call_log_page(back))
-    shell.register_page("camera", pages.make_camera_page(back, status))
-    shell.register_page("gallery", pages.make_camera_page(back, status))
+    shell.register_page(
+        "camera",
+        pages.make_camera_page(back, status, open_gallery=lambda: shell.go("gallery")),
+    )
+    shell.register_page("gallery", pages.make_gallery_page(back, status))
     lora_page = pages.make_lora_page(bridge, back, status)
     shell.register_page("lora", lora_page)
     shell.register_page("gps", pages.make_gps_page(modem, back, status))
