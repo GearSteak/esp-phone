@@ -171,7 +171,8 @@ install_tree() {
     "fix-cursor.sh:digivice-fix-cursor" \
     "restore-desktop-displays.sh:digivice-restore-desktop" \
     "hdmi-hotplug.sh:digivice-hdmi-hotplug" \
-    "gui-update.sh:digivice-gui-update"
+    "gui-update.sh:digivice-gui-update" \
+    "power.sh:digivice-power"
   do
     src="${pair%%:*}"
     dst="${pair##*:}"
@@ -191,13 +192,15 @@ install_tree() {
 
   if [[ -d /etc/sudoers.d ]]; then
     cat >/etc/sudoers.d/esp-handset-update <<EOF
-# Digivice Settings → Update (passwordless)
+# Digivice Settings → Update / Power (passwordless)
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-update
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-full-update
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-gui-update
+$USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-power
 $USER_NAME ALL=(root) NOPASSWD: $PREFIX/session/update-handset.sh
 $USER_NAME ALL=(root) NOPASSWD: $PREFIX/session/full-update.sh
 $USER_NAME ALL=(root) NOPASSWD: $PREFIX/session/gui-update.sh
+$USER_NAME ALL=(root) NOPASSWD: $PREFIX/session/power.sh
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-ensure-buttons
 $USER_NAME ALL=(root) NOPASSWD: $PREFIX/session/ensure-buttons.sh
 EOF
@@ -206,6 +209,10 @@ EOF
   if [[ -f "$ROOT/session/gui-update.sh" ]]; then
     install -m 755 "$ROOT/session/gui-update.sh" "$PREFIX/session/gui-update.sh"
     install -m 755 "$ROOT/session/gui-update.sh" /usr/local/bin/digivice-gui-update
+  fi
+  if [[ -f "$ROOT/session/power.sh" ]]; then
+    install -m 755 "$ROOT/session/power.sh" "$PREFIX/session/power.sh"
+    install -m 755 "$ROOT/session/power.sh" /usr/local/bin/digivice-power
   fi
   if [[ -x /usr/local/bin/digivice-hdmi-hotplug ]]; then
     /usr/local/bin/digivice-hdmi-hotplug --install 2>&1 | tee -a "$LOG" || true

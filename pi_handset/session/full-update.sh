@@ -184,6 +184,8 @@ install -m 755 "$ROOT/session/spi-test.sh" /usr/local/bin/digivice-spi-test 2>/d
 install -m 755 "$ROOT/session/mirror-displays.sh" /usr/local/bin/digivice-mirror-displays 2>/dev/null || true
 install -m 755 "$ROOT/session/hdmi-hotplug.sh" "$PREFIX/session/hdmi-hotplug.sh" 2>/dev/null || true
 install -m 755 "$ROOT/session/hdmi-hotplug.sh" /usr/local/bin/digivice-hdmi-hotplug 2>/dev/null || true
+install -m 755 "$ROOT/session/power.sh" "$PREFIX/session/power.sh" 2>/dev/null || true
+install -m 755 "$ROOT/session/power.sh" /usr/local/bin/digivice-power 2>/dev/null || true
 
 if [[ -d "$ROOT/display" ]]; then
   install -m 755 "$ROOT/display/install-spi-userspace.sh" /usr/local/bin/digivice-install-spi-userspace 2>/dev/null || true
@@ -213,14 +215,18 @@ cat >/etc/sudoers.d/esp-handset-update <<EOF
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-full-update
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-update
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-gui-update
+$USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-power
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-ensure-buttons
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-fix-cursor
 $USER_NAME ALL=(root) NOPASSWD: $PREFIX/session/full-update.sh
 $USER_NAME ALL=(root) NOPASSWD: $PREFIX/session/update-handset.sh
 $USER_NAME ALL=(root) NOPASSWD: $PREFIX/session/gui-update.sh
+$USER_NAME ALL=(root) NOPASSWD: $PREFIX/session/power.sh
 $USER_NAME ALL=(root) NOPASSWD: $PREFIX/session/ensure-buttons.sh
 $USER_NAME ALL=(root) NOPASSWD: /usr/bin/bash $PREFIX/session/gui-update.sh
 $USER_NAME ALL=(root) NOPASSWD: /bin/bash $PREFIX/session/gui-update.sh
+$USER_NAME ALL=(root) NOPASSWD: /usr/bin/bash $PREFIX/session/power.sh
+$USER_NAME ALL=(root) NOPASSWD: /bin/bash $PREFIX/session/power.sh
 EOF
 chmod 440 /etc/sudoers.d/esp-handset-update
 

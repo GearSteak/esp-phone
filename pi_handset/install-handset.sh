@@ -85,6 +85,8 @@ install -m 755 "$ROOT/session/ensure-buttons.sh" "$PREFIX/session/ensure-buttons
 install -m 755 "$ROOT/session/ensure-buttons.sh" /usr/local/bin/digivice-ensure-buttons
 install -m 755 "$ROOT/session/hdmi-hotplug.sh" "$PREFIX/session/hdmi-hotplug.sh"
 install -m 755 "$ROOT/session/hdmi-hotplug.sh" /usr/local/bin/digivice-hdmi-hotplug
+install -m 755 "$ROOT/session/power.sh" "$PREFIX/session/power.sh"
+install -m 755 "$ROOT/session/power.sh" /usr/local/bin/digivice-power
 
 # Settings → Update can run without a password prompt on the handset
 cat >/etc/sudoers.d/esp-handset-update <<EOF
@@ -92,14 +94,18 @@ cat >/etc/sudoers.d/esp-handset-update <<EOF
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-full-update
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-update
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-gui-update
+$USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-power
 $USER_NAME ALL=(root) NOPASSWD: $PREFIX/session/full-update.sh
 $USER_NAME ALL=(root) NOPASSWD: $PREFIX/session/update-handset.sh
 $USER_NAME ALL=(root) NOPASSWD: $PREFIX/session/gui-update.sh
+$USER_NAME ALL=(root) NOPASSWD: $PREFIX/session/power.sh
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-ensure-buttons
 $USER_NAME ALL=(root) NOPASSWD: $PREFIX/session/ensure-buttons.sh
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-fix-cursor
 $USER_NAME ALL=(root) NOPASSWD: /usr/bin/bash $PREFIX/session/gui-update.sh
 $USER_NAME ALL=(root) NOPASSWD: /bin/bash $PREFIX/session/gui-update.sh
+$USER_NAME ALL=(root) NOPASSWD: /usr/bin/bash $PREFIX/session/power.sh
+$USER_NAME ALL=(root) NOPASSWD: /bin/bash $PREFIX/session/power.sh
 EOF
 chmod 440 /etc/sudoers.d/esp-handset-update
 

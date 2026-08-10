@@ -579,6 +579,7 @@ def make_settings_hub(on_back, open_page: Callable[[str], None], on_linux) -> QW
         ("set_accounts", "Accounts (SIP)"),
         ("set_sounds", "Sounds"),
         ("set_security", "Security (PIN)"),
+        ("set_power", "Power · Off / Restart"),
         ("set_about", "About"),
         ("help", "Help / Keys"),
     ]:
@@ -592,6 +593,93 @@ def make_settings_hub(on_back, open_page: Callable[[str], None], on_linux) -> QW
     lay.addWidget(desk)
     lay.addStretch(1)
     return page_chrome("Settings", body, on_back)
+
+
+def make_power_page(on_back: Callable[[], None]) -> QWidget:
+    """Power off / restart. Double-press confirm (no Yes/No dialog)."""
+    from PyQt5.QtCore import QTimer
+
+    body = QWidget()
+    lay = QVBoxLayout(body)
+    tip = QLabel(
+        "Shutdown or restart the Pi.\n"
+        "Press the SAME button twice within 4s to confirm."
+    )
+    tip.setWordWrap(True)
+    tip.setStyleSheet("color:#9ab;font-size:10px;")
+    status = QLabel("Ready.")
+    status.setWordWrap(True)
+    off_btn = QPushButton("Power off (x2)")
+    off_btn.setMinimumHeight(36)
+    off_btn.setStyleSheet("font-weight:700;")
+    reboot_btn = QPushButton("Restart (x2)")
+    reboot_btn.setMinimumHeight(36)
+    lay.addWidget(tip)
+    lay.addWidget(status)
+    lay.addWidget(off_btn)
+    lay.addWidget(reboot_btn)
+    lay.addStretch(1)
+
+    pending = {"action": None, "ts": 0.0}
+
+    def _power_bin(arg: str) -> list:
+        for p in (
+            "/usr/local/bin/digivice-power",
+            "/opt/esp-handset/session/power.sh",
+        ):
+            if os.path.isfile(p):
+                return ["sudo", "-n", p, arg]
+        here = Path(__file__).resolve().parents[1] / "session" / "power.sh"
+        if here.is_file():
+            return ["sudo", "-n", "bash", str(here), arg]
+        # Fallback to common paths (need NOPASSWD for these if used)
+        if arg == "poweroff":
+            return ["sudo", "-n", "systemctl", "poweroff"]
+        return ["sudo", "-n", "systemctl", "reboot"]
+
+    def needs_confirm(action: str) -> bool:
+        import time as _t
+
+        now = _t.time()
+        if pending["action"] == action and now - float(pending["ts"]) < 4.0:
+            pending["action"] = None
+            return False
+        pending["action"] = action
+        pending["ts"] = now
+        label = "Power off" if action == "poweroff" else "Restart"
+        status.setText(f"Press {label} again to confirm (4s)")
+        return True
+
+    def run_power(arg: str, label: str) -> None:
+        if needs_confirm(arg):
+            return
+        cmd = _power_bin(arg)
+        status.setText(f"{label}…")
+        off_btn.setEnabled(False)
+        reboot_btn.setEnabled(False)
+        try:
+            # Detach so UI can show status before system dies
+            env = os.environ.copy()
+            env.setdefault("PATH", "/usr/local/bin:/usr/sbin:/sbin:/usr/bin:/bin")
+            subprocess.Popen(
+                cmd,
+                start_new_session=True,
+                env=env,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            status.setText(f"{label} commanded.\nIf nothing happens, seed:\n  sudo digivice-full-update")
+        except Exception as e:
+            status.setText(f"Failed: {e}")
+            off_btn.setEnabled(True)
+            reboot_btn.setEnabled(True)
+            return
+        # Soft blank after a moment (process may still be running)
+        QTimer.singleShot(2500, lambda: status.setText(f"Waiting for {label.lower()}…"))
+
+    off_btn.clicked.connect(lambda: run_power("poweroff", "Power off"))
+    reboot_btn.clicked.connect(lambda: run_power("reboot", "Restart"))
+    return page_chrome("Power", body, on_back)
 
 
 def make_update_page(on_back: Callable[[], None]) -> QWidget:
@@ -817,6 +905,7 @@ def make_help_page(on_back) -> QWidget:
         "F12 / F10 / Ctrl+Q → desktop\n"
         "Settings → Linux → Exit\n"
         "Settings → Update → download\n"
+        "Settings → Power → Off/Restart (x2)\n"
         "SSH: digivice-leave\n"
         "Settings → Linux → confirm",
         on_back,
