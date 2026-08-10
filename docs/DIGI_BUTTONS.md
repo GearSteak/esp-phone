@@ -44,9 +44,16 @@ Or classic d-pad with Confirm in center and Back/Home as side keys.
 
 ## Software
 
-Service: `digi-buttons-inputd` → uinput `Digivice-Buttons`.
+Service: **`digi-buttons-inputd`** — must be **enabled on boot** (multi-user).  
+Created by `install-handset` / `digivice-update` / `digivice-ensure-buttons`.  
+`handset-session phone` also forces a start if the unit is down.
 
 ```bash
+# One-shot fix on the Pi (now / after pull)
+sudo digivice-ensure-buttons
+# or:
+sudo systemctl enable --now digi-buttons-inputd
+
 sudo systemctl status digi-buttons-inputd
 journalctl -u digi-buttons-inputd -f
 ```

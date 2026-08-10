@@ -73,12 +73,16 @@ install -m 755 "$ROOT/session/desktop-spi-mirror.sh" "$PREFIX/session/desktop-sp
 install -m 755 "$ROOT/session/desktop-spi-mirror.sh" /usr/local/bin/digivice-desktop-mirror
 install -m 755 "$ROOT/session/update-handset.sh" "$PREFIX/session/update-handset.sh"
 install -m 755 "$ROOT/session/update-handset.sh" /usr/local/bin/digivice-update
+install -m 755 "$ROOT/session/ensure-buttons.sh" "$PREFIX/session/ensure-buttons.sh"
+install -m 755 "$ROOT/session/ensure-buttons.sh" /usr/local/bin/digivice-ensure-buttons
 
 # Settings → Update can run without a password prompt on the handset
 cat >/etc/sudoers.d/esp-handset-update <<EOF
-# Digivice Settings → Update
+# Digivice Settings → Update + ensure buttons
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-update
 $USER_NAME ALL=(root) NOPASSWD: $PREFIX/session/update-handset.sh
+$USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-ensure-buttons
+$USER_NAME ALL=(root) NOPASSWD: $PREFIX/session/ensure-buttons.sh
 EOF
 chmod 440 /etc/sudoers.d/esp-handset-update
 
@@ -257,6 +261,12 @@ fi
 systemctl daemon-reload
 systemctl enable digi-buttons-inputd.service
 systemctl restart digi-buttons-inputd.service || true
+# Hard guarantee: rewrite unit + enable if anything went soft earlier
+if [[ -x /usr/local/bin/digivice-ensure-buttons ]]; then
+  bash /usr/local/bin/digivice-ensure-buttons || true
+elif [[ -f "$ROOT/session/ensure-buttons.sh" ]]; then
+  bash "$ROOT/session/ensure-buttons.sh" || true
+fi
 systemctl disable t9-keypad-inputd.service cardkb-inputd.service hat-inputd.service 2>/dev/null || true
 systemctl enable esp-keyd.service
 systemctl restart esp-keyd.service || true

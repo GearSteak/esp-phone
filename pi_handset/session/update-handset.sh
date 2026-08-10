@@ -166,7 +166,8 @@ install_tree() {
     "spi-prove.sh:digivice-spi-prove" \
     "spi-blank.sh:digivice-spi-blank" \
     "desktop-spi-mirror.sh:digivice-desktop-mirror" \
-    "update-handset.sh:digivice-update"
+    "update-handset.sh:digivice-update" \
+    "ensure-buttons.sh:digivice-ensure-buttons"
   do
     src="${pair%%:*}"
     dst="${pair##*:}"
@@ -186,17 +187,26 @@ install_tree() {
 
   if [[ -d /etc/sudoers.d ]]; then
     cat >/etc/sudoers.d/esp-handset-update <<EOF
-# Digivice Settings → Update (no password)
+# Digivice Settings → Update + ensure buttons on start
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-update
 $USER_NAME ALL=(root) NOPASSWD: $PREFIX/session/update-handset.sh
+$USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-ensure-buttons
+$USER_NAME ALL=(root) NOPASSWD: $PREFIX/session/ensure-buttons.sh
 EOF
     chmod 440 /etc/sudoers.d/esp-handset-update
   fi
 
   remember_repo "$REPO"
 
-  systemctl daemon-reload 2>/dev/null || true
-  systemctl restart digi-buttons-inputd.service 2>/dev/null || true
+  # Buttons MUST be on boot — rewrite unit + enable (update used to only restart)
+  if [[ -f "$PREFIX/session/ensure-buttons.sh" ]]; then
+    bash "$PREFIX/session/ensure-buttons.sh" 2>&1 | tee -a "$LOG" || true
+  else
+    systemctl daemon-reload 2>/dev/null || true
+    systemctl enable digi-buttons-inputd.service 2>/dev/null || true
+    systemctl restart digi-buttons-inputd.service 2>/dev/null || true
+  fi
+  systemctl enable esp-keyd.service 2>/dev/null || true
   systemctl restart esp-keyd.service 2>/dev/null || true
 
   if [[ "$FULL" -eq 1 ]]; then

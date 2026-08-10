@@ -194,6 +194,37 @@ show_desktop_chrome() {
   fi
 }
 
+ensure_buttons_daemon() {
+  # Hard keys are a separate systemd service — always on before Digivice
+  if systemctl is-active --quiet digi-buttons-inputd 2>/dev/null \
+    || systemctl is-active --quiet digi-buttons-inputd.service 2>/dev/null; then
+    log "digi-buttons-inputd already active"
+    return 0
+  fi
+  log "digi-buttons-inputd not active — enabling"
+  local e
+  for e in \
+    /usr/local/bin/digivice-ensure-buttons \
+    "$PREFIX/session/ensure-buttons.sh" \
+    "$(dirname "$0")/ensure-buttons.sh"
+  do
+    if [[ -f "$e" ]]; then
+      if [[ "$(id -u)" -eq 0 ]]; then
+        bash "$e" >>"$LOG" 2>&1 && return 0
+      fi
+      sudo -n bash "$e" >>"$LOG" 2>&1 && return 0
+      bash "$e" >>"$LOG" 2>&1 && return 0
+    fi
+  done
+  sudo -n systemctl enable --now digi-buttons-inputd 2>>"$LOG" \
+    || systemctl enable --now digi-buttons-inputd 2>>"$LOG" || true
+  if systemctl is-active --quiet digi-buttons-inputd 2>/dev/null; then
+    log "digi-buttons-inputd started"
+  else
+    log "WARN: digi-buttons-inputd still down — wire check +: sudo digivice-ensure-buttons"
+  fi
+}
+
 launch_phone() {
   if force_desktop_from_boot_flag; then
     show_desktop_chrome
@@ -203,6 +234,7 @@ launch_phone() {
   fi
   # Digivice owns SPI — stop desktop mirror first
   stop_desktop_spi_mirror
+  ensure_buttons_daemon
   mode_set phone
   digivice_display_env
   apply_digivice_layout
