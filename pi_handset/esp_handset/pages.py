@@ -584,8 +584,9 @@ def make_update_page(on_back: Callable[[], None]) -> QWidget:
     body = QWidget()
     lay = QVBoxLayout(body)
     tip = QLabel(
-        "Pulls GearSteak/esp-phone and reinstalls Digivice "
-        "(keeps userspace SPI). Needs network + sudo."
+        "Full stack update (git + /opt + services).\n"
+        "Or in terminal:  sudo digivice-full-update\n"
+        "Needs network + sudo."
     )
     tip.setWordWrap(True)
     tip.setStyleSheet("color:#9ab;font-size:11px;")
@@ -596,28 +597,38 @@ def make_update_page(on_back: Callable[[], None]) -> QWidget:
     log.setMaximumHeight(140)
     log.setStyleSheet("font-size:10px; font-family: monospace;")
     check_btn = QPushButton("Check for updates")
-    run_btn = QPushButton("Download & install")
-    run_btn.setStyleSheet("font-weight:700;")
+    run_btn = QPushButton("Quick update + restart")
+    full_btn = QPushButton("FULL update (recommended)")
+    full_btn.setStyleSheet("font-weight:700;")
     lay.addWidget(tip)
     lay.addWidget(status)
     lay.addWidget(log, 1)
     lay.addWidget(check_btn)
     lay.addWidget(run_btn)
+    lay.addWidget(full_btn)
 
     proc = QProcess(body)
     env = QProcessEnvironment.systemEnvironment()
     env.insert("DISPLAY", os.environ.get("DISPLAY", ":0"))
     proc.setProcessEnvironment(env)
 
-    def _update_bin() -> list:
+    def _update_bin(full: bool = False) -> list:
+        if full:
+            for p in (
+                "/usr/local/bin/digivice-full-update",
+                "/opt/esp-handset/session/full-update.sh",
+            ):
+                if os.path.isfile(p):
+                    return ["sudo", "-n", p]
+            here = Path(__file__).resolve().parents[1] / "session" / "full-update.sh"
+            if here.is_file():
+                return ["sudo", "-n", "bash", str(here)]
         for p in (
             "/usr/local/bin/digivice-update",
             "/opt/esp-handset/session/update-handset.sh",
         ):
             if os.path.isfile(p):
-                # Prefer passwordless sudo so Settings works without a tty
                 return ["sudo", "-n", p]
-        # Fallback: run from sibling of this package (dev checkout)
         here = Path(__file__).resolve().parents[1] / "session" / "update-handset.sh"
         if here.is_file():
             return ["bash", str(here)]
@@ -638,58 +649,67 @@ def make_update_page(on_back: Callable[[], None]) -> QWidget:
     def on_finished(code: int, _status) -> None:
         check_btn.setEnabled(True)
         run_btn.setEnabled(True)
+        full_btn.setEnabled(True)
         if code == 0:
-            status.setText("Done. Digivice will restart if install used --restart.")
+            status.setText("Done.")
         else:
             status.setText(
-                f"Failed (exit {code}). Need network + passwordless sudo for digivice-update."
+                f"Failed (exit {code}). Terminal: sudo digivice-full-update"
             )
 
     proc.readyReadStandardOutput.connect(append_out)
     proc.readyReadStandardError.connect(append_err)
     proc.finished.connect(on_finished)
 
-    def start(args: list, label: str) -> None:
+    def start(bin_cmd: list, args: list, label: str) -> None:
         if proc.state() != QProcess.NotRunning:
             return
-        bin_cmd = _update_bin()
         log.clear()
         status.setText(label)
         check_btn.setEnabled(False)
         run_btn.setEnabled(False)
+        full_btn.setEnabled(False)
         prog = bin_cmd[0]
         argv = bin_cmd[1:] + args
         log.append(f"$ {' '.join(bin_cmd + args)}\n")
         proc.start(prog, argv)
         if not proc.waitForStarted(4000):
-            status.setText("Could not start digivice-update")
+            status.setText("Could not start — run: sudo digivice-full-update")
             check_btn.setEnabled(True)
             run_btn.setEnabled(True)
-            log.append(
-                "Install update script first:\n"
-                "  sudo bash pi_handset/session/update-handset.sh\n"
-                "Or re-run install-handset.sh\n"
-            )
+            full_btn.setEnabled(True)
 
     def do_check():
-        start(["--check"], "Checking GitHub…")
+        start(_update_bin(False), ["--check"], "Checking GitHub…")
 
     def do_run():
         r = QMessageBox.question(
             body,
-            "Update Digivice",
-            "Download latest from GitHub and install?\n"
-            "Display config is kept (SPI userspace safe).\n"
-            "UI restarts when finished.",
+            "Quick update",
+            "Pull + reinstall UI/scripts and restart?",
             QMessageBox.Yes | QMessageBox.No,
             QMessageBox.Yes,
         )
         if r != QMessageBox.Yes:
             return
-        start(["--restart"], "Updating… (may take a minute)")
+        start(_update_bin(False), ["--restart"], "Quick update…")
+
+    def do_full():
+        r = QMessageBox.question(
+            body,
+            "FULL update",
+            "Full stack: git, apt packages, /opt, buttons, cursor, services?\n"
+            "(Same as: sudo digivice-full-update)",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.Yes,
+        )
+        if r != QMessageBox.Yes:
+            return
+        start(_update_bin(True), [], "FULL update… (a few minutes)")
 
     check_btn.clicked.connect(do_check)
     run_btn.clicked.connect(do_run)
+    full_btn.clicked.connect(do_full)
     return page_chrome("Update", body, on_back)
 
 

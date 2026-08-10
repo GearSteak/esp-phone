@@ -77,16 +77,21 @@ install -m 755 "$ROOT/session/desktop-spi-mirror.sh" "$PREFIX/session/desktop-sp
 install -m 755 "$ROOT/session/desktop-spi-mirror.sh" /usr/local/bin/digivice-desktop-mirror
 install -m 755 "$ROOT/session/update-handset.sh" "$PREFIX/session/update-handset.sh"
 install -m 755 "$ROOT/session/update-handset.sh" /usr/local/bin/digivice-update
+install -m 755 "$ROOT/session/full-update.sh" "$PREFIX/session/full-update.sh"
+install -m 755 "$ROOT/session/full-update.sh" /usr/local/bin/digivice-full-update
 install -m 755 "$ROOT/session/ensure-buttons.sh" "$PREFIX/session/ensure-buttons.sh"
 install -m 755 "$ROOT/session/ensure-buttons.sh" /usr/local/bin/digivice-ensure-buttons
 
 # Settings → Update can run without a password prompt on the handset
 cat >/etc/sudoers.d/esp-handset-update <<EOF
-# Digivice Settings → Update + ensure buttons
+# Digivice full + GUI update (no password)
+$USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-full-update
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-update
+$USER_NAME ALL=(root) NOPASSWD: $PREFIX/session/full-update.sh
 $USER_NAME ALL=(root) NOPASSWD: $PREFIX/session/update-handset.sh
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-ensure-buttons
 $USER_NAME ALL=(root) NOPASSWD: $PREFIX/session/ensure-buttons.sh
+$USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-fix-cursor
 EOF
 chmod 440 /etc/sudoers.d/esp-handset-update
 
@@ -349,6 +354,11 @@ Leave Digivice:
   (2\" SPI mirrors the full Linux desktop when you leave)
 
 Return: handset-phone
+
+FULL software update (git + install everything that matters):
+  sudo digivice-full-update
+  # first time from a clone:
+  #   cd ~/esp-phone && git pull && sudo bash pi_handset/session/full-update.sh
 
 HDMI-only repair (keeps Digivice default with --keep-phone):
   sudo digivice-recover-hdmi --keep-phone
