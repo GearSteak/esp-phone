@@ -272,7 +272,7 @@ def make_camera_page(on_back, on_status) -> QWidget:
     lay = QVBoxLayout(body)
     preview = QLabel("No photo yet")
     preview.setAlignment(Qt.AlignCenter)
-        preview.setMinimumHeight(120)
+    preview.setMinimumHeight(120)
     preview.setStyleSheet("background:#111; border-radius:12px; color:#888;")
     gallery = QListWidget()
     snap = QPushButton("Snap (rear CSI)")
@@ -713,24 +713,8 @@ def make_update_page(on_back: Callable[[], None]) -> QWidget:
         set_busy(True)
         full_cmd = bin_cmd + args
         log.append("$ " + " ".join(full_cmd) + "\n\n")
-        try:
-            r = subprocess.run(
-                ["sudo", "-n", "true"],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                timeout=3,
-            )
-            if r.returncode != 0:
-                log.append(
-                    "sudo -n failed — no passwordless sudo yet.\n"
-                    "On SSH/keyboard run once:\n"
-                    "  sudo digivice-full-update\n\n"
-                )
-                status.setText("Need sudo once via terminal first")
-                set_busy(False)
-                return
-        except Exception as e:
-            log.append(f"sudo probe: {e}\n")
+        # Do not probe with `sudo -n true` — only digivice-* are NOPASSWD.
+        # If sudo is missing/passworded, the updater logs the failure itself.
         prog, *argv = full_cmd
         proc.start(prog, argv)
         if not proc.waitForStarted(5000):
