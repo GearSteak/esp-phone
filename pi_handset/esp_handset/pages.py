@@ -53,25 +53,51 @@ def _save_json(path: Path, data) -> None:
 
 
 def page_chrome(
-    title: str, body: QWidget, on_back: Optional[Callable[[], None]] = None
+    title: str,
+    body: QWidget,
+    on_back: Optional[Callable[[], None]] = None,
+    *,
+    scroll: bool = True,
 ) -> QWidget:
-    """Compact chrome for Digivice panel."""
+    """Compact chrome for Digivice panel; body scrolls on 240×320 by default."""
+    from PyQt5.QtWidgets import QSizePolicy
+
     w = QWidget()
     lay = QVBoxLayout(w)
-    lay.setContentsMargins(6, 4, 6, 4)
-    lay.setSpacing(4)
+    lay.setContentsMargins(4, 3, 4, 3)
+    lay.setSpacing(3)
     head = QHBoxLayout()
     head.setSpacing(4)
     if on_back:
         back = QPushButton("←")
         back.setFixedWidth(28)
+        back.setFixedHeight(26)
         back.clicked.connect(on_back)
         head.addWidget(back)
     lab = QLabel(title)
     lab.setStyleSheet("font-size: 12px; font-weight: 700;")
     head.addWidget(lab, 1)
     lay.addLayout(head)
-    lay.addWidget(body, 1)
+
+    if scroll:
+        area = QScrollArea()
+        area.setObjectName("digiScroll")
+        area.setWidgetResizable(True)
+        area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        area.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        area.setFrameShape(QFrame.NoFrame)
+        area.setStyleSheet(
+            "QScrollArea { background: transparent; border: none; }"
+            "QScrollBar:vertical { width: 8px; background: #121820; margin: 0; }"
+            "QScrollBar::handle:vertical {"
+            "  background: #4a6a88; min-height: 28px; border-radius: 3px; }"
+            "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }"
+        )
+        body.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
+        area.setWidget(body)
+        lay.addWidget(area, 1)
+    else:
+        lay.addWidget(body, 1)
     return w
 
 
@@ -245,7 +271,7 @@ def make_camera_page(on_back, on_status) -> QWidget:
     lay = QVBoxLayout(body)
     preview = QLabel("No photo yet")
     preview.setAlignment(Qt.AlignCenter)
-    preview.setMinimumHeight(220)
+        preview.setMinimumHeight(120)
     preview.setStyleSheet("background:#111; border-radius:12px; color:#888;")
     gallery = QListWidget()
     snap = QPushButton("Snap (rear CSI)")
@@ -541,10 +567,10 @@ def make_settings_hub(on_back, open_page: Callable[[str], None], on_linux) -> QW
     body = QWidget()
     lay = QVBoxLayout(body)
     lay.setSpacing(4)
-    tip = QLabel("Settings — scroll for more")
+    lay.setContentsMargins(2, 2, 2, 2)
+    tip = QLabel("↓ scroll · D-pad moves focus")
     tip.setStyleSheet("color:#9ab;font-size:10px;")
     lay.addWidget(tip)
-    # Update first so it’s always on-screen on 240×320
     for key, label in [
         ("set_update", "★ Update Digivice"),
         ("set_appearance", "Appearance"),
@@ -556,25 +582,15 @@ def make_settings_hub(on_back, open_page: Callable[[str], None], on_linux) -> QW
         ("help", "Help / Keys"),
     ]:
         b = QPushButton(label)
-        b.setMinimumHeight(28)
+        b.setMinimumHeight(30)
         b.clicked.connect(lambda _=False, k=key: open_page(k))
         lay.addWidget(b)
     desk = QPushButton("Exit to Linux Desktop")
-    desk.setMinimumHeight(28)
+    desk.setMinimumHeight(30)
     desk.clicked.connect(on_linux)
     lay.addWidget(desk)
     lay.addStretch(1)
-
-    scroll = QScrollArea()
-    scroll.setWidgetResizable(True)
-    scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-    scroll.setFrameShape(QFrame.NoFrame)
-    scroll.setWidget(body)
-    wrap = QWidget()
-    wlay = QVBoxLayout(wrap)
-    wlay.setContentsMargins(0, 0, 0, 0)
-    wlay.addWidget(scroll)
-    return page_chrome("Settings", wrap, on_back)
+    return page_chrome("Settings", body, on_back)
 
 
 def make_update_page(on_back: Callable[[], None]) -> QWidget:

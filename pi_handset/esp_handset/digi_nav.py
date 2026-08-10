@@ -14,6 +14,7 @@ from PyQt5.QtWidgets import (
     QLineEdit,
     QListWidget,
     QPlainTextEdit,
+    QScrollArea,
     QSlider,
     QTextEdit,
     QWidget,
@@ -112,6 +113,19 @@ def focus_index(items: List[QWidget], current: Optional[QWidget]) -> int:
     return 0
 
 
+def ensure_visible(w: Optional[QWidget]) -> None:
+    """Scroll parent QScrollArea so focused control is on screen."""
+    if w is None:
+        return
+    p = w.parentWidget()
+    while p is not None:
+        if isinstance(p, QScrollArea):
+            p.ensureWidgetVisible(w, 8, 12)
+            return
+        # scroll area's viewport parent chain
+        p = p.parentWidget()
+
+
 def move_focus(root: QWidget, delta: int) -> bool:
     """Cycle focus among page controls. Returns True if handled."""
     items = focusables(root)
@@ -129,6 +143,7 @@ def move_focus(root: QWidget, delta: int) -> bool:
     _highlight(w, True)
     if isinstance(w, QListWidget) and w.count() > 0 and w.currentRow() < 0:
         w.setCurrentRow(0)
+    ensure_visible(w)
     return True
 
 
@@ -139,10 +154,15 @@ def list_nudge(lst: QListWidget, delta: int) -> bool:
     row = lst.currentRow()
     if row < 0:
         lst.setCurrentRow(0)
+        ensure_visible(lst)
         return True
     nxt = row + delta
     if 0 <= nxt < lst.count():
         lst.setCurrentRow(nxt)
+        item = lst.item(nxt)
+        if item is not None:
+            lst.scrollToItem(item)
+        ensure_visible(lst)
         return True
     return False
 
@@ -200,3 +220,4 @@ def ensure_page_focus(root: QWidget) -> None:
     _highlight(w, True)
     if isinstance(w, QListWidget) and w.count() > 0:
         w.setCurrentRow(0)
+    ensure_visible(w)
