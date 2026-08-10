@@ -41,9 +41,17 @@ kill_phone_ui() {
 }
 
 spi_userspace_on() {
-  [[ -f /etc/esp-handset/spi-userspace ]] \
+  # Explicit flag
+  if [[ -f /etc/esp-handset/spi-userspace ]] \
     || [[ "${ESP_HANDSET_SPI_BACKEND:-}" == "userspace" ]] \
-    || grep -q 'ESP_HANDSET_SPI_BACKEND=userspace' /etc/esp-handset/env 2>/dev/null
+    || grep -q 'ESP_HANDSET_SPI_BACKEND=userspace' /etc/esp-handset/env 2>/dev/null; then
+    return 0
+  fi
+  # If Digivice already drives the panel via spidev, still mirror
+  if [[ -e /dev/spidev0.0 || -e /dev/spidev0.1 ]]; then
+    return 0
+  fi
+  return 1
 }
 
 desktop_mirror_bin() {
