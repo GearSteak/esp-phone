@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from typing import Callable, List, Optional
 
-from PyQt5.QtCore import Qt, pyqtSignal
-from PyQt5.QtGui import QFont, QPainter, QColor, QPen
+from PyQt5.QtCore import Qt, QPoint, pyqtSignal
+from PyQt5.QtGui import QFont, QPainter, QColor, QPen, QPolygon
 from PyQt5.QtWidgets import QWidget
 
 from esp_handset.shell_data import AppEntry
@@ -98,16 +98,32 @@ class DigiviceHome(QWidget):
             for i, e in enumerate(entries):
                 cx = int(slot * (i + 0.5))
                 focused = row_i == self._row and i == self._col
-                r = 16 if focused else 12
+                r = 18 if focused else 12
                 if focused:
-                    p.setBrush(QColor("#1f6feb"))
-                    p.setPen(QPen(QColor("#8ecbff"), 2))
+                    # Yellow + black frame: high luminance contrast (not blue-on-blue)
+                    p.setBrush(QColor("#FFE600"))
+                    p.setPen(QPen(QColor("#000000"), 3))
+                    p.drawEllipse(cx - r - 2, y - r - 2, (r + 2) * 2, (r + 2) * 2)
+                    p.setBrush(QColor("#FFE600"))
+                    p.setPen(QPen(QColor("#000000"), 2))
                 else:
                     p.setBrush(QColor(30, 45, 65, 220))
                     p.setPen(QPen(QColor(255, 255, 255, 50), 1))
                 p.drawEllipse(cx - r, y - r, r * 2, r * 2)
-                p.setPen(QColor("#e8eef5" if focused else "#9ab"))
-                p.setFont(QFont("DejaVu Sans", 11 if focused else 9, QFont.Bold))
+                if focused:
+                    # Filled triangle tip under bubble (shape cue)
+                    tri = QPolygon(
+                        [
+                            QPoint(cx, y + r + 8),
+                            QPoint(cx - 7, y + r + 1),
+                            QPoint(cx + 7, y + r + 1),
+                        ]
+                    )
+                    p.setBrush(QColor("#FFE600"))
+                    p.setPen(QPen(QColor("#000000"), 2))
+                    p.drawPolygon(tri)
+                p.setPen(QColor("#000000" if focused else "#9ab"))
+                p.setFont(QFont("DejaVu Sans", 12 if focused else 9, QFont.Bold))
                 p.drawText(cx - 14, y - 10, 28, 20, Qt.AlignCenter, e.glyph[:1])
 
         # Top row

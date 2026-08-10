@@ -150,8 +150,9 @@ class RadialMenu(QWidget):
 
             focused = abs(visual_off) < 0.35
             if focused:
-                p.setBrush(QColor(31, 111, 235, alpha))
-                p.setPen(QPen(QColor("#8ecbff"), 2))
+                # High-contrast center (yellow/black) — not blue-on-blue
+                p.setBrush(QColor(255, 230, 0, min(255, alpha + 40)))
+                p.setPen(QPen(QColor("#000000"), 3))
             else:
                 p.setBrush(QColor(40, 55, 75, alpha))
                 p.setPen(QPen(QColor(255, 255, 255, 45), 1))
@@ -159,7 +160,7 @@ class RadialMenu(QWidget):
             p.drawEllipse(int(x - r), int(y - r), r * 2, r * 2)
 
             glyph_size = max(8, int(24 * scale))
-            p.setPen(QColor(232, 238, 245, alpha))
+            p.setPen(QColor(0, 0, 0, 255) if focused else QColor(232, 238, 245, alpha))
             p.setFont(QFont("DejaVu Sans", glyph_size, QFont.Bold))
             p.drawText(
                 int(x - r),
@@ -169,6 +170,11 @@ class RadialMenu(QWidget):
                 Qt.AlignCenter,
                 entry.glyph[:1],
             )
+            if focused:
+                # Black ring already drawn; add outer ticks for non-color cue
+                p.setPen(QPen(QColor("#000000"), 2))
+                p.setBrush(Qt.NoBrush)
+                p.drawEllipse(int(x - r - 4), int(y - r - 4), (r + 4) * 2, (r + 4) * 2)
 
         # Label for settled (or nearly settled) center
         show_idx = self._index

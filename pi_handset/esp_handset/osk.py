@@ -71,8 +71,10 @@ class OnScreenKeyboard(QWidget):
                 min-height: 22px;
             }
             QPushButton:checked, QPushButton[oskFocus=\"1\"] {
-                background: #1f6feb;
-                border-color: #58a6ff;
+                background: #FFE600;
+                color: #000000;
+                border: 3px solid #000000;
+                font-weight: 800;
             }
             QLabel#predLab {
                 color: #9ab;

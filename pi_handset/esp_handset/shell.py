@@ -173,6 +173,8 @@ class PhoneShell(QMainWindow):
             self._toasts.raise_()
 
     def _apply_base_style(self) -> None:
+        # Focus uses yellow/black, not hue near button blue — shade- and
+        # color-deficiency friendly (luminance + shape, not blue-on-blue).
         self._root.setStyleSheet(
             """
             #phoneRoot {
@@ -181,7 +183,7 @@ class PhoneShell(QMainWindow):
                     stop:0 #0b1a2a, stop:0.55 #12263a, stop:1 #0a121c);
             }
             QLabel { color: #e8eef5; }
-            QLineEdit, QTextEdit, QListWidget {
+            QLineEdit, QTextEdit, QListWidget, QPlainTextEdit {
                 background: rgba(10, 18, 28, 0.85);
                 color: #e8eef5;
                 border: 1px solid rgba(255,255,255,0.12);
@@ -192,17 +194,41 @@ class PhoneShell(QMainWindow):
             QPushButton {
                 background: #1f6feb;
                 color: white;
-                border: none;
+                border: 2px solid transparent;
                 border-radius: 6px;
                 padding: 6px 8px;
                 font-weight: 600;
                 font-size: 11px;
             }
             QPushButton:hover { background: #388bfd; }
-            QPushButton[digiFocus="1"], QLineEdit[digiFocus="1"],
-            QTextEdit[digiFocus="1"], QListWidget[digiFocus="1"],
-            QComboBox[digiFocus="1"] {
-                border: 2px solid #58a6ff;
+            /* Digi focus: high luminance contrast + thick black frame (not blue outline) */
+            QPushButton[digiFocus="1"] {
+                background: #FFE600;
+                color: #000000;
+                border: 3px solid #000000;
+                border-radius: 4px;
+                font-weight: 800;
+                font-size: 12px;
+                padding: 8px 10px;
+                min-height: 32px;
+            }
+            QLineEdit[digiFocus="1"], QTextEdit[digiFocus="1"],
+            QPlainTextEdit[digiFocus="1"], QComboBox[digiFocus="1"],
+            QListWidget[digiFocus="1"] {
+                background: #1a1a00;
+                color: #FFE600;
+                border: 3px solid #FFE600;
+                outline: none;
+                font-weight: 700;
+            }
+            QListWidget::item:selected {
+                background: #FFE600;
+                color: #000000;
+                border: 2px solid #000000;
+            }
+            QListWidget::item:selected:!active {
+                background: #FFE600;
+                color: #000000;
             }
             """
         )
