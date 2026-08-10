@@ -4,15 +4,15 @@ Seven tactile buttons instead of CardKB or a T9 pad. Each switch: one side on th
 
 ## What each button does
 
-| Button | Digivice action | Key sent |
-|--------|-----------------|----------|
-| **Up** | Move focus / home row up | ↑ |
-| **Down** | Move focus / home row down | ↓ |
-| **Left** | Move focus left | ← |
-| **Right** | Move focus right | → |
-| **Confirm** | Open / activate / select | Enter |
-| **Back** | Leave app / cancel | Esc |
-| **Home** | Jump home (Digivice home) | Home |
+| Button | Digivice (phone) | Linux desktop |
+|--------|------------------|---------------|
+| **Up / Down / Left / Right** | Arrow keys | Mouse move |
+| **Confirm** | Enter | Left click |
+| **Back** | Esc | Right click |
+| **Home** | Home | Super (start menu) |
+
+Mode is `phone` while Digivice runs and `desktop` after `handset-desktop`.
+Buttons read `/etc/esp-handset/ui_mode` and `~/.esp-handset/session_mode`.
 
 Typing is still OSK (on-screen) or future dial pad — these seven only navigate the UI.
 

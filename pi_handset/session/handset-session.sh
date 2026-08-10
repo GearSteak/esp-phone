@@ -23,10 +23,16 @@ mode_get() {
 }
 
 mode_set() {
-  echo "$1" >"$MODE_FILE"
+  local m="$1"
+  echo "$m" >"$MODE_FILE"
+  mkdir -p /etc/esp-handset 2>/dev/null || true
   if [[ -w /etc/esp-handset/ui_mode ]] || [[ -w /etc/esp-handset ]]; then
-    echo "$1" >/etc/esp-handset/ui_mode 2>/dev/null || true
+    echo "$m" >/etc/esp-handset/ui_mode 2>/dev/null || true
+  elif command -v sudo >/dev/null 2>&1; then
+    echo "$m" | sudo -n tee /etc/esp-handset/ui_mode >/dev/null 2>&1 || true
   fi
+  # Notify digi-buttons (reads mode file; also restart is overkill)
+  log "session_mode=$m (buttons: phone=keys desktop=mouse)"
 }
 
 kill_phone_ui() {

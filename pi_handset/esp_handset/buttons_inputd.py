@@ -1,22 +1,17 @@
 #!/usr/bin/env python3
-"""Digivice discrete buttons → keys Digivice can actually see.
-
-Seven hard keys (each: GPIO → switch → GND, internal pull-up):
+"""Digivice 7-button pad → UI keys (phone) or mouse (Linux desktop).
 
   UP / DOWN / LEFT / RIGHT / CONFIRM / BACK / HOME
+  BCM: 5 / 6 / 12 / 13 / 16 / 19 / 20  (override DIGI_BTN_*)
 
-BCM defaults (free of 2\" LCD SPI: 8,10,11,18,25,27):
+Mode file (phone | desktop), checked every 0.4s:
+  /etc/esp-handset/ui_mode
+  ~/.esp-handset/session_mode  (every user home)
 
-  UP=5  DOWN=6  LEFT=12  RIGHT=13  CONFIRM=16  BACK=19  HOME=20
+Phone  — arrows / Enter / Esc / Home  (uinput + xdotool keys)
+Desktop — d-pad moves pointer, Confirm=LMB, Back=RMB, Home=Super (menu)
 
-Override with DIGI_BTN_UP=… etc.
-
-Emits:
-  1) uinput virtual keyboard "Digivice-Buttons"
-  2) xdotool into DISPLAY=:0 (X11 Digivice) — required on many Pi sessions
-     where root uinput events never reach the GUI seat
-
-Logs every press to journal so you can confirm wiring.
+handset-session writes mode on handset-phone / handset-desktop.
 """
 
 from __future__ import annotations
@@ -26,7 +21,8 @@ import os
 import subprocess
 import sys
 import time
-from typing import Dict, Optional
+from pathlib import Path
+from typing import Dict, List, Optional
 
 DEFAULTS = {
     "UP": 5,
@@ -38,8 +34,7 @@ DEFAULTS = {
     "HOME": 20,
 }
 
-# xdotool key names
-XDOTOOL = {
+XDOTOOL_KEYS = {
     "UP": "Up",
     "DOWN": "Down",
     "LEFT": "Left",
@@ -50,13 +45,16 @@ XDOTOOL = {
 }
 
 DEBOUNCE_S = float(os.environ.get("DIGI_BTN_DEBOUNCE", "0.025"))
-SCAN_S = float(os.environ.get("DIGI_BTN_SCAN", "0.01"))
-# 0 = pressed shorted to GND (default). 1 = pressed = high.
+SCAN_S = float(os.environ.get("DIGI_BTN_SCAN", "0.012"))
+MOUSE_STEP = int(os.environ.get("DIGI_BTN_MOUSE_STEP", "12"))
 ACTIVE_HIGH = os.environ.get("DIGI_BTN_ACTIVE_HIGH", "0").strip() in (
     "1",
     "true",
     "yes",
 )
+MODE_PATHS = [
+    Path("/etc/esp-handset/ui_mode"),
+]
 
 
 def log(msg: str) -> None:
@@ -69,6 +67,43 @@ def pin_map() -> Dict[str, int]:
         env = os.environ.get(f"DIGI_BTN_{name}", "").strip()
         out[name] = int(env) if env else default
     return out
+
+
+def mode_file_candidates() -> List[Path]:
+    paths = list(MODE_PATHS)
+    for home in glob.glob("/home/*"):
+        paths.append(Path(home) / ".esp-handset" / "session_mode")
+    # root fallthrough
+    paths.append(Path("/root/.esp-handset/session_mode"))
+    env_home = os.environ.get("HOME")
+    if env_home:
+        paths.append(Path(env_home) / ".esp-handset" / "session_mode")
+    return paths
+
+
+def read_mode() -> str:
+    for p in mode_file_candidates():
+        try:
+            if not p.is_file():
+                continue
+            m = p.read_text(encoding="utf-8").strip().lower()
+            if m in ("phone", "desktop"):
+                return m
+        except OSError:
+            continue
+    # Digivice running → phone; else prefer desktop so buttons mouse the desk
+    try:
+        r = subprocess.run(
+            ["pgrep", "-f", "handset_app.py"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+        if r.returncode == 0:
+            return "phone"
+    except Exception:
+        pass
+    return "desktop"
 
 
 def load_uinput_mod() -> None:
@@ -91,12 +126,7 @@ def find_xauthority() -> Optional[str]:
     ):
         if cand and os.path.isfile(cand):
             return cand
-    # Autologin user(s)
     for path in glob.glob("/home/*/.Xauthority"):
-        if os.path.isfile(path):
-            return path
-    # Xorg root /tmp
-    for path in glob.glob("/run/user/*/gdm/Xauthority"):
         if os.path.isfile(path):
             return path
     for path in glob.glob("/run/user/*/Xauthority"):
@@ -109,9 +139,15 @@ def find_display() -> str:
     return os.environ.get("DISPLAY") or ":0"
 
 
-class XInject:
-    """Push keys into the graphical session (Qt on X11 / XWayland)."""
+def _which(name: str) -> Optional[str]:
+    for d in os.environ.get("PATH", "/usr/bin:/bin").split(":"):
+        p = os.path.join(d, name)
+        if os.path.isfile(p) and os.access(p, os.X_OK):
+            return p
+    return None
 
+
+class XInject:
     def __init__(self) -> None:
         self.display = find_display()
         self.auth = find_xauthority()
@@ -119,43 +155,52 @@ class XInject:
         self.ok = bool(self.xdotool)
         if self.ok:
             log(
-                f"X inject ON via xdotool display={self.display} "
+                f"X inject ON display={self.display} "
                 f"XAUTHORITY={self.auth or '(none)'}"
             )
         else:
-            log("X inject OFF (install xdotool: sudo apt install xdotool)")
+            log("X inject OFF — sudo apt install xdotool")
 
-    def emit(self, name: str, down: bool) -> None:
-        if not self.ok:
-            return
-        key = XDOTOOL.get(name)
-        if not key:
-            return
+    def _env(self) -> dict:
         env = os.environ.copy()
         env["DISPLAY"] = self.display
         if self.auth:
             env["XAUTHORITY"] = self.auth
-        # Clear stuck modifiers that can swallow Digivice shortcuts
-        action = "keydown" if down else "keyup"
+        return env
+
+    def _run(self, args: List[str]) -> None:
+        if not self.ok:
+            return
         try:
             subprocess.run(
-                [self.xdotool, action, key],
-                env=env,
+                [self.xdotool, *args],
+                env=self._env(),
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
                 timeout=0.5,
                 check=False,
             )
         except Exception as e:
-            log(f"xdotool {name}: {e}")
+            log(f"xdotool {args}: {e}")
 
+    def key(self, name: str, down: bool) -> None:
+        k = XDOTOOL_KEYS.get(name)
+        if not k:
+            return
+        self._run(["keydown" if down else "keyup", k])
 
-def _which(name: str) -> Optional[str]:
-    for d in os.environ.get("PATH", "/usr/bin:/bin").split(":"):
-        p = os.path.join(d, name)
-        if os.path.isfile(p) and os.access(p, os.X_OK):
-            return p
-    return None
+    def click(self, button: int, down: bool) -> None:
+        # 1=left 2=middle 3=right
+        self._run(["mousedown" if down else "mouseup", str(button)])
+
+    def move(self, dx: int, dy: int) -> None:
+        if not dx and not dy:
+            return
+        # mousemove_relative -- dx dy
+        self._run(["mousemove_relative", "--", str(dx), str(dy)])
+
+    def super_key(self, down: bool) -> None:
+        self._run(["keydown" if down else "keyup", "Super_L"])
 
 
 class GpioBackend:
@@ -192,20 +237,15 @@ class RPiGpio(GpioBackend):
 
 
 class LgpioBackend(GpioBackend):
-    """Bookworm / Pi5 style via lgpio if RPi.GPIO missing."""
-
     def __init__(self) -> None:
         import lgpio  # type: ignore
 
         self.lgpio = lgpio
         self.h = lgpio.gpiochip_open(0)
-        self._pins: Dict[int, None] = {}
 
     def setup(self, pins: Dict[str, int]) -> None:
         for pin in pins.values():
-            # pull up, input
             self.lgpio.gpio_claim_input(self.h, pin, self.lgpio.SET_PULL_UP)
-            self._pins[pin] = None
 
     def read(self, pin: int) -> int:
         return int(self.lgpio.gpio_read(self.h, pin))
@@ -229,30 +269,9 @@ def open_gpio() -> GpioBackend:
         log("GPIO backend: lgpio")
         return g
     except Exception as e:
-        log(f"lgpio unavailable ({e})")
         raise SystemExit(
-            "No GPIO backend — install python3-rpi.gpio or python3-lgpio"
+            f"No GPIO backend ({e}) — install python3-rpi.gpio or python3-lgpio"
         ) from e
-
-
-def open_uinput(events):
-    import uinput  # type: ignore
-
-    load_uinput_mod()
-    # BUS_USB helps some libinput stacks classify as keyboard
-    try:
-        dev = uinput.Device(
-            events,
-            name="Digivice-Buttons",
-            bustype=0x03,  # BUS_USB
-            vendor=0x1D6B,
-            product=0x0104,
-            version=1,
-        )
-    except TypeError:
-        dev = uinput.Device(events, name="Digivice-Buttons")
-    log("uinput device Digivice-Buttons created")
-    return dev
 
 
 def is_pressed(level: int) -> bool:
@@ -265,7 +284,7 @@ def main() -> int:
     try:
         import uinput
     except ImportError:
-        log("FATAL: python3-uinput required (sudo apt install python3-uinput)")
+        log("FATAL: python3-uinput required")
         return 1
 
     pins = pin_map()
@@ -281,40 +300,55 @@ def main() -> int:
         "BACK": uinput.KEY_ESC,
         "HOME": uinput.KEY_HOME,
     }
-    device = open_uinput(list(phone_map.values()))
+    events = list(phone_map.values()) + [
+        uinput.BTN_LEFT,
+        uinput.BTN_RIGHT,
+        uinput.BTN_MIDDLE,
+        uinput.REL_X,
+        uinput.REL_Y,
+        uinput.KEY_LEFTMETA,  # Super for desktop "Start" menu
+    ]
+    load_uinput_mod()
+    try:
+        device = uinput.Device(
+            events,
+            name="Digivice-Buttons",
+            bustype=0x03,
+            vendor=0x1D6B,
+            product=0x0104,
+            version=1,
+        )
+    except TypeError:
+        device = uinput.Device(events, name="Digivice-Buttons")
+
     xinj = XInject()
-
-    # Probe starting levels
-    levels = {n: gpio.read(p) for n, p in pins.items()}
+    mode = read_mode()
     log(
-        "ready "
-        + " ".join(f"{n}=BCM{p}(lvl={levels[n]})" for n, p in pins.items())
-        + f" active_high={int(ACTIVE_HIGH)}"
+        f"ready mode={mode}  mouse_step={MOUSE_STEP}  "
+        + " ".join(f"{n}=BCM{p}" for n, p in pins.items())
     )
-    stuck = [n for n, lv in levels.items() if is_pressed(lv)]
-    if stuck:
-        log(
-            f"WARN: already 'pressed' at start: {stuck} — "
-            "check short-to-GND wiring / wrong pins"
-        )
-    floating_wrong = []
-    # All should be high (1) at rest for pull-up active-low
-    if not ACTIVE_HIGH:
-        floating_wrong = [n for n, lv in levels.items() if lv not in (0, 1)]
-    if all(lv == 0 for lv in levels.values()) and not ACTIVE_HIGH:
-        log(
-            "WARN: ALL pins read 0 — common GND missing, "
-            "or wiring ties signals low"
-        )
+    log(
+        "  phone: keys · desktop: d-pad=mouse move Confirm=LMB Back=RMB Home=Super"
+    )
 
+    levels = {n: gpio.read(p) for n, p in pins.items()}
     prev = {n: levels[n] for n in pins}
     raw = {n: levels[n] for n in pins}
     stable_since = {n: time.monotonic() for n in pins}
-    press_count = 0
+    held = {n: is_pressed(levels[n]) for n in pins}
+    last_mode_check = 0.0
+    last_mode = mode
 
     try:
         while True:
             now = time.monotonic()
+            if now - last_mode_check > 0.4:
+                mode = read_mode()
+                last_mode_check = now
+                if mode != last_mode:
+                    log(f"mode → {mode}")
+                    last_mode = mode
+
             for name, pin in pins.items():
                 try:
                     level = gpio.read(pin)
@@ -331,19 +365,53 @@ def main() -> int:
                     continue
                 prev[name] = level
                 down = is_pressed(level)
-                try:
-                    device.emit(phone_map[name], 1 if down else 0)
-                except Exception as e:
-                    log(f"uinput emit {name}: {e}")
-                xinj.emit(name, down)
-                if down:
-                    press_count += 1
-                    log(
-                        f"PRESS {name} BCM{pin} "
-                        f"(#{press_count}) → {XDOTOOL.get(name)}"
-                    )
+                held[name] = down
+
+                if mode == "desktop":
+                    try:
+                        if name == "CONFIRM":
+                            device.emit(uinput.BTN_LEFT, 1 if down else 0)
+                            xinj.click(1, down)
+                        elif name == "BACK":
+                            device.emit(uinput.BTN_RIGHT, 1 if down else 0)
+                            xinj.click(3, down)
+                        elif name == "HOME":
+                            device.emit(uinput.KEY_LEFTMETA, 1 if down else 0)
+                            xinj.super_key(down)
+                        # d-pad: continuous motion while held (below)
+                        if down and name in ("UP", "DOWN", "LEFT", "RIGHT"):
+                            log(f"DESKTOP hold {name}")
+                        elif down:
+                            log(f"DESKTOP {name} down")
+                    except Exception as e:
+                        log(f"desktop emit {name}: {e}")
                 else:
-                    log(f"RELEASE {name} BCM{pin}")
+                    try:
+                        device.emit(phone_map[name], 1 if down else 0)
+                    except Exception as e:
+                        log(f"uinput {name}: {e}")
+                    xinj.key(name, down)
+                    if down:
+                        log(f"PHONE {name}")
+
+            if mode == "desktop":
+                dx = dy = 0
+                if held.get("LEFT"):
+                    dx -= MOUSE_STEP
+                if held.get("RIGHT"):
+                    dx += MOUSE_STEP
+                if held.get("UP"):
+                    dy -= MOUSE_STEP
+                if held.get("DOWN"):
+                    dy += MOUSE_STEP
+                if dx or dy:
+                    try:
+                        device.emit(uinput.REL_X, dx, syn=False)
+                        device.emit(uinput.REL_Y, dy)
+                    except Exception as e:
+                        log(f"rel: {e}")
+                    xinj.move(dx, dy)
+
             time.sleep(SCAN_S)
     except KeyboardInterrupt:
         pass

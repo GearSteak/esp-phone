@@ -61,12 +61,23 @@ def _write_mode_desktop() -> None:
         (home / "session_mode").write_text("desktop\n", encoding="utf-8")
     except OSError:
         pass
-    try:
-        p = Path("/etc/esp-handset/ui_mode")
-        if p.parent.is_dir() and os.access(p.parent, os.W_OK):
-            p.write_text("desktop\n", encoding="utf-8")
-    except OSError:
-        pass
+    for path in (Path("/etc/esp-handset/ui_mode"),):
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            if os.access(path.parent, os.W_OK) or (
+                path.exists() and os.access(path, os.W_OK)
+            ):
+                path.write_text("desktop\n", encoding="utf-8")
+            else:
+                subprocess.run(
+                    ["sudo", "-n", "tee", str(path)],
+                    input=b"desktop\n",
+                    check=False,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+        except OSError:
+            pass
 
 
 def _release_all_keyboards() -> None:
