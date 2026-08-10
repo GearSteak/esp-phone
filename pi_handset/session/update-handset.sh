@@ -167,7 +167,9 @@ install_tree() {
     "spi-blank.sh:digivice-spi-blank" \
     "desktop-spi-mirror.sh:digivice-desktop-mirror" \
     "update-handset.sh:digivice-update" \
-    "ensure-buttons.sh:digivice-ensure-buttons"
+    "ensure-buttons.sh:digivice-ensure-buttons" \
+    "fix-cursor.sh:digivice-fix-cursor" \
+    "restore-desktop-displays.sh:digivice-restore-desktop"
   do
     src="${pair%%:*}"
     dst="${pair##*:}"

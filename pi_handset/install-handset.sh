@@ -63,6 +63,8 @@ install -m 755 "$ROOT/session/digivice-layout.sh" "$PREFIX/session/digivice-layo
 install -m 755 "$ROOT/session/digivice-layout.sh" /usr/local/bin/digivice-layout
 install -m 755 "$ROOT/session/restore-desktop-displays.sh" "$PREFIX/session/restore-desktop-displays.sh"
 install -m 755 "$ROOT/session/restore-desktop-displays.sh" /usr/local/bin/digivice-restore-desktop
+install -m 755 "$ROOT/session/fix-cursor.sh" "$PREFIX/session/fix-cursor.sh"
+install -m 755 "$ROOT/session/fix-cursor.sh" /usr/local/bin/digivice-fix-cursor
 install -m 755 "$ROOT/session/unfuck-displays.sh" "$PREFIX/session/unfuck-displays.sh"
 install -m 755 "$ROOT/session/unfuck-displays.sh" /usr/local/bin/digivice-unfuck-displays
 install -m 755 "$ROOT/session/spi-test.sh" "$PREFIX/session/spi-test.sh"
@@ -280,10 +282,21 @@ if [[ -f /etc/default/zramswap ]]; then
   systemctl restart zramswap.service 2>/dev/null || true
 fi
 
+# Force software mouse cursor (hardware plane often invisible after dual-head)
+mkdir -p /etc/X11/xorg.conf.d
+cat >/etc/X11/xorg.conf.d/20-digivice-swcursor.conf <<'EOF'
+# Digivice: force software mouse cursor (vc4 HW cursor often blank)
+Section "Device"
+    Identifier "Digivice modesetting"
+    Driver "modesetting"
+    Option "SWcursor" "true"
+EndSection
+EOF
+apt-get install -y xbitmaps x11-xserver-utils xdotool 2>/dev/null || true
+
 systemctl daemon-reload
 systemctl enable digi-buttons-inputd.service
 systemctl restart digi-buttons-inputd.service || true
-# Hard guarantee: rewrite unit + enable if anything went soft earlier
 if [[ -x /usr/local/bin/digivice-ensure-buttons ]]; then
   bash /usr/local/bin/digivice-ensure-buttons || true
 elif [[ -f "$ROOT/session/ensure-buttons.sh" ]]; then

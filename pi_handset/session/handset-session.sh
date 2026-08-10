@@ -192,6 +192,17 @@ show_desktop_chrome() {
     export DISPLAY="${DISPLAY:-:0}"
     xrandr --auto 2>/dev/null || true
   fi
+  # Hardware mouse plane often invisible after Digivice
+  for r in \
+    /usr/local/bin/digivice-fix-cursor \
+    "$PREFIX/session/fix-cursor.sh" \
+    "$(dirname "$0")/fix-cursor.sh"
+  do
+    if [[ -f "$r" ]]; then
+      bash "$r" >>"$LOG" 2>&1 || true
+      break
+    fi
+  done
 }
 
 ensure_buttons_daemon() {
