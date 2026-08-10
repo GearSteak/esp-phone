@@ -34,11 +34,13 @@ if [[ -z "$BOOTCFG" ]]; then
   exit 1
 fi
 
-# HDMI stay on
+# HDMI stay on + late cable plug support
 sed -i -E 's/^dtoverlay=vc4-kms-v3d(|,.*)$/dtoverlay=vc4-kms-v3d/' "$BOOTCFG" || true
 if ! grep -qE '^dtoverlay=vc4-kms-v3d' "$BOOTCFG"; then
   echo "dtoverlay=vc4-kms-v3d" >>"$BOOTCFG"
 fi
+grep -qE '^hdmi_force_hotplug=' "$BOOTCFG" || echo "hdmi_force_hotplug=1" >>"$BOOTCFG"
+grep -qE '^hdmi_drive=' "$BOOTCFG" || echo "hdmi_drive=2" >>"$BOOTCFG"
 
 # Remove Digivice mipi-dbi DRM block (frees SPI for spidev)
 sed -i '/# --- ESP Digivice display/,/# --- END ESP Digivice display/d' "$BOOTCFG" || true

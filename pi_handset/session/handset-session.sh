@@ -197,6 +197,17 @@ show_desktop_chrome() {
   if command -v xrandr >/dev/null 2>&1; then
     export DISPLAY="${DISPLAY:-:0}"
     xrandr --auto 2>/dev/null || true
+    # Late-plug HDMI (same as digivice-hdmi-hotplug)
+    for h in \
+      /usr/local/bin/digivice-hdmi-hotplug \
+      "$PREFIX/session/hdmi-hotplug.sh" \
+      "$(dirname "$0")/hdmi-hotplug.sh"
+    do
+      if [[ -f "$h" ]]; then
+        bash "$h" >>"$LOG" 2>&1 || true
+        break
+      fi
+    done
   fi
   # Yellow software pointer — hardware cursor often invisible on Pi
   for r in \

@@ -83,6 +83,8 @@ install -m 755 "$ROOT/session/gui-update.sh" "$PREFIX/session/gui-update.sh"
 install -m 755 "$ROOT/session/gui-update.sh" /usr/local/bin/digivice-gui-update
 install -m 755 "$ROOT/session/ensure-buttons.sh" "$PREFIX/session/ensure-buttons.sh"
 install -m 755 "$ROOT/session/ensure-buttons.sh" /usr/local/bin/digivice-ensure-buttons
+install -m 755 "$ROOT/session/hdmi-hotplug.sh" "$PREFIX/session/hdmi-hotplug.sh"
+install -m 755 "$ROOT/session/hdmi-hotplug.sh" /usr/local/bin/digivice-hdmi-hotplug
 
 # Settings → Update can run without a password prompt on the handset
 cat >/etc/sudoers.d/esp-handset-update <<EOF
@@ -312,6 +314,11 @@ if [[ -x /usr/local/bin/digivice-ensure-buttons ]]; then
   bash /usr/local/bin/digivice-ensure-buttons || true
 elif [[ -f "$ROOT/session/ensure-buttons.sh" ]]; then
   bash "$ROOT/session/ensure-buttons.sh" || true
+fi
+if [[ -x /usr/local/bin/digivice-hdmi-hotplug ]]; then
+  bash /usr/local/bin/digivice-hdmi-hotplug --install || true
+elif [[ -f "$ROOT/session/hdmi-hotplug.sh" ]]; then
+  bash "$ROOT/session/hdmi-hotplug.sh" --install || true
 fi
 systemctl disable t9-keypad-inputd.service cardkb-inputd.service hat-inputd.service 2>/dev/null || true
 systemctl enable esp-keyd.service

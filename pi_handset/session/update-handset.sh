@@ -169,7 +169,9 @@ install_tree() {
     "update-handset.sh:digivice-update" \
     "ensure-buttons.sh:digivice-ensure-buttons" \
     "fix-cursor.sh:digivice-fix-cursor" \
-    "restore-desktop-displays.sh:digivice-restore-desktop"
+    "restore-desktop-displays.sh:digivice-restore-desktop" \
+    "hdmi-hotplug.sh:digivice-hdmi-hotplug" \
+    "gui-update.sh:digivice-gui-update"
   do
     src="${pair%%:*}"
     dst="${pair##*:}"
@@ -204,6 +206,9 @@ EOF
   if [[ -f "$ROOT/session/gui-update.sh" ]]; then
     install -m 755 "$ROOT/session/gui-update.sh" "$PREFIX/session/gui-update.sh"
     install -m 755 "$ROOT/session/gui-update.sh" /usr/local/bin/digivice-gui-update
+  fi
+  if [[ -x /usr/local/bin/digivice-hdmi-hotplug ]]; then
+    /usr/local/bin/digivice-hdmi-hotplug --install 2>&1 | tee -a "$LOG" || true
   fi
 
   remember_repo "$REPO"

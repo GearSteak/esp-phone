@@ -182,6 +182,8 @@ install -m 755 "$ROOT/session/spi-blank.sh" /usr/local/bin/digivice-spi-blank 2>
 install -m 755 "$ROOT/session/spi-prove.sh" /usr/local/bin/digivice-spi-prove 2>/dev/null || true
 install -m 755 "$ROOT/session/spi-test.sh" /usr/local/bin/digivice-spi-test 2>/dev/null || true
 install -m 755 "$ROOT/session/mirror-displays.sh" /usr/local/bin/digivice-mirror-displays 2>/dev/null || true
+install -m 755 "$ROOT/session/hdmi-hotplug.sh" "$PREFIX/session/hdmi-hotplug.sh" 2>/dev/null || true
+install -m 755 "$ROOT/session/hdmi-hotplug.sh" /usr/local/bin/digivice-hdmi-hotplug 2>/dev/null || true
 
 if [[ -d "$ROOT/display" ]]; then
   install -m 755 "$ROOT/display/install-spi-userspace.sh" /usr/local/bin/digivice-install-spi-userspace 2>/dev/null || true
@@ -293,6 +295,14 @@ systemctl restart esp-keyd.service || true
 
 if [[ -x /usr/local/bin/digivice-ensure-buttons ]]; then
   bash /usr/local/bin/digivice-ensure-buttons 2>&1 | tee -a "$LOG" || true
+fi
+
+# HDMI late-plug (monitor/cable after boot) — udev + xrandr
+if [[ -x /usr/local/bin/digivice-hdmi-hotplug ]]; then
+  log "Installing HDMI hotplug handler"
+  bash /usr/local/bin/digivice-hdmi-hotplug --install 2>&1 | tee -a "$LOG" || true
+elif [[ -f "$ROOT/session/hdmi-hotplug.sh" ]]; then
+  bash "$ROOT/session/hdmi-hotplug.sh" --install 2>&1 | tee -a "$LOG" || true
 fi
 
 # Optional heavy display paths

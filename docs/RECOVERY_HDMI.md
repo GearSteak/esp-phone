@@ -11,6 +11,21 @@
 Leave Digivice: `handset-desktop` · **F12** · **Ctrl+Shift+D** · Settings → Linux  
 Return: `handset-phone` (and stay default with `handset-session set-phone`)
 
+## Late HDMI plug (cable after boot)
+
+Pi only modesets HDMI at X start if a monitor is present. Plugging in later
+needs `xrandr --auto` (or reboot). Digivice installs:
+
+```bash
+sudo digivice-hdmi-hotplug --install   # also done by digivice-full-update
+# then plug HDMI — should light in ~2s
+# manual:
+digivice-hdmi-hotplug
+```
+
+`hdmi_force_hotplug=1` in config.txt helps some monitors but does **not** replace
+hotplug modesetting; the udev → digivice-hdmi-hotplug path does.
+
 ## Fix HDMI only (keep Digivice default)
 
 ```bash
