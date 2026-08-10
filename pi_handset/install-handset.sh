@@ -79,6 +79,8 @@ install -m 755 "$ROOT/session/update-handset.sh" "$PREFIX/session/update-handset
 install -m 755 "$ROOT/session/update-handset.sh" /usr/local/bin/digivice-update
 install -m 755 "$ROOT/session/full-update.sh" "$PREFIX/session/full-update.sh"
 install -m 755 "$ROOT/session/full-update.sh" /usr/local/bin/digivice-full-update
+install -m 755 "$ROOT/session/gui-update.sh" "$PREFIX/session/gui-update.sh"
+install -m 755 "$ROOT/session/gui-update.sh" /usr/local/bin/digivice-gui-update
 install -m 755 "$ROOT/session/ensure-buttons.sh" "$PREFIX/session/ensure-buttons.sh"
 install -m 755 "$ROOT/session/ensure-buttons.sh" /usr/local/bin/digivice-ensure-buttons
 
@@ -87,11 +89,15 @@ cat >/etc/sudoers.d/esp-handset-update <<EOF
 # Digivice full + GUI update (no password)
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-full-update
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-update
+$USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-gui-update
 $USER_NAME ALL=(root) NOPASSWD: $PREFIX/session/full-update.sh
 $USER_NAME ALL=(root) NOPASSWD: $PREFIX/session/update-handset.sh
+$USER_NAME ALL=(root) NOPASSWD: $PREFIX/session/gui-update.sh
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-ensure-buttons
 $USER_NAME ALL=(root) NOPASSWD: $PREFIX/session/ensure-buttons.sh
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-fix-cursor
+$USER_NAME ALL=(root) NOPASSWD: /usr/bin/bash $PREFIX/session/gui-update.sh
+$USER_NAME ALL=(root) NOPASSWD: /bin/bash $PREFIX/session/gui-update.sh
 EOF
 chmod 440 /etc/sudoers.d/esp-handset-update
 

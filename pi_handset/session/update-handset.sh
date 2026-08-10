@@ -189,13 +189,21 @@ install_tree() {
 
   if [[ -d /etc/sudoers.d ]]; then
     cat >/etc/sudoers.d/esp-handset-update <<EOF
-# Digivice Settings → Update + ensure buttons on start
+# Digivice Settings → Update (passwordless)
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-update
+$USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-full-update
+$USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-gui-update
 $USER_NAME ALL=(root) NOPASSWD: $PREFIX/session/update-handset.sh
+$USER_NAME ALL=(root) NOPASSWD: $PREFIX/session/full-update.sh
+$USER_NAME ALL=(root) NOPASSWD: $PREFIX/session/gui-update.sh
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-ensure-buttons
 $USER_NAME ALL=(root) NOPASSWD: $PREFIX/session/ensure-buttons.sh
 EOF
     chmod 440 /etc/sudoers.d/esp-handset-update
+  fi
+  if [[ -f "$ROOT/session/gui-update.sh" ]]; then
+    install -m 755 "$ROOT/session/gui-update.sh" "$PREFIX/session/gui-update.sh"
+    install -m 755 "$ROOT/session/gui-update.sh" /usr/local/bin/digivice-gui-update
   fi
 
   remember_repo "$REPO"

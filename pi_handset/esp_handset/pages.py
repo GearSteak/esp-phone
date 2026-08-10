@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 from datetime import datetime
 from pathlib import Path
 from typing import Callable, Optional
@@ -594,138 +595,203 @@ def make_settings_hub(on_back, open_page: Callable[[str], None], on_linux) -> QW
 
 
 def make_update_page(on_back: Callable[[], None]) -> QWidget:
-    """Download latest from GitHub and reinstall Digivice software."""
-    from PyQt5.QtCore import QProcess, QProcessEnvironment
+    """Download latest from GitHub and reinstall Digivice software.
+
+    No QMessageBox (hard buttons cannot answer Yes/No dialogs reliably).
+    Uses digivice-gui-update which never kills Digivice mid-run.
+    """
+    from PyQt5.QtCore import QProcess, QProcessEnvironment, QTimer
 
     body = QWidget()
     lay = QVBoxLayout(body)
     tip = QLabel(
-        "Full stack update (git + /opt + services).\n"
-        "Or in terminal:  sudo digivice-full-update\n"
-        "Needs network + sudo."
+        "Update from GitHub to /opt.\n"
+        "Check needs network. Install needs sudo.\n"
+        "Install: press button TWICE (no Yes/No popup).\n"
+        "Terminal seed if needed: sudo digivice-full-update"
     )
     tip.setWordWrap(True)
-    tip.setStyleSheet("color:#9ab;font-size:11px;")
+    tip.setStyleSheet("color:#9ab;font-size:10px;")
     status = QLabel("Ready.")
     status.setWordWrap(True)
     log = QTextEdit()
     log.setReadOnly(True)
-    log.setMaximumHeight(140)
-    log.setStyleSheet("font-size:10px; font-family: monospace;")
+    log.setMinimumHeight(100)
+    log.setStyleSheet("font-size:9px; font-family: monospace;")
     check_btn = QPushButton("Check for updates")
-    run_btn = QPushButton("Quick update + restart")
-    full_btn = QPushButton("FULL update (recommended)")
+    run_btn = QPushButton("Install update (x2)")
+    full_btn = QPushButton("FULL install (x2)")
     full_btn.setStyleSheet("font-weight:700;")
+    restart_btn = QPushButton("Restart Digivice")
     lay.addWidget(tip)
     lay.addWidget(status)
     lay.addWidget(log, 1)
     lay.addWidget(check_btn)
     lay.addWidget(run_btn)
     lay.addWidget(full_btn)
+    lay.addWidget(restart_btn)
 
     proc = QProcess(body)
+    proc.setProcessChannelMode(QProcess.MergedChannels)
     env = QProcessEnvironment.systemEnvironment()
     env.insert("DISPLAY", os.environ.get("DISPLAY", ":0"))
+    env.insert(
+        "PATH",
+        "/usr/local/bin:/usr/bin:/bin:" + os.environ.get("PATH", ""),
+    )
+    env.insert("PYTHONUNBUFFERED", "1")
     proc.setProcessEnvironment(env)
 
-    def _update_bin(full: bool = False) -> list:
-        if full:
-            for p in (
-                "/usr/local/bin/digivice-full-update",
-                "/opt/esp-handset/session/full-update.sh",
-            ):
-                if os.path.isfile(p):
-                    return ["sudo", "-n", p]
-            here = Path(__file__).resolve().parents[1] / "session" / "full-update.sh"
-            if here.is_file():
-                return ["sudo", "-n", "bash", str(here)]
+    pending = {"action": None, "ts": 0.0}
+
+    def _gui_update_bin() -> list:
+        for p in (
+            "/usr/local/bin/digivice-gui-update",
+            "/opt/esp-handset/session/gui-update.sh",
+        ):
+            if os.path.isfile(p):
+                return ["sudo", "-n", p]
+        here = Path(__file__).resolve().parents[1] / "session" / "gui-update.sh"
+        if here.is_file():
+            return ["sudo", "-n", "bash", str(here)]
         for p in (
             "/usr/local/bin/digivice-update",
             "/opt/esp-handset/session/update-handset.sh",
         ):
             if os.path.isfile(p):
                 return ["sudo", "-n", p]
-        here = Path(__file__).resolve().parents[1] / "session" / "update-handset.sh"
-        if here.is_file():
-            return ["bash", str(here)]
-        return ["sudo", "-n", "digivice-update"]
+        return ["sudo", "-n", "/usr/local/bin/digivice-gui-update"]
 
-    def append_out():
+    def append_out() -> None:
         data = bytes(proc.readAllStandardOutput()).decode("utf-8", "replace")
-        if data:
-            log.moveCursor(QTextCursor.End)
-            log.insertPlainText(data)
+        if not data:
+            return
+        log.moveCursor(QTextCursor.End)
+        log.insertPlainText(data)
+        log.moveCursor(QTextCursor.End)
 
-    def append_err():
-        data = bytes(proc.readAllStandardError()).decode("utf-8", "replace")
-        if data:
-            log.moveCursor(QTextCursor.End)
-            log.insertPlainText(data)
+    def set_busy(busy: bool) -> None:
+        check_btn.setEnabled(not busy)
+        run_btn.setEnabled(not busy)
+        full_btn.setEnabled(not busy)
 
-    def on_finished(code: int, _status) -> None:
-        check_btn.setEnabled(True)
-        run_btn.setEnabled(True)
-        full_btn.setEnabled(True)
+    def on_finished(code: int, _st) -> None:
+        set_busy(False)
+        append_out()
         if code == 0:
-            status.setText("Done.")
+            status.setText("Update finished. Press Restart Digivice.")
+            log.append("\n--- OK ---\n")
         else:
             status.setText(
-                f"Failed (exit {code}). Terminal: sudo digivice-full-update"
+                f"Failed (exit {code}). Or: sudo digivice-full-update"
+            )
+            log.append(
+                "\n--- FAILED ---\n"
+                "If sudo denied, seed once:\n"
+                "  sudo digivice-full-update\n"
             )
 
-    proc.readyReadStandardOutput.connect(append_out)
-    proc.readyReadStandardError.connect(append_err)
-    proc.finished.connect(on_finished)
+    def on_error(err) -> None:
+        set_busy(False)
+        status.setText(f"Start error: {err}")
+        log.append(f"\nQProcess error: {err}\n")
 
-    def start(bin_cmd: list, args: list, label: str) -> None:
+    proc.readyReadStandardOutput.connect(append_out)
+    proc.finished.connect(on_finished)
+    try:
+        proc.errorOccurred.connect(on_error)
+    except Exception:
+        pass
+
+    def start(args: list, label: str) -> None:
         if proc.state() != QProcess.NotRunning:
+            status.setText("Already running...")
             return
+        bin_cmd = _gui_update_bin()
         log.clear()
         status.setText(label)
-        check_btn.setEnabled(False)
-        run_btn.setEnabled(False)
-        full_btn.setEnabled(False)
-        prog = bin_cmd[0]
-        argv = bin_cmd[1:] + args
-        log.append(f"$ {' '.join(bin_cmd + args)}\n")
+        set_busy(True)
+        full_cmd = bin_cmd + args
+        log.append("$ " + " ".join(full_cmd) + "\n\n")
+        try:
+            r = subprocess.run(
+                ["sudo", "-n", "true"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=3,
+            )
+            if r.returncode != 0:
+                log.append(
+                    "sudo -n failed — no passwordless sudo yet.\n"
+                    "On SSH/keyboard run once:\n"
+                    "  sudo digivice-full-update\n\n"
+                )
+                status.setText("Need sudo once via terminal first")
+                set_busy(False)
+                return
+        except Exception as e:
+            log.append(f"sudo probe: {e}\n")
+        prog, *argv = full_cmd
         proc.start(prog, argv)
-        if not proc.waitForStarted(4000):
-            status.setText("Could not start — run: sudo digivice-full-update")
-            check_btn.setEnabled(True)
-            run_btn.setEnabled(True)
-            full_btn.setEnabled(True)
+        if not proc.waitForStarted(5000):
+            status.setText("Could not start updater")
+            set_busy(False)
+            log.append(
+                "Missing digivice-gui-update.\n"
+                "  sudo digivice-full-update\n"
+            )
 
-    def do_check():
-        start(_update_bin(False), ["--check"], "Checking GitHub…")
+    def needs_confirm(action: str) -> bool:
+        import time as _t
 
-    def do_run():
-        r = QMessageBox.question(
-            body,
-            "Quick update",
-            "Pull + reinstall UI/scripts and restart?",
-            QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.Yes,
-        )
-        if r != QMessageBox.Yes:
+        now = _t.time()
+        if pending["action"] == action and now - float(pending["ts"]) < 4.0:
+            pending["action"] = None
+            return False
+        pending["action"] = action
+        pending["ts"] = now
+        status.setText("Press the same button again to confirm (4s)")
+        return True
+
+    def do_check() -> None:
+        pending["action"] = None
+        start(["--check"], "Checking GitHub...")
+
+    def do_run() -> None:
+        if needs_confirm("quick"):
             return
-        start(_update_bin(False), ["--restart"], "Quick update…")
+        start([], "Installing update...")
 
-    def do_full():
-        r = QMessageBox.question(
-            body,
-            "FULL update",
-            "Full stack: git, apt packages, /opt, buttons, cursor, services?\n"
-            "(Same as: sudo digivice-full-update)",
-            QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.Yes,
-        )
-        if r != QMessageBox.Yes:
+    def do_full() -> None:
+        if needs_confirm("full"):
             return
-        start(_update_bin(True), [], "FULL update… (a few minutes)")
+        start(["--full"], "FULL update... (may take minutes)")
+
+    def do_restart() -> None:
+        status.setText("Restarting...")
+        env2 = os.environ.copy()
+        env2.setdefault("DISPLAY", ":0")
+        try:
+            subprocess.Popen(
+                [
+                    "bash",
+                    "-c",
+                    "sleep 0.5; /usr/local/bin/handset-phone || handset-phone",
+                ],
+                start_new_session=True,
+                env=env2,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        except Exception as e:
+            status.setText(f"Restart failed: {e}")
+            return
+        QTimer.singleShot(300, lambda: os._exit(0))
 
     check_btn.clicked.connect(do_check)
     run_btn.clicked.connect(do_run)
     full_btn.clicked.connect(do_full)
+    restart_btn.clicked.connect(do_restart)
     return page_chrome("Update", body, on_back)
 
 
