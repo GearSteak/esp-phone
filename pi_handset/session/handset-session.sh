@@ -198,7 +198,7 @@ show_desktop_chrome() {
     export DISPLAY="${DISPLAY:-:0}"
     xrandr --auto 2>/dev/null || true
   fi
-  # Hardware mouse plane often invisible after Digivice
+  # Yellow software pointer — hardware cursor often invisible on Pi
   for r in \
     /usr/local/bin/digivice-fix-cursor \
     "$PREFIX/session/fix-cursor.sh" \
@@ -251,6 +251,9 @@ launch_phone() {
   fi
   # Digivice owns SPI — stop desktop mirror first
   stop_desktop_spi_mirror
+  # Hide software pointer while phone UI runs
+  /usr/local/bin/digivice-fix-cursor --stop 2>/dev/null \
+    || bash "$(dirname "$0")/fix-cursor.sh" --stop 2>/dev/null || true
   ensure_buttons_daemon
   mode_set phone
   digivice_display_env

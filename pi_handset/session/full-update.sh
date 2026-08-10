@@ -156,6 +156,10 @@ cp -a "$ROOT/session/." "$PREFIX/session/" 2>/dev/null || true
 install -m 755 "$ROOT/esp_handset/handset_app.py" "$PREFIX/handset_app.py"
 install -m 755 "$ROOT/esp_handset/buttons_inputd.py" "$PREFIX/buttons_inputd.py"
 install -m 755 "$ROOT/esp_handset/esp_keyd.py" "$PREFIX/esp_keyd.py"
+install -m 755 "$ROOT/esp_handset/pointer_overlay.py" "$PREFIX/esp_handset/pointer_overlay.py" 2>/dev/null || true
+# keep under package too
+[[ -f "$ROOT/esp_handset/pointer_overlay.py" ]] && \
+  install -m 755 "$ROOT/esp_handset/pointer_overlay.py" "$PREFIX/esp_handset/pointer_overlay.py"
 install -m 755 "$ROOT/esp_handset/hat_inputd.py" "$PREFIX/hat_inputd.py"
 install -m 755 "$ROOT/esp_handset/cardkb_inputd.py" "$PREFIX/cardkb_inputd.py"
 install -m 755 "$ROOT/esp_handset/t9_keypad_inputd.py" "$PREFIX/t9_keypad_inputd.py"
@@ -301,7 +305,9 @@ fi
 export DISPLAY="${DISPLAY:-:0}"
 export XAUTHORITY="${XAUTHORITY:-$USER_HOME/.Xauthority}"
 if [[ -x /usr/local/bin/digivice-fix-cursor ]]; then
-  sudo -u "$USER_NAME" env DISPLAY="$DISPLAY" XAUTHORITY="$XAUTHORITY" \
+  # permanent X11 + overlay autostart, then live overlay
+  /usr/local/bin/digivice-fix-cursor --permanent 2>&1 | tee -a "$LOG" || true
+  sudo -u "$USER_NAME" env DISPLAY="${DISPLAY:-:0}" XAUTHORITY="$USER_HOME/.Xauthority" \
     /usr/local/bin/digivice-fix-cursor 2>&1 | tee -a "$LOG" || true
 fi
 
