@@ -26,6 +26,8 @@ apt-get install -y \
   python3-smbus \
   i2c-tools \
   python3-rpi.gpio \
+  python3-lgpio \
+  xdotool \
   python3-picamera2 \
   rpicam-apps \
   linphone-cli \
@@ -159,17 +161,37 @@ chown "$USER_NAME:$USER_NAME" /etc/esp-handset/ui_mode
 chmod 664 /etc/esp-handset/ui_mode
 chown -R "$USER_NAME:$USER_NAME" "$USER_HOME/Pictures/phone" "$USER_HOME/.esp-handset"
 
+cat >/etc/udev/rules.d/99-digivice-buttons.rules <<'EOF'
+# Digivice hard buttons — seat/X can read the virtual keyboard
+KERNEL=="uinput", GROUP="input", MODE="0660", OPTIONS+="static_node=uinput"
+SUBSYSTEM=="input", KERNEL=="event*", ATTRS{name}=="Digivice-Buttons", \
+  MODE="0666", GROUP="input", \
+  ENV{ID_INPUT}="1", ENV{ID_INPUT_KEYBOARD}="1", \
+  ENV{ID_INPUT_KEY}="1", TAG+="uaccess", TAG+="seat"
+EOF
+
+cat >/etc/modules-load.d/uinput.conf <<'EOF'
+uinput
+EOF
+modprobe uinput 2>/dev/null || true
+usermod -aG input,gpio "$USER_NAME" 2>/dev/null || usermod -aG input "$USER_NAME" 2>/dev/null || true
+
 cat >/etc/systemd/system/digi-buttons-inputd.service <<EOF
 [Unit]
-Description=Digivice hard buttons (D-pad + Confirm/Back/Home)
-After=multi-user.target
+Description=Digivice hard buttons (GPIO → keys)
+After=multi-user.target systemd-udev-settle.service
+Wants=multi-user.target
 
 [Service]
 Type=simple
 User=root
+Environment=DISPLAY=:0
+Environment=XAUTHORITY=$USER_HOME/.Xauthority
+Environment=ESP_HANDSET_PREFIX=$PREFIX
+ExecStartPre=-/sbin/modprobe uinput
 ExecStart=/usr/bin/python3 $PREFIX/buttons_inputd.py
 Restart=always
-RestartSec=2
+RestartSec=1
 
 [Install]
 WantedBy=multi-user.target

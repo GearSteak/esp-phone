@@ -44,21 +44,25 @@ Or classic d-pad with Confirm in center and Back/Home as side keys.
 
 ## Software
 
-Service: **`digi-buttons-inputd`** — must be **enabled on boot** (multi-user).  
-Created by `install-handset` / `digivice-update` / `digivice-ensure-buttons`.  
-`handset-session phone` also forces a start if the unit is down.
+Service: **`digi-buttons-inputd`** — **enabled on boot**.  
+Injects keys via **uinput + xdotool** so Digivice (X11) actually receives them.
 
 ```bash
-# One-shot fix on the Pi (now / after pull)
-sudo digivice-ensure-buttons
-# or:
-sudo systemctl enable --now digi-buttons-inputd
+# Full fix + diagnose (run on the Pi)
+sudo digivice-ensure-buttons --doctor
 
-sudo systemctl status digi-buttons-inputd
+# Watch presses (must print PRESS … when you mash a wire to GND)
 journalctl -u digi-buttons-inputd -f
 ```
 
-Optional pin override (systemd `Environment=`):
+| Doctor result | Meaning |
+|---------------|---------|
+| `PRESS UP` in journal | Wiring + daemon OK → GUI path |
+| No PRESS, levels stay 1 | Switch not pulling GPIO to GND (wrong pin / wiring) |
+| All levels 0 | Shorted / missing pull / wrong polarity |
+| Service failed | `python3-uinput` / GPIO package missing |
+
+Optional pin override (unit `Environment=`):
 
 ```
 DIGI_BTN_UP=5
