@@ -118,7 +118,18 @@ def init() -> bool:
         import spidev  # type: ignore
 
         _spi = spidev.SpiDev()
-        _spi.open(bus, dev)
+        try:
+            _spi.open(bus, dev)
+        except OSError as e:
+            # Busy after Digivice kill — brief wait and re-open once
+            print(f"[st7789] SPI open busy ({e}); retry…", flush=True)
+            time.sleep(0.6)
+            try:
+                _spi.close()
+            except Exception:
+                pass
+            _spi = spidev.SpiDev()
+            _spi.open(bus, dev)
         _spi.max_speed_hz = speed
         _spi.mode = 0
         _spi.lsbfirst = False

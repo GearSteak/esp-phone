@@ -163,21 +163,51 @@ sleep "$DEBOUNCE_SEC"
 if command -v xrandr >/dev/null 2>&1; then
   if run_x xrandr --query >/dev/null 2>&1; then
     run_x xrandr --auto >/dev/null 2>&1
-    # Explicit HDMI/DP — "connected" heads that have no mode yet
+    # Explicit HDMI/DP — only enable; do not thrash --primary every plug
+    # (primary thrashing broke desktop→SPI capture / black mini-screen).
     while read -r line; do
       name="${line%% *}"
       case "$name" in
         HDMI*|hdmi*|DP-*|DisplayPort*)
           run_x xrandr --output "$name" --auto --on >/dev/null 2>&1
-          # Prefer first HDMI as primary so Digivice/desktop appear there
-          run_x xrandr --output "$name" --primary >/dev/null 2>&1
           log "enabled $name"
           ;;
       esac
     done < <(run_x xrandr --query 2>/dev/null | awk '/ connected/{print}')
-    # Leave SPI/Unknown panels alone if present (dual-head DRM installs)
     log "xrandr done"
     run_x xrandr --query 2>/dev/null | awk '/ connected|disconnected|Screen /{print}' | tee -a "$LOG" >/dev/null
+
+    # If Linux desktop owns the session, re-kick SPI mirror so small screen tracks new mode
+    mode_f=""
+    for mf in \
+      "${HOME}/.esp-handset/session_mode" \
+      "/home/$(gui_user)/.esp-handset/session_mode" \
+      /etc/esp-handset/ui_mode
+    do
+      if [[ -f "$mf" ]]; then mode_f="$mf"; break; fi
+    done
+    mode="phone"
+    [[ -n "$mode_f" ]] && mode="$(tr -d '[:space:]' <"$mode_f" 2>/dev/null || echo phone)"
+    if [[ "$mode" == "desktop" ]]; then
+      for m in \
+        /usr/local/bin/digivice-desktop-mirror \
+        /opt/esp-handset/session/desktop-spi-mirror.sh
+      do
+        if [[ -x "$m" || -f "$m" ]]; then
+          log "desktop mode → restart SPI mirror"
+          if [[ "$(id -u)" -eq 0 ]]; then
+            u="$(gui_user)"
+            home="$(getent passwd "$u" | cut -d: -f6 || echo /home/$u)"
+            sudo -u "$u" env DISPLAY="${DISPLAY:-:0}" \
+              XAUTHORITY="${home}/.Xauthority" HOME="$home" \
+              bash "$m" start >/dev/null 2>&1 || true
+          else
+            bash "$m" start >/dev/null 2>&1 || true
+          fi
+          break
+        fi
+      done
+    fi
   else
     log "xrandr cannot talk to X (session not up yet?) — will retry on next event"
   fi

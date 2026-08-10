@@ -73,9 +73,11 @@ stop_desktop_spi_mirror() {
 start_desktop_spi_mirror() {
   if ! spi_userspace_on; then
     log "desktop SPI mirror skipped (not userspace SPI)"
+    log "  fix: sudo digivice-install-spi-userspace && reboot"
     return 0
   fi
   export DISPLAY="${DISPLAY:-:0}"
+  export XAUTHORITY="${XAUTHORITY:-$HOME/.Xauthority}"
   export ESP_HANDSET_SPI_BACKEND=userspace
   local m
   m="$(desktop_mirror_bin)"
@@ -83,10 +85,20 @@ start_desktop_spi_mirror() {
     log "desktop-spi-mirror.sh missing"
     return 1
   fi
-  # Free SPI briefly after Digivice release
-  sleep 0.4
+  # Free SPI after Digivice release (GPIO/spidev handoff can take a beat)
+  sleep 0.8
+  bash "$m" stop >>"$LOG" 2>&1 || true
+  sleep 0.3
   bash "$m" start >>"$LOG" 2>&1 || true
-  log "desktop → SPI mirror started"
+  sleep 0.4
+  if bash "$m" status >>"$LOG" 2>&1; then
+    log "desktop → SPI mirror RUNNING"
+  else
+    log "WARN: desktop → SPI mirror not running — retry in 1s"
+    sleep 1
+    bash "$m" start >>"$LOG" 2>&1 || true
+    bash "$m" status >>"$LOG" 2>&1 || log "ERROR: mirror failed — see $LOG"
+  fi
 }
 
 # Recovery flag on FAT boot partition (Windows can create this while SD is in a PC)
@@ -196,18 +208,17 @@ show_desktop_chrome() {
   done
   if command -v xrandr >/dev/null 2>&1; then
     export DISPLAY="${DISPLAY:-:0}"
+    # Light unlock only — do NOT run full digivice-hdmi-hotplug here
+    # (2s sleep + primary thrash delayed SPI mirror and blanked captures).
     xrandr --auto 2>/dev/null || true
-    # Late-plug HDMI (same as digivice-hdmi-hotplug)
-    for h in \
-      /usr/local/bin/digivice-hdmi-hotplug \
-      "$PREFIX/session/hdmi-hotplug.sh" \
-      "$(dirname "$0")/hdmi-hotplug.sh"
-    do
-      if [[ -f "$h" ]]; then
-        bash "$h" >>"$LOG" 2>&1 || true
-        break
-      fi
-    done
+    while read -r line; do
+      name="${line%% *}"
+      case "$name" in
+        HDMI*|hdmi*|DP-*)
+          xrandr --output "$name" --auto --on 2>/dev/null || true
+          ;;
+      esac
+    done < <(xrandr --query 2>/dev/null | awk '/ connected/{print}')
   fi
   # Yellow software pointer — hardware cursor often invisible on Pi
   for r in \
