@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Always-visible pointer overlay for Digivice desktops.
 
-Pi vc4 hardware cursor is often completely invisible. This draws a bright
-arrow at the real mouse position (X11 / Qt). Started by handset-desktop.
+Pi vc4 hardware cursor is often invisible, especially with SPI dual-head /
+cloned ST7789. This draws a bright amber arrow at the mouse position.
 
   digivice-pointer              # foreground
   digivice-pointer --daemon     # background
@@ -17,11 +17,18 @@ import sys
 
 def main() -> int:
     os.environ.setdefault("DISPLAY", ":0")
-    # Prefer X11 so this works as an overlay on the desk
     os.environ.setdefault("QT_QPA_PLATFORM", "xcb")
+    if not os.environ.get("XAUTHORITY"):
+        for cand in (
+            os.path.expanduser("~/.Xauthority"),
+            "/home/pi/.Xauthority",
+        ):
+            if os.path.isfile(cand):
+                os.environ["XAUTHORITY"] = cand
+                break
 
     from PyQt5.QtCore import Qt, QTimer, QPoint
-    from PyQt5.QtGui import QColor, QPainter, QPolygon, QGuiApplication, QCursor
+    from PyQt5.QtGui import QColor, QPainter, QPolygon, QGuiApplication, QCursor, QPen
     from PyQt5.QtWidgets import QApplication, QWidget
 
     class Pointer(QWidget):
@@ -37,57 +44,63 @@ def main() -> int:
             self.setAttribute(Qt.WA_TranslucentBackground, True)
             self.setAttribute(Qt.WA_ShowWithoutActivating, True)
             self.setAttribute(Qt.WA_TransparentForMouseEvents, True)
-            self.setFixedSize(28, 32)
+            # Big enough to see on mirrored 240×320
+            self.setFixedSize(40, 48)
             self._timer = QTimer(self)
             self._timer.timeout.connect(self._follow)
             self._timer.start(16)
             self._follow()
             self.show()
+            self.raise_()
 
         def _follow(self) -> None:
             p = QCursor.pos()
             # Hotspot near tip of arrow
-            self.move(p.x(), p.y())
+            self.move(p.x() - 1, p.y() - 1)
+            if not self.isVisible():
+                self.show()
+            self.raise_()
 
         def paintEvent(self, _e) -> None:  # noqa: N802
             p = QPainter(self)
             p.setRenderHint(QPainter.Antialiasing)
-            # Bright high-contrast “cursor” shape
             tip = QPolygon(
                 [
-                    QPoint(1, 1),
-                    QPoint(1, 26),
-                    QPoint(8, 20),
-                    QPoint(14, 30),
-                    QPoint(18, 28),
-                    QPoint(12, 18),
-                    QPoint(22, 18),
+                    QPoint(2, 2),
+                    QPoint(2, 38),
+                    QPoint(12, 28),
+                    QPoint(18, 44),
+                    QPoint(24, 41),
+                    QPoint(16, 26),
+                    QPoint(34, 26),
                 ]
             )
-            p.setPen(QColor(0, 0, 0, 220))
-            p.setBrush(QColor(255, 220, 40, 245))  # amber
+            # Thick black outline for contrast / color-vision friendly
+            p.setPen(QPen(QColor(0, 0, 0, 255), 3))
+            p.setBrush(QColor(255, 230, 0, 255))  # bright yellow
             p.drawPolygon(tip)
 
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)
     win = Pointer()
     win.show()
+    print(
+        f"[pointer] software cursor on DISPLAY={os.environ.get('DISPLAY')} "
+        f"XAUTH={os.environ.get('XAUTHORITY', '?')}",
+        flush=True,
+    )
 
     def stop(*_a) -> None:
         app.quit()
 
     signal.signal(signal.SIGTERM, stop)
     signal.signal(signal.SIGINT, stop)
-    return int(app.exec_())
+    return int(app.exec_() or 0)
 
 
 if __name__ == "__main__":
-    # daemonize?
+    # Optional background wrapper
     if "--daemon" in sys.argv:
-        if os.fork() != 0:
-            raise SystemExit(0)
-        os.setsid()
-        if os.fork() != 0:
-            raise SystemExit(0)
-        sys.argv = [a for a in sys.argv if a != "--daemon"]
-    raise SystemExit(main())
+        if os.fork():
+            sys.exit(0)
+    sys.exit(main())

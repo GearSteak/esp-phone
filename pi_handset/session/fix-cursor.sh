@@ -67,9 +67,26 @@ start_overlay() {
     return 1
   fi
   export QT_QPA_PLATFORM=xcb
+  export DISPLAY="${DISPLAY:-:0}"
   export PYTHONPATH="$(dirname "$py")/..:${PYTHONPATH:-}"
+  if [[ -z "${XAUTHORITY:-}" ]]; then
+    for a in "${HOME}/.Xauthority" /home/*/.Xauthority; do
+      [[ -f $a ]] || continue
+      export XAUTHORITY="$(ls $a 2>/dev/null | head -n1)"
+      break
+    done
+  fi
   nohup /usr/bin/python3 "$py" >>"$LOG" 2>&1 &
-  log "started software pointer overlay pid=$! ($py)"
+  local pid=$!
+  echo "$pid" >"${HOME}/.esp-handset/pointer_overlay.pid" 2>/dev/null || true
+  sleep 0.4
+  if kill -0 "$pid" 2>/dev/null; then
+    log "started software pointer overlay pid=$pid ($py)"
+  else
+    log "ERROR: pointer overlay exited — last log:"
+    tail -n 15 "$LOG" 2>/dev/null || true
+    return 1
+  fi
 }
 
 if [[ "$STOP" -eq 1 ]]; then

@@ -278,7 +278,7 @@ show_desktop_chrome() {
       esac
     done < <(xrandr --query 2>/dev/null | awk '/ connected/{print}')
   fi
-  # Yellow software pointer — hardware cursor often invisible on Pi
+  # Yellow software pointer — hardware cursor often invisible on Pi / SPI clone
   for r in \
     /usr/local/bin/digivice-fix-cursor \
     "$PREFIX/session/fix-cursor.sh" \
@@ -289,6 +289,27 @@ show_desktop_chrome() {
       break
     fi
   done
+}
+
+# Always re-start software pointer after SPI layout changes (DRM reconfig
+# blanks the HW cursor plane; phone mode stops the overlay).
+ensure_desktop_cursor() {
+  log "ensure desktop cursor (software overlay)"
+  for r in \
+    /usr/local/bin/digivice-fix-cursor \
+    "$PREFIX/session/fix-cursor.sh" \
+    "$(dirname "$0")/fix-cursor.sh"
+  do
+    if [[ -f "$r" ]]; then
+      # stop then start so a stale overlay doesn't stick after handset-phone
+      bash "$r" --stop >>"$LOG" 2>&1 || true
+      sleep 0.2
+      bash "$r" >>"$LOG" 2>&1 || true
+      return 0
+    fi
+  done
+  log "WARN: digivice-fix-cursor missing"
+  return 1
 }
 
 ensure_buttons_daemon() {
@@ -326,6 +347,7 @@ launch_phone() {
   if force_desktop_from_boot_flag; then
     show_desktop_chrome
     start_desktop_spi_mirror
+    ensure_desktop_cursor
     log "not launching Digivice (recovery flag)"
     return 0
   fi
@@ -372,6 +394,7 @@ case "$cmd" in
     if force_desktop_from_boot_flag; then
       show_desktop_chrome
       start_desktop_spi_mirror
+      ensure_desktop_cursor
       log "autostart: desktop (boot recovery flag) + SPI mirror"
       exit 0
     fi
@@ -380,7 +403,8 @@ case "$cmd" in
     if [[ "$m" != "phone" ]]; then
       show_desktop_chrome
       start_desktop_spi_mirror
-      log "autostart: desktop + SPI mirror"
+      ensure_desktop_cursor
+      log "autostart: desktop + SPI mirror + cursor"
       exit 0
     fi
     sleep 2
@@ -412,8 +436,9 @@ case "$cmd" in
     done
     show_desktop_chrome
     start_desktop_spi_mirror
+    ensure_desktop_cursor
     echo "Left Digivice. SPI shows desktop mirror. Return: handset-phone"
-    log "desktop ready + SPI mirror"
+    log "desktop ready + SPI mirror + cursor"
     ;;
   spi-phone)
     # Digivice with SPI as sole head (HDMI off) — use when dual-head blanks SPI
@@ -442,6 +467,7 @@ case "$cmd" in
     pkill -9 -f "python3.*handset" 2>/dev/null || true
     show_desktop_chrome
     start_desktop_spi_mirror
+    ensure_desktop_cursor
     echo "Force-killed Digivice. mode=desktop (SPI mirrors desktop)"
     ;;
   log)
