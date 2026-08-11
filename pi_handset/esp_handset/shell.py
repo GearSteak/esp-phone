@@ -604,6 +604,15 @@ class PhoneShell(QMainWindow):
                     event.accept()
                     return
             if key in (Qt.Key_Return, Qt.Key_Enter):
+                # Camera etc.: page.digi_activate() (Confirm = snap)
+                digi_act = getattr(page, "digi_activate", None)
+                if callable(digi_act):
+                    try:
+                        if digi_act():
+                            event.accept()
+                            return
+                    except Exception:
+                        pass
                 if digi_nav.activate_page(page, self.show_osk_for):
                     event.accept()
                     return

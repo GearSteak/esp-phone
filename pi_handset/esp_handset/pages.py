@@ -267,8 +267,8 @@ def make_call_log_page(on_back) -> QWidget:
     return page_chrome("Call Log", body, on_back)
 
 
-def make_camera_page(on_back, on_status, open_gallery: Optional[Callable[[], None]] = None) -> QWidget:
-    """Live CSI preview + Snap. Gallery is a separate page (no list under camera)."""
+def make_camera_page(on_back, on_status) -> QWidget:
+    """Full-frame live CSI preview. Confirm = take photo. Gallery is its own app."""
     from PyQt5.QtCore import QTimer, pyqtSignal, QObject
     from PyQt5.QtGui import QImage, QPixmap
 
@@ -278,45 +278,40 @@ def make_camera_page(on_back, on_status, open_gallery: Optional[Callable[[], Non
 
     body = QWidget()
     lay = QVBoxLayout(body)
-    lay.setSpacing(4)
-    lay.setContentsMargins(2, 2, 2, 2)
+    lay.setSpacing(2)
+    lay.setContentsMargins(0, 0, 0, 0)
 
-    tip = QLabel("Live preview · Snap saves to Gallery")
-    tip.setStyleSheet("color:#9ab;font-size:10px;")
+    tip = QLabel("Confirm = snap · Gallery is separate")
+    tip.setStyleSheet("color:#9ab;font-size:9px;")
     tip.setWordWrap(True)
+    tip.setAlignment(Qt.AlignCenter)
     preview = QLabel("Starting camera…")
     preview.setAlignment(Qt.AlignCenter)
-    preview.setMinimumHeight(140)
+    preview.setMinimumHeight(180)
     preview.setStyleSheet(
-        "background:#0a0a0a; border: 2px solid #333; border-radius: 8px; color:#888;"
+        "background:#0a0a0a; border: none; color:#888; font-size:11px;"
     )
     status = QLabel("")
-    status.setStyleSheet("color:#9ab;font-size:10px;")
+    status.setStyleSheet("color:#cde;font-size:9px;")
+    status.setAlignment(Qt.AlignCenter)
     status.setWordWrap(True)
-    snap = QPushButton("Snap photo")
-    snap.setMinimumHeight(34)
-    snap.setStyleSheet("font-weight:700;")
-    gallery_btn = QPushButton("Open Gallery →")
-    gallery_btn.setMinimumHeight(30)
 
     lay.addWidget(tip)
     lay.addWidget(preview, 1)
     lay.addWidget(status)
-    lay.addWidget(snap)
-    if open_gallery is not None:
-        lay.addWidget(gallery_btn)
-    else:
-        gallery_btn.hide()
 
     bridge = _FrameBridge(body)
     live = pi_camera.LivePreview(width=320, height=240, fps=8.0)
     last_path: list[Optional[Path]] = [None]
     _started = [False]
+    _busy = [False]
 
     def on_frame_bytes(rgb: bytes, w: int, h: int) -> None:
         bridge.frame.emit(rgb, w, h)
 
     def on_frame_ui(rgb, w: int, h: int) -> None:
+        if _busy[0]:
+            return
         try:
             img = QImage(rgb, w, h, w * 3, QImage.Format_RGB888)
             if img.isNull():
@@ -324,8 +319,8 @@ def make_camera_page(on_back, on_status, open_gallery: Optional[Callable[[], Non
             pix = QPixmap.fromImage(img.copy())
             preview.setPixmap(
                 pix.scaled(
-                    preview.width() or 220,
-                    preview.height() or 160,
+                    max(preview.width(), 200),
+                    max(preview.height(), 160),
                     Qt.KeepAspectRatio,
                     Qt.SmoothTransformation,
                 )
@@ -335,7 +330,8 @@ def make_camera_page(on_back, on_status, open_gallery: Optional[Callable[[], Non
 
     def on_err(msg: str) -> None:
         status.setText(msg)
-        preview.setText(msg[:80])
+        if not preview.pixmap() or preview.pixmap().isNull():
+            preview.setText(msg[:80])
 
     bridge.frame.connect(on_frame_ui)
     bridge.err.connect(on_err)
@@ -343,25 +339,29 @@ def make_camera_page(on_back, on_status, open_gallery: Optional[Callable[[], Non
     def start_live() -> None:
         if _started[0]:
             return
-        status.setText("Starting preview…")
+        status.setText("Starting…")
         ok = live.start(
             on_frame_bytes,
             on_error=lambda m: bridge.err.emit(m),
         )
         _started[0] = ok
         if ok:
-            status.setText("Live")
+            status.setText("Live · Confirm to snap")
         else:
-            status.setText("No live preview — Snap still works if camera tools installed")
-            preview.setText("Preview unavailable\nUse Snap to capture")
+            status.setText("No preview — Confirm still snaps if camera works")
+            preview.setText("Preview unavailable\nConfirm = capture")
 
     def stop_live() -> None:
         live.stop()
         _started[0] = False
 
-    def do_snap() -> None:
+    def do_snap() -> bool:
+        """Take photo (Confirm). Returns True so digi_activate consumes the key."""
+        if _busy[0]:
+            status.setText("Already capturing…")
+            return True
+        _busy[0] = True
         status.setText("Capturing…")
-        snap.setEnabled(False)
 
         def work() -> None:
             try:
@@ -370,61 +370,50 @@ def make_camera_page(on_back, on_status, open_gallery: Optional[Callable[[], Non
                 else:
                     path = pi_camera.capture_rear()
                 last_path[0] = path
-                # flash last shot briefly
                 pix = QPixmap(str(path))
                 if not pix.isNull():
                     preview.setPixmap(
                         pix.scaled(
-                            preview.width() or 220,
-                            preview.height() or 160,
+                            max(preview.width(), 200),
+                            max(preview.height(), 160),
                             Qt.KeepAspectRatio,
                             Qt.SmoothTransformation,
                         )
                     )
                 status.setText(f"Saved {path.name}")
                 on_status(f"Photo {path.name}")
+                # Resume live after brief freeze-frame
+                QTimer.singleShot(700, lambda: status.setText("Live · Confirm to snap"))
             except Exception as e:
                 status.setText(str(e)[:120])
                 on_status(f"Camera: {e}")
             finally:
-                snap.setEnabled(True)
+                _busy[0] = False
 
-        # Keep UI responsive (still can take a moment)
-        QTimer.singleShot(20, work)
-
-    def go_gallery() -> None:
-        stop_live()
-        if open_gallery:
-            open_gallery()
-
-    snap.clicked.connect(do_snap)
-    gallery_btn.clicked.connect(go_gallery)
+        QTimer.singleShot(10, work)
+        return True
 
     # Start/stop preview when page is shown/hidden
-    _orig_show = body.showEvent
-    _orig_hide = body.hideEvent
-
     def showEvent(e) -> None:  # noqa: N802
-        if _orig_show:
-            _orig_show(e)
-        else:
-            QWidget.showEvent(body, e)
+        QWidget.showEvent(body, e)
         QTimer.singleShot(100, start_live)
 
     def hideEvent(e) -> None:  # noqa: N802
         stop_live()
-        if _orig_hide:
-            _orig_hide(e)
-        else:
-            QWidget.hideEvent(body, e)
+        QWidget.hideEvent(body, e)
 
     body.showEvent = showEvent  # type: ignore
     body.hideEvent = hideEvent  # type: ignore
-
-    # Also stop when chrome is torn down
     body.destroyed.connect(lambda *_: stop_live())
 
-    return page_chrome("Camera", body, on_back, scroll=False)
+    chrome = page_chrome("Camera", body, on_back, scroll=False)
+    # Confirm always snaps — do not activate chrome Back ←
+    chrome.digi_activate = do_snap  # type: ignore[attr-defined]
+    # Optional: de-emphasize Back from digi focus (hardware Back still works)
+    for b in chrome.findChildren(QPushButton):
+        if (b.text() or "").strip() in ("←", "← ", "<"):
+            b.setFocusPolicy(Qt.NoFocus)
+    return chrome
 
 
 def make_gallery_page(on_back: Callable[[], None], on_status) -> QWidget:
