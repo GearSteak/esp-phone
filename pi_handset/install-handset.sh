@@ -27,6 +27,10 @@ apt-get install -y \
   i2c-tools \
   python3-rpi.gpio \
   python3-lgpio \
+  python3-spidev \
+  python3-pil \
+  python3-mss \
+  imagemagick \
   xdotool \
   python3-picamera2 \
   rpicam-apps \

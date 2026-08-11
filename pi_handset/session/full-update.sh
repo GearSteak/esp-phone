@@ -91,7 +91,8 @@ apt-get install -y \
   git \
   python3 python3-pip python3-pyqt5 python3-serial \
   python3-uinput python3-smbus python3-rpi.gpio python3-lgpio \
-  python3-spidev \
+  python3-spidev python3-pil python3-mss \
+  imagemagick \
   i2c-tools xdotool xbitmaps x11-xserver-utils \
   wmctrl fonts-dejavu-core \
   2>&1 | tee -a "$LOG" | tail -n 20
