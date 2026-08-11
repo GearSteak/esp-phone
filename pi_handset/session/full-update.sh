@@ -180,6 +180,8 @@ install -m 755 "$ROOT/session/fix-desktop-spi-now.sh" /usr/local/bin/digivice-fi
 install -m 755 "$ROOT/session/digivice-layout.sh" /usr/local/bin/digivice-layout 2>/dev/null || true
 install -m 755 "$ROOT/session/unfuck-displays.sh" /usr/local/bin/digivice-unfuck-displays 2>/dev/null || true
 install -m 755 "$ROOT/session/spi-blank.sh" /usr/local/bin/digivice-spi-blank 2>/dev/null || true
+install -m 755 "$ROOT/session/spi-flash.sh" /usr/local/bin/digivice-spi-flash 2>/dev/null || true
+install -m 755 "$ROOT/session/fix-screens.sh" /usr/local/bin/digivice-fix-screens 2>/dev/null || true
 install -m 755 "$ROOT/session/spi-prove.sh" /usr/local/bin/digivice-spi-prove 2>/dev/null || true
 install -m 755 "$ROOT/session/spi-test.sh" /usr/local/bin/digivice-spi-test 2>/dev/null || true
 install -m 755 "$ROOT/session/mirror-displays.sh" /usr/local/bin/digivice-mirror-displays 2>/dev/null || true

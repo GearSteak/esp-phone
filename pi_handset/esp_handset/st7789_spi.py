@@ -212,6 +212,14 @@ def init() -> bool:
 
     _gpio.output(bl, 1)
     _ok = True
+    # Explicit wake path (if a prior blank() left DISPOFF/SLPIN)
+    try:
+        _cmd(dc, 0x11)
+        time.sleep(0.05)
+        _cmd(dc, 0x29)
+        _gpio.output(bl, 1)
+    except Exception:
+        pass
     print(
         f"[st7789] userspace ready SPI{bus}.{dev} {_wh[0]}x{_wh[1]} "
         f"MADCTL=0x{madctl:02x} DC={dc} RST={rst} BL={bl}",

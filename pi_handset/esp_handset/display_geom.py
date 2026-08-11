@@ -189,6 +189,7 @@ class SpiUserspaceMirror:
             )
             return False
         try:
+            st.wake_display()
             st.fill(255, 0, 0)
         except Exception:
             pass

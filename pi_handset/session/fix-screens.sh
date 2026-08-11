@@ -1,13 +1,7 @@
 #!/usr/bin/env bash
-# UNDO HDMI-hotplug damage + restore 2" ST7789 (userspace SPI).
-#
-# The late-plug HDMI installer wrote hdmi_force_hotplug + a udev service that
-# re-ran xrandr / restarted mirrors on every DRM event — that left the small
-# panel dark or frozen. This script turns that OFF and restarts Digivice SPI.
+# Nuclear screen recovery for Digivice 2" ST7789 + optional HDMI undo.
 #
 #   sudo digivice-fix-screens
-#   # or without install:
-#   sudo bash pi_handset/session/fix-screens.sh
 #
 set +e
 set -u
@@ -32,37 +26,52 @@ USER_HOME="$(getent passwd "$USER_NAME" | cut -d: -f6 || echo /home/$USER_NAME)"
 PREFIX="${ESP_HANDSET_PREFIX:-/opt/esp-handset}"
 export DISPLAY="${DISPLAY:-:0}"
 export XAUTHORITY="${XAUTHORITY:-$USER_HOME/.Xauthority}"
+export ESP_HANDSET_SPI_BACKEND=userspace
+export PYTHONPATH="$PREFIX:${PYTHONPATH:-}"
 
-echo "=== digivice-fix-screens (undo HDMI hotplug + restore SPI) ==="
-echo "user=$USER_NAME home=$USER_HOME"
+echo "════════════════════════════════════════"
+echo " digivice-fix-screens"
+echo " user=$USER_NAME  home=$USER_HOME"
+echo "════════════════════════════════════════"
 
-# 1) Kill automatic HDMI hotplug completely
+# --- A: kill HDMI auto-hotplug (root of prior breakage) ---
 systemctl disable --now digivice-hdmi-hotplug.service 2>/dev/null || true
 rm -f /etc/systemd/system/digivice-hdmi-hotplug.service
 rm -f /etc/udev/rules.d/99-digivice-hdmi-hotplug.rules
 systemctl daemon-reload 2>/dev/null || true
 udevadm control --reload-rules 2>/dev/null || true
-echo "  [1] HDMI hotplug udev/service removed"
+echo "[A] HDMI hotplug service/udev: OFF"
 
-# 2) Strip force_hotplug (fake HDMI head breaks X capture + confuses modes)
+# --- B: config.txt cleanup ---
 BOOTCFG=""
 for c in /boot/firmware/config.txt /boot/config.txt; do
   [[ -f "$c" ]] && BOOTCFG="$c" && break
 done
 if [[ -n "$BOOTCFG" ]]; then
   cp -a "$BOOTCFG" "${BOOTCFG}.bak.digivice-fix-screens" 2>/dev/null || true
-  sed -i -E 's/^dtoverlay=vc4-kms-v3d,nohdmi/dtoverlay=vc4-kms-v3d/' "$BOOTCFG" || true
-  sed -i -E 's/^dtoverlay=vc4-kms-v3d(|,.*)$/dtoverlay=vc4-kms-v3d/' "$BOOTCFG" || true
-  sed -i '/^hdmi_force_hotplug=/d' "$BOOTCFG" || true
-  sed -i '/^hdmi_blanking=/d' "$BOOTCFG" || true
-  # keep hdmi_drive=2 if present (usually fine)
-  echo "  [2] cleaned $BOOTCFG (removed hdmi_force_hotplug / blanking)"
-  echo "      backup: ${BOOTCFG}.bak.digivice-fix-screens"
-else
-  echo "  [2] no config.txt found"
+  sed -i -E 's/^dtoverlay=vc4-kms-v3d,nohdmi/dtoverlay=vc4-kms-v3d/' "$BOOTCFG"
+  sed -i -E 's/^dtoverlay=vc4-kms-v3d(|,.*)$/dtoverlay=vc4-kms-v3d/' "$BOOTCFG"
+  sed -i '/^hdmi_force_hotplug=/d' "$BOOTCFG"
+  sed -i '/^hdmi_blanking=/d' "$BOOTCFG"
+  # remove ALL mipi-dbi (frees SPI0 for spidev)
+  sed -i '/# --- ESP Digivice display/,/# --- END ESP Digivice display/d' "$BOOTCFG"
+  sed -i '/^dtoverlay=mipi-dbi-spi/d' "$BOOTCFG"
+  if ! grep -qE '^dtparam=spi=on' "$BOOTCFG"; then
+    echo "dtparam=spi=on" >>"$BOOTCFG"
+  fi
+  # idempotent userspace marker block (don't duplicate forever)
+  if ! grep -q 'ESP Digivice SPI userspace' "$BOOTCFG"; then
+    cat >>"$BOOTCFG" <<'EOF'
+
+# --- ESP Digivice SPI userspace (ST7789 mirror) ---
+dtparam=spi=on
+# --- END ESP Digivice SPI userspace ---
+EOF
+  fi
+  echo "[B] cleaned $BOOTCFG (no force_hotplug, no mipi-dbi-spi)"
 fi
 
-# 3) Ensure userspace SPI flags (Digivice + desktop mirror path)
+# --- C: flags + deps ---
 mkdir -p /etc/esp-handset
 echo userspace >/etc/esp-handset/spi-userspace
 echo userspace >/etc/esp-handset/spi-backend
@@ -71,66 +80,105 @@ ESP_HANDSET_SPI_BACKEND=userspace
 ESP_HANDSET_SKIP_LAYOUT=1
 EOF
 [[ -f /etc/esp-handset/panel-rotation ]] || echo 180 >/etc/esp-handset/panel-rotation
-# Make sure mipi-dbi DRM block is not fighting spidev (comment headers only — full reinstall if missing spidev)
-if [[ ! -e /dev/spidev0.0 ]]; then
-  echo "  [3] WARNING: /dev/spidev0.0 missing"
-  if [[ -x /usr/local/bin/digivice-install-spi-userspace ]]; then
-    echo "      running digivice-install-spi-userspace…"
-    /usr/local/bin/digivice-install-spi-userspace || true
-  elif [[ -f "$PREFIX/display/install-spi-userspace.sh" ]]; then
-    bash "$PREFIX/display/install-spi-userspace.sh" || true
-  fi
-  if [[ ! -e /dev/spidev0.0 ]]; then
-    echo "      Still no spidev — REBOOT required after install-spi-userspace"
-    NEED_REBOOT=1
-  fi
+apt-get install -y python3-spidev python3-rpi.gpio 2>/dev/null \
+  || apt-get install -y python3-spidev python3-rpi.lgpio 2>/dev/null || true
+echo "[C] /etc/esp-handset userspace + python spidev"
+
+# --- D: free SPI process hold ---
+pkill -9 -f handset_app.py 2>/dev/null || true
+pkill -9 -f desktop_spi_mirror.py 2>/dev/null || true
+pkill -9 -f pointer_overlay.py 2>/dev/null || true
+sleep 0.5
+echo "[D] killed Digivice/mirror/pointer"
+
+# --- E: hardware flash test ---
+FLASH=""
+for f in \
+  /usr/local/bin/digivice-spi-flash \
+  "$PREFIX/session/spi-flash.sh" \
+  "$(dirname "$0")/spi-flash.sh"
+do
+  [[ -f "$f" ]] && FLASH="$f" && break
+done
+
+echo "[E] SPI hardware flash test…"
+if [[ -n "$FLASH" ]]; then
+  bash "$FLASH"
+  FLASH_RC=$?
 else
-  echo "  [3] /dev/spidev0.0 OK + userspace flags set"
+  echo "  spi-flash.sh missing — inline flash"
+  python3 - <<'PY'
+import sys, time
+sys.path.insert(0, "/opt/esp-handset")
+try:
+    from esp_handset import st7789_spi as st
+except Exception as e:
+    print("import fail", e); sys.exit(3)
+if st.ready():
+    st.close(blank_panel=False)
+if not st.init():
+    print("init fail"); sys.exit(4)
+st.wake_display()
+for r,g,b,n in [(255,0,0,"R"),(0,255,0,"G"),(0,0,255,"B")]:
+    print(n); st.fill(r,g,b); st.wake_display(); time.sleep(1.2)
+st.fill(0,200,0); st.wake_display(); st.close(blank_panel=False)
+print("inline flash ok")
+PY
+  FLASH_RC=$?
 fi
 
-# 4) Stop thrashing processes
-pkill -f desktop_spi_mirror.py 2>/dev/null || true
-pkill -f handset_app.py 2>/dev/null || true
-sleep 0.6
-echo "  [4] stopped handset + old mirror"
+if [[ ! -e /dev/spidev0.0 ]]; then
+  echo ""
+  echo ">>> NO /dev/spidev0.0 after cleanup — REBOOT then re-run:"
+  echo "    sudo reboot"
+  echo "    sudo digivice-fix-screens"
+  exit 2
+fi
 
-# 5) Gentle xrandr (no primary thrash) then restart Digivice on SPI
-sudo -u "$USER_NAME" env DISPLAY=:0 XAUTHORITY="$USER_HOME/.Xauthority" \
-  xrandr --auto 2>/dev/null || true
+if [[ "$FLASH_RC" -ne 0 ]]; then
+  echo ""
+  echo ">>> HARDWARE FLASH FAILED (rc=$FLASH_RC)"
+  echo "    Check: SPI wiring DC=25 RST=27 BL=18 CE0, 3.3V, GND"
+  echo "    dmesg | tail -30"
+  echo "    If first time after removing mipi-dbi: sudo reboot"
+  exit "$FLASH_RC"
+fi
 
+echo "[E] FLASH OK — 2\" should have shown color bars / green"
+
+# --- F: start Digivice ---
 mkdir -p "$USER_HOME/.esp-handset"
 echo phone >"$USER_HOME/.esp-handset/session_mode"
 echo phone >/etc/esp-handset/ui_mode
-chown "$USER_NAME:$USER_NAME" "$USER_HOME/.esp-handset/session_mode" 2>/dev/null || true
+chown -R "$USER_NAME:$USER_NAME" "$USER_HOME/.esp-handset" 2>/dev/null || true
 
 if [[ -x /usr/local/bin/handset-phone ]]; then
-  echo "  [5] starting Digivice (handset-phone)…"
-  sudo -u "$USER_NAME" env DISPLAY=:0 XAUTHORITY="$USER_HOME/.Xauthority" \
-    HOME="$USER_HOME" ESP_HANDSET_SPI_BACKEND=userspace \
+  echo "[F] starting handset-phone…"
+  sudo -u "$USER_NAME" env \
+    DISPLAY=:0 \
+    XAUTHORITY="$USER_HOME/.Xauthority" \
+    HOME="$USER_HOME" \
+    ESP_HANDSET_SPI_BACKEND=userspace \
+    PYTHONPATH="$PREFIX" \
     nohup /usr/local/bin/handset-phone \
     >>"$USER_HOME/.esp-handset/handset.log" 2>&1 &
-elif [[ -x /usr/local/bin/handset-session ]]; then
-  sudo -u "$USER_NAME" env DISPLAY=:0 XAUTHORITY="$USER_HOME/.Xauthority" \
-    HOME="$USER_HOME" ESP_HANDSET_SPI_BACKEND=userspace \
-    nohup /usr/local/bin/handset-session phone \
-    >>"$USER_HOME/.esp-handset/handset.log" 2>&1 &
+  sleep 2
+  if pgrep -f handset_app.py >/dev/null; then
+    echo "[F] Digivice process is running"
+  else
+    echo "[F] Digivice failed to stay up — log tail:"
+    tail -n 40 "$USER_HOME/.esp-handset/handset.log" 2>/dev/null
+  fi
 else
-  echo "  [5] handset-phone missing — launch Digivice from your usual path"
+  echo "[F] handset-phone not installed"
 fi
 
-sleep 1.5
 echo ""
-echo "Done."
-echo "  Digivice should own the 2\" panel again (userspace ST7789)."
-echo "  Desktop later:  handset-desktop && digivice-desktop-mirror doctor"
-echo "  Log:            tail -40 $USER_HOME/.esp-handset/handset.log"
-if [[ "${NEED_REBOOT:-0}" -eq 1 ]]; then
-  echo ""
-  echo ">>> REBOOT REQUIRED (spidev still missing):  sudo reboot"
-  echo "    After reboot:  sudo digivice-fix-screens"
-else
-  # config.txt force_hotplug strip needs reboot to fully apply firmware side
-  echo ""
-  echo "If the 2\" is still wrong, reboot once so firmware drops force_hotplug:"
-  echo "  sudo reboot"
-fi
+echo "════════════════════════════════════════"
+echo " If colors flashed but Digivice UI still missing on 2\":"
+echo "   tail -50 $USER_HOME/.esp-handset/handset.log | grep -i spi"
+echo " Desktop SPI later:"
+echo "   handset-desktop && digivice-desktop-mirror doctor"
+echo " Full reboot if config.txt just changed:"
+echo "   sudo reboot && after: sudo digivice-spi-flash"
+echo "════════════════════════════════════════"
