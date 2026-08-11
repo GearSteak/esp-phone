@@ -1,12 +1,15 @@
 #!/usr/bin/env bash
-# Enable HDMI when a monitor is plugged in after boot.
+# Optional: enable HDMI when a cable is plugged AFTER boot.
 #
-# Pi + vc4 KMS only configures outputs that exist at X start. Late cable/
-# monitor power needs xrandr --auto (or a reboot). This is installed as
-# digivice-hdmi-hotplug and runs from udev on DRM hotplug.
+# IMPORTANT: This used to fight userspace SPI (ST7789) — DRM udev storms
+# re-ran xrandr + restarted the SPI mirror, leaving the 2" panel dark/frozen.
 #
-#   digivice-hdmi-hotplug           # enable now
-#   sudo digivice-hdmi-hotplug --install
+# Default after full-update: DISABLE the automatic hooks.
+# Manual one-shot is still fine when you need late-plug HDMI.
+#
+#   digivice-hdmi-hotplug                 # one-shot: xrandr --auto for HDMI only
+#   sudo digivice-hdmi-hotplug --disable  # *** remove udev/service + force_hotplug ***
+#   sudo digivice-hdmi-hotplug --install  # opt-in udev (SPI-safe, no force_hotplug)
 #
 set +e
 set -u
@@ -15,14 +18,16 @@ PREFIX="${ESP_HANDSET_PREFIX:-/opt/esp-handset}"
 LOG_DIR="${HOME:-/tmp}/.esp-handset"
 LOG="${LOG_DIR}/hdmi-hotplug.log"
 LOCK=/run/digivice-hdmi-hotplug.lock
-DEBOUNCE_SEC=2
+DEBOUNCE_SEC=1
 
 INSTALL=0
+DISABLE=0
 for a in "$@"; do
   case "$a" in
     --install|install) INSTALL=1 ;;
+    --disable|--uninstall|disable|uninstall) DISABLE=1 ;;
     -h|--help)
-      sed -n '2,12p' "$0"
+      sed -n '2,16p' "$0"
       exit 0
       ;;
   esac
@@ -49,6 +54,46 @@ gui_user() {
   echo "${u:-pi}"
 }
 
+bootcfg_path() {
+  for c in /boot/firmware/config.txt /boot/config.txt; do
+    [[ -f "$c" ]] && echo "$c" && return
+  done
+  echo ""
+}
+
+strip_force_hotplug() {
+  local bootcfg="$1"
+  [[ -z "$bootcfg" || ! -f "$bootcfg" ]] && return
+  # Comment out — force_hotplug creates a fake HDMI head that confuses X + SPI mirror
+  sed -i -E 's/^hdmi_force_hotplug=.*/# digivice: disabled (broke SPI \/ late modeset)\n# hdmi_force_hotplug=1/' "$bootcfg" 2>/dev/null || true
+  sed -i -E 's/^hdmi_blanking=.*/# hdmi_blanking removed by digivice-hdmi-hotplug --disable/' "$bootcfg" 2>/dev/null || true
+  # drop duplicate lines that only contain the old value
+  sed -i '/^hdmi_force_hotplug=/d' "$bootcfg" 2>/dev/null || true
+  log "stripped hdmi_force_hotplug from $bootcfg"
+}
+
+disable_hooks() {
+  if [[ "$(id -u)" -ne 0 ]]; then
+    echo "Run: sudo digivice-hdmi-hotplug --disable" >&2
+    exit 1
+  fi
+  systemctl disable --now digivice-hdmi-hotplug.service 2>/dev/null || true
+  rm -f /etc/systemd/system/digivice-hdmi-hotplug.service
+  rm -f /etc/udev/rules.d/99-digivice-hdmi-hotplug.rules
+  systemctl daemon-reload 2>/dev/null || true
+  udevadm control --reload-rules 2>/dev/null || true
+  strip_force_hotplug "$(bootcfg_path)"
+  # Keep digivice-hdmi-hotplug binary for manual one-shot use
+  if [[ -f "$(dirname "$0")/hdmi-hotplug.sh" ]]; then
+    install -m 755 "$(dirname "$0")/hdmi-hotplug.sh" /usr/local/bin/digivice-hdmi-hotplug
+  fi
+  echo "OK: automatic HDMI hotplug DISABLED (was fighting the 2\" SPI panel)."
+  echo "    Manual when you need it: digivice-hdmi-hotplug"
+  echo "    Then: digivice-fix-screens   (or handset-phone)"
+  echo "    Reboot recommended if config.txt changed: sudo reboot"
+  exit 0
+}
+
 install_hooks() {
   if [[ "$(id -u)" -ne 0 ]]; then
     echo "Run: sudo digivice-hdmi-hotplug --install" >&2
@@ -59,43 +104,35 @@ install_hooks() {
   home="$(getent passwd "$u" | cut -d: -f6 || echo "/home/$u")"
   xauth="${home}/.Xauthority"
 
-  install -m 755 "$0" "$PREFIX/session/hdmi-hotplug.sh" 2>/dev/null || true
+  mkdir -p "$PREFIX/session"
   if [[ -f "$(dirname "$0")/hdmi-hotplug.sh" ]]; then
     install -m 755 "$(dirname "$0")/hdmi-hotplug.sh" "$PREFIX/session/hdmi-hotplug.sh"
+  elif [[ -f "$0" ]]; then
+    install -m 755 "$0" "$PREFIX/session/hdmi-hotplug.sh"
   fi
-  # Prefer installed copy for the symlink target
-  if [[ -f "$PREFIX/session/hdmi-hotplug.sh" ]]; then
-    install -m 755 "$PREFIX/session/hdmi-hotplug.sh" /usr/local/bin/digivice-hdmi-hotplug
-  else
-    install -m 755 "$0" /usr/local/bin/digivice-hdmi-hotplug
-  fi
+  install -m 755 "$PREFIX/session/hdmi-hotplug.sh" /usr/local/bin/digivice-hdmi-hotplug
 
-  # Firmware help (FKMS / picky monitors; harmless under pure KMS)
-  local bootcfg=""
-  for c in /boot/firmware/config.txt /boot/config.txt; do
-    [[ -f "$c" ]] && bootcfg="$c" && break
-  done
+  # Do NOT write hdmi_force_hotplug — it ghosts a black HDMI head
+  local bootcfg
+  bootcfg="$(bootcfg_path)"
   if [[ -n "$bootcfg" ]]; then
     sed -i -E 's/^dtoverlay=vc4-kms-v3d(|,.*)$/dtoverlay=vc4-kms-v3d/' "$bootcfg" || true
-    grep -qE '^hdmi_force_hotplug=' "$bootcfg" || echo "hdmi_force_hotplug=1" >>"$bootcfg"
-    grep -qE '^hdmi_drive=' "$bootcfg" || echo "hdmi_drive=2" >>"$bootcfg"
-    # Ignore firmware "blank if no cable at boot" behaviour on some images
-    grep -qE '^hdmi_blanking=' "$bootcfg" || echo "hdmi_blanking=1" >>"$bootcfg"
+    strip_force_hotplug "$bootcfg"
   fi
 
+  # Rate-limited udev → oneshot. Script itself never kills Digivice / SPI phone mode.
   cat >/etc/udev/rules.d/99-digivice-hdmi-hotplug.rules <<'EOF'
-# Digivice — enable HDMI when a monitor is attached after boot
+# Digivice optional HDMI late-plug (conservative)
 ACTION=="change", SUBSYSTEM=="drm", ENV{HOTPLUG}=="1", \
   RUN+="/bin/systemctl --no-block start digivice-hdmi-hotplug.service"
 EOF
 
   cat >/etc/systemd/system/digivice-hdmi-hotplug.service <<EOF
 [Unit]
-Description=Digivice enable HDMI after cable hotplug
+Description=Digivice optional HDMI late plug (xrandr only)
 After=display-manager.service graphical.target
-# Avoid thrashing when many DRM change events fire
-StartLimitIntervalSec=10
-StartLimitBurst=3
+StartLimitIntervalSec=30
+StartLimitBurst=2
 
 [Service]
 Type=oneshot
@@ -104,43 +141,39 @@ Environment=DISPLAY=:0
 Environment=XAUTHORITY=$xauth
 Environment=HOME=$home
 Environment=ESP_HANDSET_PREFIX=$PREFIX
-# Let EDID settle
 ExecStartPre=/bin/sleep 1
 ExecStart=/usr/local/bin/digivice-hdmi-hotplug
-TimeoutStartSec=30
+TimeoutStartSec=20
 
 [Install]
 WantedBy=multi-user.target
 EOF
 
   systemctl daemon-reload
+  # Enabled but StartLimitBurst keeps storms down; prefer --disable for SPI setups
   systemctl enable digivice-hdmi-hotplug.service 2>/dev/null || true
   udevadm control --reload-rules 2>/dev/null || true
-  udevadm trigger --subsystem-match=drm 2>/dev/null || true
-  log "installed udev+systemd for HDMI hotplug (user=$u)"
-  echo "OK: digivice-hdmi-hotplug installed. Plug HDMI — should light within ~2s."
-  echo "    Manual: digivice-hdmi-hotplug"
-  echo "    If still dark after plug: digivice-hdmi-hotplug && digivice-unfuck-displays"
-  # Run once now
-  /usr/local/bin/digivice-hdmi-hotplug || true
+  log "installed optional HDMI hotplug (no force_hotplug; SPI-safe path)"
+  echo "OK: late-plug hooks installed (no hdmi_force_hotplug)."
+  echo "    Userspace SPI setups should usually: sudo digivice-hdmi-hotplug --disable"
   exit 0
 }
 
+if [[ "$DISABLE" -eq 1 ]]; then
+  disable_hooks
+fi
 if [[ "$INSTALL" -eq 1 ]]; then
   install_hooks
 fi
 
-# --- Enable outputs (idempotent) ---
-# Debounce concurrent udev storms
+# --- One-shot: enable connected HDMI only (never touch SPI / never restart mirror) ---
 if command -v flock >/dev/null 2>&1; then
   exec 9>"$LOCK" 2>/dev/null || exec 9>/tmp/digivice-hdmi-hotplug.lock
   if ! flock -n 9; then
-    # Another instance is running — skip
     exit 0
   fi
 fi
 
-# If invoked as root via systemd, drop privileges for xrandr when possible
 run_x() {
   local u home xauth
   u="$(gui_user)"
@@ -155,69 +188,38 @@ run_x() {
   fi
 }
 
-log "hotplug run uid=$(id -u) DISPLAY=${DISPLAY:-:0}"
-
-# Brief settle (udev often fires before EDID is ready)
-sleep "$DEBOUNCE_SEC"
-
-if command -v xrandr >/dev/null 2>&1; then
-  if run_x xrandr --query >/dev/null 2>&1; then
-    run_x xrandr --auto >/dev/null 2>&1
-    # Explicit HDMI/DP — only enable; do not thrash --primary every plug
-    # (primary thrashing broke desktop→SPI capture / black mini-screen).
-    while read -r line; do
-      name="${line%% *}"
-      case "$name" in
-        HDMI*|hdmi*|DP-*|DisplayPort*)
-          run_x xrandr --output "$name" --auto --on >/dev/null 2>&1
-          log "enabled $name"
-          ;;
-      esac
-    done < <(run_x xrandr --query 2>/dev/null | awk '/ connected/{print}')
-    log "xrandr done"
-    run_x xrandr --query 2>/dev/null | awk '/ connected|disconnected|Screen /{print}' | tee -a "$LOG" >/dev/null
-
-    # If Linux desktop owns the session, re-kick SPI mirror so small screen tracks new mode
-    mode_f=""
-    for mf in \
-      "${HOME}/.esp-handset/session_mode" \
-      "/home/$(gui_user)/.esp-handset/session_mode" \
-      /etc/esp-handset/ui_mode
-    do
-      if [[ -f "$mf" ]]; then mode_f="$mf"; break; fi
-    done
-    mode="phone"
-    [[ -n "$mode_f" ]] && mode="$(tr -d '[:space:]' <"$mode_f" 2>/dev/null || echo phone)"
-    if [[ "$mode" == "desktop" ]]; then
-      for m in \
-        /usr/local/bin/digivice-desktop-mirror \
-        /opt/esp-handset/session/desktop-spi-mirror.sh
-      do
-        if [[ -x "$m" || -f "$m" ]]; then
-          log "desktop mode → restart SPI mirror"
-          if [[ "$(id -u)" -eq 0 ]]; then
-            u="$(gui_user)"
-            home="$(getent passwd "$u" | cut -d: -f6 || echo /home/$u)"
-            sudo -u "$u" env DISPLAY="${DISPLAY:-:0}" \
-              XAUTHORITY="${home}/.Xauthority" HOME="$home" \
-              bash "$m" start >/dev/null 2>&1 || true
-          else
-            bash "$m" start >/dev/null 2>&1 || true
-          fi
-          break
-        fi
-      done
-    fi
-  else
-    log "xrandr cannot talk to X (session not up yet?) — will retry on next event"
-  fi
-elif command -v wlr-randr >/dev/null 2>&1; then
-  run_x wlr-randr 2>/dev/null | while read -r line; do
-    :
-  done
-  log "wlr-randr present — ran generic on"
-else
-  log "no xrandr — install x11-xserver-utils"
+# Skip entirely while Digivice phone UI owns the session (SPI bus/mirrors)
+mode_f=""
+for mf in \
+  "${HOME}/.esp-handset/session_mode" \
+  "/home/$(gui_user)/.esp-handset/session_mode" \
+  /etc/esp-handset/ui_mode
+do
+  [[ -f "$mf" ]] && mode_f="$mf" && break
+done
+mode="phone"
+[[ -n "$mode_f" ]] && mode="$(tr -d '[:space:]' <"$mode_f" 2>/dev/null || echo phone)"
+if [[ "$mode" == "phone" ]] || pgrep -f "handset_app.py" >/dev/null 2>&1; then
+  log "skip hotplug (Digivice phone active) — not touching displays"
+  exit 0
 fi
 
+log "hotplug one-shot uid=$(id -u) DISPLAY=${DISPLAY:-:0}"
+sleep "$DEBOUNCE_SEC"
+
+if command -v xrandr >/dev/null 2>&1 && run_x xrandr --query >/dev/null 2>&1; then
+  run_x xrandr --auto >/dev/null 2>&1
+  while read -r line; do
+    name="${line%% *}"
+    case "$name" in
+      HDMI*|hdmi*|DP-*|DisplayPort*)
+        run_x xrandr --output "$name" --auto --on >/dev/null 2>&1
+        log "enabled $name"
+        ;;
+    esac
+  done < <(run_x xrandr --query 2>/dev/null | awk '/ connected/{print}')
+  # NEVER restart desktop SPI mirror here — that was blanking the 2" panel in a loop
+else
+  log "xrandr unavailable"
+fi
 exit 0

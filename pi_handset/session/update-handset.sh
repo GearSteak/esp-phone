@@ -215,7 +215,11 @@ EOF
     install -m 755 "$ROOT/session/power.sh" /usr/local/bin/digivice-power
   fi
   if [[ -x /usr/local/bin/digivice-hdmi-hotplug ]]; then
-    /usr/local/bin/digivice-hdmi-hotplug --install 2>&1 | tee -a "$LOG" || true
+    /usr/local/bin/digivice-hdmi-hotplug --disable 2>&1 | tee -a "$LOG" || true
+  fi
+  if [[ -f "$ROOT/session/fix-screens.sh" ]]; then
+    install -m 755 "$ROOT/session/fix-screens.sh" "$PREFIX/session/fix-screens.sh"
+    install -m 755 "$ROOT/session/fix-screens.sh" /usr/local/bin/digivice-fix-screens
   fi
 
   remember_repo "$REPO"

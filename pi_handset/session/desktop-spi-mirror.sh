@@ -90,7 +90,7 @@ stop_mirror() {
 
 start_mirror() {
   ensure_userspace_flags
-  # Kill Digivice so SPI is free
+  # Free SPI from Digivice — only when *intentionally* starting desktop mirror
   pkill -f "handset_app.py" 2>/dev/null || true
   sleep 0.4
   stop_mirror

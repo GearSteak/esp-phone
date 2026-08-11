@@ -304,12 +304,18 @@ if [[ -x /usr/local/bin/digivice-ensure-buttons ]]; then
   bash /usr/local/bin/digivice-ensure-buttons 2>&1 | tee -a "$LOG" || true
 fi
 
-# HDMI late-plug (monitor/cable after boot) — udev + xrandr
+# HDMI late-plug: do NOT auto-enable udev (it fought userspace SPI / blanked 2").
+# Binary is installed for optional manual: digivice-hdmi-hotplug
+# Recovery: sudo digivice-fix-screens  OR  sudo digivice-hdmi-hotplug --disable
 if [[ -x /usr/local/bin/digivice-hdmi-hotplug ]]; then
-  log "Installing HDMI hotplug handler"
-  bash /usr/local/bin/digivice-hdmi-hotplug --install 2>&1 | tee -a "$LOG" || true
+  log "Disabling automatic HDMI hotplug (SPI-safe default)"
+  bash /usr/local/bin/digivice-hdmi-hotplug --disable 2>&1 | tee -a "$LOG" || true
 elif [[ -f "$ROOT/session/hdmi-hotplug.sh" ]]; then
-  bash "$ROOT/session/hdmi-hotplug.sh" --install 2>&1 | tee -a "$LOG" || true
+  bash "$ROOT/session/hdmi-hotplug.sh" --disable 2>&1 | tee -a "$LOG" || true
+fi
+if [[ -f "$ROOT/session/fix-screens.sh" ]]; then
+  install -m 755 "$ROOT/session/fix-screens.sh" "$PREFIX/session/fix-screens.sh"
+  install -m 755 "$ROOT/session/fix-screens.sh" /usr/local/bin/digivice-fix-screens
 fi
 
 # Optional heavy display paths

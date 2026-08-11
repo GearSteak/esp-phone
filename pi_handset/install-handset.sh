@@ -83,8 +83,11 @@ install -m 755 "$ROOT/session/gui-update.sh" "$PREFIX/session/gui-update.sh"
 install -m 755 "$ROOT/session/gui-update.sh" /usr/local/bin/digivice-gui-update
 install -m 755 "$ROOT/session/ensure-buttons.sh" "$PREFIX/session/ensure-buttons.sh"
 install -m 755 "$ROOT/session/ensure-buttons.sh" /usr/local/bin/digivice-ensure-buttons
+# Seed binary only — do NOT enable udev auto HDMI (breaks 2\" SPI)
 install -m 755 "$ROOT/session/hdmi-hotplug.sh" "$PREFIX/session/hdmi-hotplug.sh"
 install -m 755 "$ROOT/session/hdmi-hotplug.sh" /usr/local/bin/digivice-hdmi-hotplug
+install -m 755 "$ROOT/session/fix-screens.sh" "$PREFIX/session/fix-screens.sh" 2>/dev/null || true
+install -m 755 "$ROOT/session/fix-screens.sh" /usr/local/bin/digivice-fix-screens 2>/dev/null || true
 install -m 755 "$ROOT/session/power.sh" "$PREFIX/session/power.sh"
 install -m 755 "$ROOT/session/power.sh" /usr/local/bin/digivice-power
 
@@ -322,9 +325,9 @@ elif [[ -f "$ROOT/session/ensure-buttons.sh" ]]; then
   bash "$ROOT/session/ensure-buttons.sh" || true
 fi
 if [[ -x /usr/local/bin/digivice-hdmi-hotplug ]]; then
-  bash /usr/local/bin/digivice-hdmi-hotplug --install || true
+  bash /usr/local/bin/digivice-hdmi-hotplug --disable || true
 elif [[ -f "$ROOT/session/hdmi-hotplug.sh" ]]; then
-  bash "$ROOT/session/hdmi-hotplug.sh" --install || true
+  bash "$ROOT/session/hdmi-hotplug.sh" --disable || true
 fi
 systemctl disable t9-keypad-inputd.service cardkb-inputd.service hat-inputd.service 2>/dev/null || true
 systemctl enable esp-keyd.service
