@@ -393,6 +393,10 @@ EOF
   cat >/etc/esp-handset/env <<'EOF'
 ESP_HANDSET_SPI_BACKEND=userspace
 ESP_HANDSET_SKIP_LAYOUT=1
+ESP_ST7789_SPEED=16000000
+ESP_ST7789_SWAP=1
+ESP_ST7789_INVERT=1
+ESP_ST7789_FPS_MS=40
 EOF
   [[ -f /etc/esp-handset/panel-rotation ]] || echo 180 >/etc/esp-handset/panel-rotation
   mkdir -p /etc/profile.d
@@ -411,32 +415,46 @@ EOF
   sleep 0.4
 
   if [[ -e /dev/spidev0.0 ]]; then
-    log "spidev0.0 present — waking ST7789 (red then handset paints)"
+    log "spidev0.0 present — force reinit @16MHz (kills static) + solid colors"
     export PYTHONPATH="$PREFIX:${PYTHONPATH:-}"
     export ESP_HANDSET_SPI_BACKEND=userspace
+    export ESP_ST7789_SPEED=16000000
+    export ESP_ST7789_SWAP=1
+    export ESP_ST7789_INVERT=1
     /usr/bin/python3 - <<'PY' 2>&1 | tee -a "$LOG" || true
-import sys, time
+import sys, time, os
 sys.path.insert(0, "/opt/esp-handset")
+os.environ["ESP_ST7789_SPEED"] = "16000000"
+os.environ["ESP_ST7789_SWAP"] = "1"
+os.environ["ESP_ST7789_INVERT"] = "1"
 try:
     from esp_handset import st7789_spi as st
 except Exception as e:
     print("[spi-wake] import failed:", e)
     sys.exit(0)
+# Force cold reinit even if a zombie process left the bus messy
 try:
-    if st.ready():
-        st.close(blank_panel=False)
+    st.close(blank_panel=False)
 except Exception:
     pass
-if not st.init():
+ok = False
+if hasattr(st, "reinit"):
+    ok = st.reinit()
+else:
+    ok = st.init()
+if not ok:
     print("[spi-wake] init failed")
     sys.exit(0)
 st.wake_display()
-st.fill(255, 0, 0)
-time.sleep(0.4)
-st.fill(0, 180, 0)
+for r, g, b, n in ((255, 0, 0, "RED"), (0, 255, 0, "GREEN"), (0, 0, 255, "BLUE")):
+    print("[spi-wake]", n)
+    st.fill(r, g, b)
+    st.wake_display()
+    time.sleep(0.5)
+st.fill(0, 160, 0)
 st.wake_display()
 st.close(blank_panel=False)
-print("[spi-wake] panel alive (green)")
+print("[spi-wake] panel solid colors OK @16MHz — static should be gone")
 PY
   else
     log "WARN: no /dev/spidev0.0 — reboot required after config change"
@@ -492,8 +510,12 @@ if [[ "$DO_RESTART" -eq 1 ]]; then
     XAUTHORITY="$USER_HOME/.Xauthority" \
     HOME="$USER_HOME" \
     ESP_HANDSET_SPI_BACKEND=userspace \
+    ESP_ST7789_SPEED=16000000 \
+    ESP_ST7789_SWAP=1 \
+    ESP_ST7789_INVERT=1 \
+    ESP_ST7789_FPS_MS=40 \
     PYTHONPATH="$PREFIX" \
-    bash -c 'nohup /usr/local/bin/handset-phone >>"$HOME/.esp-handset/handset.log" 2>&1 &' || true
+    bash -c 'set -a; [ -f /etc/esp-handset/env ] && . /etc/esp-handset/env; set +a; nohup /usr/local/bin/handset-phone >>"$HOME/.esp-handset/handset.log" 2>&1 &' || true
   sleep 1.5
   if pgrep -f handset_app.py >/dev/null; then
     log "Digivice is running"

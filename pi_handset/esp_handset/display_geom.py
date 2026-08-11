@@ -14,6 +14,7 @@ ESP_HANDSET_SPI_BACKEND=userspace|drm|auto  (default auto / flag file)
 from __future__ import annotations
 
 import os
+import time
 from typing import List, Optional, Tuple
 
 from PyQt5.QtCore import Qt, QTimer, QPoint, QEvent, QRect
@@ -189,17 +190,23 @@ class SpiUserspaceMirror:
             )
             return False
         try:
-            st.wake_display()
+            # Clear static from uninit GRAM, force wake
+            if hasattr(st, "reinit"):
+                st.reinit()
+            else:
+                st.wake_display()
             st.fill(255, 0, 0)
+            time.sleep(0.15)
         except Exception:
             pass
         self._st = st
         self._active = True
         self._timer = QTimer()
-        self._timer.setInterval(int(os.environ.get("ESP_ST7789_FPS_MS", "50")))
+        # 40ms ≈ 25fps — keep SPI bus quiet enough at 16MHz
+        self._timer.setInterval(int(os.environ.get("ESP_ST7789_FPS_MS", "40")))
         self._timer.timeout.connect(self._tick)
         self._timer.start()
-        print("[handset] SPI mirror ON (full Digivice → ST7789)", flush=True)
+        print("[handset] SPI mirror ON (full Digivice → ST7789 @ stable SPI)", flush=True)
         return True
 
     def _tick(self) -> None:
