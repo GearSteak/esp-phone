@@ -9,17 +9,19 @@
 #    cd ~/esp-phone && git pull && sudo bash pi_handset/session/full-update.sh
 #
 #  What it does (everything that matters):
-#    • git fetch + hard-reset main
-#    • apt packages (PyQt, uinput, GPIO, xdotool, …)
+#    • git fetch + hard-reset main (re-clone if git corrupt)
+#    • apt packages (PyQt, uinput, GPIO, xdotool, spidev, …)
 #    • copies UI/scripts → /opt/esp-handset + /usr/local/bin
 #    • systemd: digi-buttons-inputd, esp-keyd (enable + start)
 #    • udev + uinput + software mouse cursor conf
-#    • passwordless digivice-update / full-update for Settings later
-#    • keeps userspace SPI (does NOT rewrite display dtoverlay)
+#    • passwordless digivice-update / full-update / power for Settings
+#    • FIX SCREENS: kill broken HDMI hotplug, restore userspace ST7789 SPI,
+#      wake panel, restart Digivice (so the 2" works again from this one command)
 #
 #  Flags:
 #    --with-display     also run install-display.sh (can break userspace SPI)
-#    --with-spi-userspace  re-apply Instructables SPI userspace config
+#    --with-spi-userspace  re-apply Instructables SPI userspace config (always on by default)
+#    --no-spi-fix        skip the built-in SPI/HDMI screen repair
 #    --no-restart       don't relaunch Digivice UI when done
 #    --reboot           reboot when finished
 # ═══════════════════════════════════════════════════════════════════════════
@@ -32,18 +34,22 @@ BRANCH="${ESP_HANDSET_BRANCH:-main}"
 LOG_DIR="${HOME:-/tmp}/.esp-handset"
 LOG="${LOG_DIR}/full-update.log"
 WITH_DISPLAY=0
-WITH_SPI_USER=0
+WITH_SPI_USER=1
+SPI_FIX=1
 DO_RESTART=1
 DO_REBOOT=0
+NEED_REBOOT=0
 
 for a in "$@"; do
   case "$a" in
     --with-display) WITH_DISPLAY=1 ;;
     --with-spi-userspace|--spi-userspace) WITH_SPI_USER=1 ;;
+    --no-spi-userspace) WITH_SPI_USER=0 ;;
+    --no-spi-fix) SPI_FIX=0 ;;
     --no-restart) DO_RESTART=0 ;;
     --reboot) DO_REBOOT=1 ;;
     -h|--help)
-      sed -n '2,32p' "$0"
+      sed -n '2,35p' "$0"
       exit 0
       ;;
   esac
@@ -85,6 +91,7 @@ apt-get install -y \
   git \
   python3 python3-pip python3-pyqt5 python3-serial \
   python3-uinput python3-smbus python3-rpi.gpio python3-lgpio \
+  python3-spidev \
   i2c-tools xdotool xbitmaps x11-xserver-utils \
   wmctrl fonts-dejavu-core \
   2>&1 | tee -a "$LOG" | tail -n 20
@@ -127,15 +134,31 @@ if [[ -d "$REPO/.git" ]]; then
   log "git: sync origin/$BRANCH …"
   chown -R "$USER_NAME:$USER_NAME" "$REPO" 2>/dev/null || true
   sudo -u "$USER_NAME" git -C "$REPO" remote set-url origin "$GIT_URL" 2>/dev/null || true
-  sudo -u "$USER_NAME" git -C "$REPO" fetch --prune origin "$BRANCH" 2>&1 | tee -a "$LOG"
-  sudo -u "$USER_NAME" git -C "$REPO" stash push -u -m "full-update" 2>/dev/null || true
-  sudo -u "$USER_NAME" git -C "$REPO" checkout "$BRANCH" 2>/dev/null \
-    || sudo -u "$USER_NAME" git -C "$REPO" checkout -B "$BRANCH" "origin/$BRANCH"
-  sudo -u "$USER_NAME" git -C "$REPO" reset --hard "origin/$BRANCH" 2>&1 | tee -a "$LOG"
+  if ! sudo -u "$USER_NAME" git -C "$REPO" fetch --prune origin "$BRANCH" 2>&1 | tee -a "$LOG"; then
+    log "git fetch failed (corrupt clone?) — fresh re-clone"
+    BAD="${REPO}.broken.$(date +%s)"
+    mv "$REPO" "$BAD" 2>/dev/null || rm -rf "$REPO"
+    REPO="$USER_HOME/esp-phone"
+    sudo -u "$USER_NAME" git clone --branch "$BRANCH" --depth 1 "$GIT_URL" "$REPO" \
+      2>&1 | tee -a "$LOG" || die "git clone failed (network?)"
+  else
+    sudo -u "$USER_NAME" git -C "$REPO" stash push -u -m "full-update" 2>/dev/null || true
+    sudo -u "$USER_NAME" git -C "$REPO" checkout "$BRANCH" 2>/dev/null \
+      || sudo -u "$USER_NAME" git -C "$REPO" checkout -B "$BRANCH" "origin/$BRANCH"
+    if ! sudo -u "$USER_NAME" git -C "$REPO" reset --hard "origin/$BRANCH" 2>&1 | tee -a "$LOG"; then
+      log "git reset failed — fresh re-clone"
+      BAD="${REPO}.broken.$(date +%s)"
+      mv "$REPO" "$BAD" 2>/dev/null || rm -rf "$REPO"
+      REPO="$USER_HOME/esp-phone"
+      sudo -u "$USER_NAME" git clone --branch "$BRANCH" --depth 1 "$GIT_URL" "$REPO" \
+        2>&1 | tee -a "$LOG" || die "git clone failed (network?)"
+    fi
+  fi
   REV="$(sudo -u "$USER_NAME" git -C "$REPO" rev-parse --short HEAD 2>/dev/null || echo '?')"
   log "Now at $REV"
 else
   log "WARN: not a git tree — installing whatever is on disk"
+  REV="?"
 fi
 
 ROOT="$REPO/pi_handset"
@@ -306,66 +329,185 @@ if [[ -x /usr/local/bin/digivice-ensure-buttons ]]; then
   bash /usr/local/bin/digivice-ensure-buttons 2>&1 | tee -a "$LOG" || true
 fi
 
-# HDMI late-plug: do NOT auto-enable udev (it fought userspace SPI / blanked 2").
-# Binary is installed for optional manual: digivice-hdmi-hotplug
-# Recovery: sudo digivice-fix-screens  OR  sudo digivice-hdmi-hotplug --disable
-if [[ -x /usr/local/bin/digivice-hdmi-hotplug ]]; then
-  log "Disabling automatic HDMI hotplug (SPI-safe default)"
-  bash /usr/local/bin/digivice-hdmi-hotplug --disable 2>&1 | tee -a "$LOG" || true
-elif [[ -f "$ROOT/session/hdmi-hotplug.sh" ]]; then
-  bash "$ROOT/session/hdmi-hotplug.sh" --disable 2>&1 | tee -a "$LOG" || true
-fi
-if [[ -f "$ROOT/session/fix-screens.sh" ]]; then
-  install -m 755 "$ROOT/session/fix-screens.sh" "$PREFIX/session/fix-screens.sh"
-  install -m 755 "$ROOT/session/fix-screens.sh" /usr/local/bin/digivice-fix-screens
+# ═══════════════════════════════════════════════════════════════════════════
+#  SCREEN FIX (built-in — this is the one-command fix for blank 2" / HDMI mess)
+# ═══════════════════════════════════════════════════════════════════════════
+if [[ "$SPI_FIX" -eq 1 ]]; then
+  log "Screen fix: undo HDMI hotplug thrash + restore userspace ST7789"
+
+  # Kill thrashers
+  systemctl disable --now digivice-hdmi-hotplug.service 2>/dev/null || true
+  rm -f /etc/systemd/system/digivice-hdmi-hotplug.service
+  rm -f /etc/udev/rules.d/99-digivice-hdmi-hotplug.rules
+  systemctl daemon-reload 2>/dev/null || true
+  udevadm control --reload-rules 2>/dev/null || true
+  if [[ -x /usr/local/bin/digivice-hdmi-hotplug ]]; then
+    bash /usr/local/bin/digivice-hdmi-hotplug --disable 2>&1 | tee -a "$LOG" || true
+  fi
+
+  # Firmware/config
+  BOOTCFG=""
+  for c in /boot/firmware/config.txt /boot/config.txt; do
+    [[ -f "$c" ]] && BOOTCFG="$c" && break
+  done
+  if [[ -n "$BOOTCFG" ]]; then
+    cp -a "$BOOTCFG" "${BOOTCFG}.bak.full-update" 2>/dev/null || true
+    sed -i -E 's/^dtoverlay=vc4-kms-v3d,nohdmi/dtoverlay=vc4-kms-v3d/' "$BOOTCFG"
+    sed -i -E 's/^dtoverlay=vc4-kms-v3d(|,.*)$/dtoverlay=vc4-kms-v3d/' "$BOOTCFG"
+    if ! grep -qE '^dtoverlay=vc4-kms-v3d' "$BOOTCFG"; then
+      echo "dtoverlay=vc4-kms-v3d" >>"$BOOTCFG"
+    fi
+    # ghost HDMI head = broken X + broken SPI mirror
+    if grep -qE '^hdmi_force_hotplug=' "$BOOTCFG"; then
+      sed -i '/^hdmi_force_hotplug=/d' "$BOOTCFG"
+      NEED_REBOOT=1
+      log "removed hdmi_force_hotplug (reboot will finish firmware apply)"
+    fi
+    sed -i '/^hdmi_blanking=/d' "$BOOTCFG" || true
+    # mipi-dbi steals SPI from spidev — kill it so /dev/spidev0.0 exists
+    if grep -qE 'mipi-dbi-spi|ESP Digivice display' "$BOOTCFG"; then
+      sed -i '/# --- ESP Digivice display/,/# --- END ESP Digivice display/d' "$BOOTCFG"
+      sed -i '/^dtoverlay=mipi-dbi-spi/d' "$BOOTCFG"
+      NEED_REBOOT=1
+      log "removed mipi-dbi-spi DRM block (userspace SPI)"
+    fi
+    if ! grep -qE '^dtparam=spi=on' "$BOOTCFG"; then
+      echo "dtparam=spi=on" >>"$BOOTCFG"
+      NEED_REBOOT=1
+    fi
+    if ! grep -q 'ESP Digivice SPI userspace' "$BOOTCFG"; then
+      cat >>"$BOOTCFG" <<'EOF'
+
+# --- ESP Digivice SPI userspace (ST7789 mirror) ---
+dtparam=spi=on
+# --- END ESP Digivice SPI userspace ---
+EOF
+    fi
+    log "config: $BOOTCFG OK"
+  fi
+
+  # Flags always
+  mkdir -p /etc/esp-handset
+  echo userspace >/etc/esp-handset/spi-userspace
+  echo userspace >/etc/esp-handset/spi-backend
+  cat >/etc/esp-handset/env <<'EOF'
+ESP_HANDSET_SPI_BACKEND=userspace
+ESP_HANDSET_SKIP_LAYOUT=1
+EOF
+  [[ -f /etc/esp-handset/panel-rotation ]] || echo 180 >/etc/esp-handset/panel-rotation
+  mkdir -p /etc/profile.d
+  cat >/etc/profile.d/esp-handset-spi.sh <<'EOF'
+export ESP_HANDSET_SPI_BACKEND=userspace
+EOF
+
+  # Optional full install-spi-userspace (dedupe + packages)
+  if [[ "$WITH_SPI_USER" -eq 1 && -f "$ROOT/display/install-spi-userspace.sh" ]]; then
+    log "ensure install-spi-userspace.sh"
+    bash "$ROOT/display/install-spi-userspace.sh" 2>&1 | tee -a "$LOG" || true
+  fi
+
+  pkill -9 -f handset_app.py 2>/dev/null || true
+  pkill -9 -f desktop_spi_mirror.py 2>/dev/null || true
+  sleep 0.4
+
+  if [[ -e /dev/spidev0.0 ]]; then
+    log "spidev0.0 present — waking ST7789 (red then handset paints)"
+    export PYTHONPATH="$PREFIX:${PYTHONPATH:-}"
+    export ESP_HANDSET_SPI_BACKEND=userspace
+    /usr/bin/python3 - <<'PY' 2>&1 | tee -a "$LOG" || true
+import sys, time
+sys.path.insert(0, "/opt/esp-handset")
+try:
+    from esp_handset import st7789_spi as st
+except Exception as e:
+    print("[spi-wake] import failed:", e)
+    sys.exit(0)
+try:
+    if st.ready():
+        st.close(blank_panel=False)
+except Exception:
+    pass
+if not st.init():
+    print("[spi-wake] init failed")
+    sys.exit(0)
+st.wake_display()
+st.fill(255, 0, 0)
+time.sleep(0.4)
+st.fill(0, 180, 0)
+st.wake_display()
+st.close(blank_panel=False)
+print("[spi-wake] panel alive (green)")
+PY
+  else
+    log "WARN: no /dev/spidev0.0 — reboot required after config change"
+    NEED_REBOOT=1
+  fi
+else
+  log "Screen fix skipped (--no-spi-fix)"
 fi
 
-# Optional heavy display paths
+# Optional heavy DRM display install (opt-in only)
 if [[ "$WITH_DISPLAY" -eq 1 && -f "$ROOT/display/install-display.sh" ]]; then
   log "Running install-display.sh (--with-display) — may undo userspace SPI"
   bash "$ROOT/display/install-display.sh" 2>&1 | tee -a "$LOG" || true
-fi
-if [[ "$WITH_SPI_USER" -eq 1 && -f "$ROOT/display/install-spi-userspace.sh" ]]; then
-  log "Running install-spi-userspace.sh"
-  bash "$ROOT/display/install-spi-userspace.sh" 2>&1 | tee -a "$LOG" || true
-elif [[ -f /etc/esp-handset/spi-userspace ]]; then
-  log "Userspace SPI flag present — leaving display config alone (good)"
 fi
 
 # Cursor for live session
 export DISPLAY="${DISPLAY:-:0}"
 export XAUTHORITY="${XAUTHORITY:-$USER_HOME/.Xauthority}"
 if [[ -x /usr/local/bin/digivice-fix-cursor ]]; then
-  # permanent X11 + overlay autostart, then live overlay
   /usr/local/bin/digivice-fix-cursor --permanent 2>&1 | tee -a "$LOG" || true
   sudo -u "$USER_NAME" env DISPLAY="${DISPLAY:-:0}" XAUTHORITY="$USER_HOME/.Xauthority" \
     /usr/local/bin/digivice-fix-cursor 2>&1 | tee -a "$LOG" || true
 fi
 
 log "════════════════════════════════════════"
-log " FULL UPDATE OK  rev=$REV  → $PREFIX"
+log " FULL UPDATE OK  rev=${REV:-?}  → $PREFIX"
 log " Log: $LOG"
-log " Commands: digivice-full-update | handset-phone | digivice-ensure-buttons"
 log "════════════════════════════════════════"
 
-if [[ "$DO_REBOOT" -eq 1 ]]; then
-  log "Rebooting in 3s…"
-  sleep 3
+if [[ "$DO_REBOOT" -eq 1 || ( "$NEED_REBOOT" -eq 1 && ! -e /dev/spidev0.0 ) ]]; then
+  log "Rebooting in 4s so SPI / firmware takes effect…"
+  log "After boot: Digivice should autostart; or: handset-phone"
+  sleep 4
   reboot
   exit 0
 fi
 
+if [[ "$NEED_REBOOT" -eq 1 ]]; then
+  log "NOTE: config.txt changed — reboot when convenient:  sudo reboot"
+fi
+
 if [[ "$DO_RESTART" -eq 1 ]]; then
-  log "Restarting Digivice UI…"
-  pkill -f handset_app.py 2>/dev/null || true
-  sleep 0.5
-  # Run as GUI user
-  sudo -u "$USER_NAME" env DISPLAY="${DISPLAY:-:0}" XAUTHORITY="$USER_HOME/.Xauthority" \
-    bash -c 'nohup /usr/local/bin/handset-phone >/dev/null 2>&1 &' || true
+  log "Restarting Digivice UI (userspace SPI)…"
+  pkill -9 -f handset_app.py 2>/dev/null || true
+  pkill -9 -f desktop_spi_mirror.py 2>/dev/null || true
+  sleep 0.6
+  mkdir -p "$USER_HOME/.esp-handset"
+  echo phone >"$USER_HOME/.esp-handset/session_mode"
+  echo phone >/etc/esp-handset/ui_mode
+  chown "$USER_NAME:$USER_NAME" "$USER_HOME/.esp-handset/session_mode" 2>/dev/null || true
+  sudo -u "$USER_NAME" env \
+    DISPLAY="${DISPLAY:-:0}" \
+    XAUTHORITY="$USER_HOME/.Xauthority" \
+    HOME="$USER_HOME" \
+    ESP_HANDSET_SPI_BACKEND=userspace \
+    PYTHONPATH="$PREFIX" \
+    bash -c 'nohup /usr/local/bin/handset-phone >>"$HOME/.esp-handset/handset.log" 2>&1 &' || true
+  sleep 1.5
+  if pgrep -f handset_app.py >/dev/null; then
+    log "Digivice is running"
+  else
+    log "WARN: Digivice did not stay up — tail $USER_HOME/.esp-handset/handset.log"
+    tail -n 30 "$USER_HOME/.esp-handset/handset.log" 2>/dev/null | tee -a "$LOG" || true
+  fi
 fi
 
 echo ""
-echo "Done. Use anytime:"
+echo "Done. One command next time:"
 echo "  sudo digivice-full-update"
+if [[ "$NEED_REBOOT" -eq 1 && -e /dev/spidev0.0 ]]; then
+  echo "(config cleaned; if panel still weird once: sudo reboot)"
+fi
 echo ""
 exit 0
