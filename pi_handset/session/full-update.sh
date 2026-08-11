@@ -344,7 +344,7 @@ if [[ "$SPI_FIX" -eq 1 ]]; then
   udevadm control --reload-rules 2>/dev/null || true
   pkill -9 -f handset_app.py 2>/dev/null || true
   pkill -9 -f desktop_spi_mirror.py 2>/dev/null || true
-  rm -f /run/digivice-st7789.lock
+  rm -f /tmp/digivice-st7789.lock /run/digivice-st7789.lock
   # kernel mipi_dbi if still loaded fights spidev → static
   modprobe -r mipi_dbi_spi 2>/dev/null || true
   modprobe -r panel_mipi_dbi 2>/dev/null || true
@@ -416,7 +416,7 @@ EOF
     export PYTHONPATH="$PREFIX"
     export ESP_HANDSET_SPI_BACKEND=userspace
     unset ESP_ST7789_SPEED ESP_ST7789_SWAP ESP_ST7789_INVERT
-    rm -f /run/digivice-st7789.lock
+    rm -f /tmp/digivice-st7789.lock /run/digivice-st7789.lock
     /usr/bin/python3 - <<'PY' 2>&1 | tee -a "$LOG" || true
 import sys, time
 sys.path.insert(0, "/opt/esp-handset")
@@ -465,39 +465,45 @@ log " Log: $LOG"
 log "════════════════════════════════════════"
 
 if [[ "$DO_REBOOT" -eq 1 || "$NEED_REBOOT" -eq 1 ]]; then
-  log "Rebooting in 4s (clears hdmi_force_hotplug firmware state + loads SPI)…"
-  log "After login Digivice should paint cleanly on 2\" again"
+  log "Rebooting in 4s…"
   sleep 4
   reboot
   exit 0
 fi
 
 if [[ "$DO_RESTART" -eq 1 ]]; then
-  log "Restarting Digivice UI (stock SPI @40M default)…"
+  log "Restarting Digivice (single instance only)…"
   pkill -9 -f handset_app.py 2>/dev/null || true
   pkill -9 -f desktop_spi_mirror.py 2>/dev/null || true
+  rm -f /tmp/digivice-st7789.lock /run/digivice-st7789.lock
   sleep 0.6
   mkdir -p "$USER_HOME/.esp-handset"
   echo phone >"$USER_HOME/.esp-handset/session_mode"
   echo phone >/etc/esp-handset/ui_mode
   chown "$USER_NAME:$USER_NAME" "$USER_HOME/.esp-handset/session_mode" 2>/dev/null || true
+  # stop stacked autostart race: wait briefly then one start
   sudo -u "$USER_NAME" env \
     DISPLAY="${DISPLAY:-:0}" \
     XAUTHORITY="$USER_HOME/.Xauthority" \
     HOME="$USER_HOME" \
     ESP_HANDSET_SPI_BACKEND=userspace \
     PYTHONPATH="$PREFIX" \
-    bash -c 'set -a; [ -f /etc/esp-handset/env ] && . /etc/esp-handset/env; set +a; nohup /usr/local/bin/handset-phone >>"$HOME/.esp-handset/handset.log" 2>&1 &' || true
-  sleep 1.5
-  if pgrep -f handset_app.py >/dev/null; then
-    log "Digivice is running"
-  else
-    log "WARN: Digivice did not stay up — tail $USER_HOME/.esp-handset/handset.log"
-    tail -n 30 "$USER_HOME/.esp-handset/handset.log" 2>/dev/null | tee -a "$LOG" || true
+    bash -c 'set -a; [ -f /etc/esp-handset/env ] && . /etc/esp-handset/env; set +a; pkill -f handset_app.py; sleep 0.4; nohup /usr/local/bin/handset-phone >>"$HOME/.esp-handset/handset.log" 2>&1 &' || true
+  sleep 2
+  N="$(pgrep -fc handset_app.py 2>/dev/null || echo 0)"
+  log "handset_app processes: $N (must be 1)"
+  if [[ "${N:-0}" -gt 1 ]]; then
+    log "WARN: multiple Digivice instances — killing extras"
+    pkill -9 -f handset_app.py 2>/dev/null || true
+    sleep 0.5
+    sudo -u "$USER_NAME" env DISPLAY=:0 XAUTHORITY="$USER_HOME/.Xauthority" HOME="$USER_HOME" \
+      ESP_HANDSET_SPI_BACKEND=userspace PYTHONPATH="$PREFIX" \
+      nohup /usr/local/bin/handset-phone >>"$USER_HOME/.esp-handset/handset.log" 2>&1 &
   fi
 fi
 
 echo ""
 echo "Done.  sudo digivice-full-update"
+echo "If 2\" still static:  tail -50 ~/.esp-handset/handset.log | grep -i spi"
 echo ""
 exit 0

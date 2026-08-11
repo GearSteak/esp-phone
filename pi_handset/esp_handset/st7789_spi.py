@@ -113,28 +113,41 @@ def init() -> bool:
         _wh = (240, 320)
 
     # One owner of the SPI panel — dual Digivice/mirror = static snow
+    # Prefer /tmp (user-writable); /run often root-only on stock Pi OS.
     try:
         import fcntl
 
-        _lockf = open("/run/digivice-st7789.lock", "w")
-        try:
-            fcntl.flock(_lockf.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError:
-            print(
-                "[st7789] SPI already owned by another process "
-                "(kill other handset_app / desktop_spi_mirror)",
-                flush=True,
-            )
+        lock_path = os.environ.get("ESP_ST7789_LOCK", "").strip()
+        if not lock_path:
+            for cand in ("/tmp/digivice-st7789.lock", "/run/digivice-st7789.lock"):
+                try:
+                    _lockf = open(cand, "w")
+                    lock_path = cand
+                    break
+                except OSError:
+                    _lockf = None
+        else:
+            _lockf = open(lock_path, "w")
+        if _lockf is not None:
             try:
-                _lockf.close()
-            except Exception:
-                pass
-            _lockf = None
-            return False
-        _lockf.write(f"{os.getpid()}\n")
-        _lockf.flush()
+                fcntl.flock(_lockf.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                print(
+                    "[st7789] SPI already owned by another process "
+                    "(kill other handset_app / desktop_spi_mirror)",
+                    flush=True,
+                )
+                try:
+                    _lockf.close()
+                except Exception:
+                    pass
+                _lockf = None
+                return False
+            _lockf.write(f"{os.getpid()}\n")
+            _lockf.flush()
     except Exception as e:
         print(f"[st7789] lock warn: {e}", flush=True)
+        _lockf = None
 
     if not _gpio_setup(dc, rst, bl):
         return False
