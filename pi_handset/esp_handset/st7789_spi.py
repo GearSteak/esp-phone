@@ -24,6 +24,7 @@ _spi = None
 _gpio = None
 _ok = False
 _wh: Tuple[int, int] = (240, 320)
+_lockf = None  # exclusive flock so two processes never garble SPI
 
 
 def _env_int(name: str, default: int) -> int:
@@ -94,7 +95,7 @@ def _data_bytes(dc: int, data: bytes) -> None:
 
 def init() -> bool:
     """Open SPI + GPIO and run ST7789 init. Returns True if ready."""
-    global _spi, _ok, _wh
+    global _spi, _ok, _wh, _lockf
     if _ok:
         return True
 
@@ -110,6 +111,30 @@ def init() -> bool:
         _wh = (320, 240)
     else:
         _wh = (240, 320)
+
+    # One owner of the SPI panel — dual Digivice/mirror = static snow
+    try:
+        import fcntl
+
+        _lockf = open("/run/digivice-st7789.lock", "w")
+        try:
+            fcntl.flock(_lockf.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            print(
+                "[st7789] SPI already owned by another process "
+                "(kill other handset_app / desktop_spi_mirror)",
+                flush=True,
+            )
+            try:
+                _lockf.close()
+            except Exception:
+                pass
+            _lockf = None
+            return False
+        _lockf.write(f"{os.getpid()}\n")
+        _lockf.flush()
+    except Exception as e:
+        print(f"[st7789] lock warn: {e}", flush=True)
 
     if not _gpio_setup(dc, rst, bl):
         return False
@@ -311,7 +336,7 @@ def blank(*, backlight_off: bool = True) -> None:
 
 def close(*, blank_panel: bool = False) -> None:
     """Release SPI. blank_panel=True only when you want a black/off panel (not desktop hand-off)."""
-    global _spi, _ok
+    global _spi, _ok, _lockf
     if blank_panel and _ok:
         try:
             blank(backlight_off=True)
@@ -324,6 +349,18 @@ def close(*, blank_panel: bool = False) -> None:
         pass
     _spi = None
     _ok = False
+    if _lockf is not None:
+        try:
+            import fcntl
+
+            fcntl.flock(_lockf.fileno(), fcntl.LOCK_UN)
+        except Exception:
+            pass
+        try:
+            _lockf.close()
+        except Exception:
+            pass
+        _lockf = None
 
 
 def wake_display() -> None:

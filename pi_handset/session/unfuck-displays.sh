@@ -66,11 +66,8 @@ if [[ "$(id -u)" -eq 0 ]]; then
       sed -i -E 's/^dtoverlay=vc4-kms-v3d(|,.*)$/dtoverlay=vc4-kms-v3d/' "$BOOTCFG"
       log "stripped nohdmi from $BOOTCFG"
     fi
-    # Ensure hdmi_force_hotplug for picky monitors (harmless if unused)
-    if ! grep -qE '^hdmi_force_hotplug=' "$BOOTCFG"; then
-      echo "hdmi_force_hotplug=1" >>"$BOOTCFG"
-      log "added hdmi_force_hotplug=1"
-    fi
+    # NEVER hdmi_force_hotplug — created ghost HDMI head and SPI static on Digivice
+    sed -i '/^hdmi_force_hotplug=/d' "$BOOTCFG" 2>/dev/null || true
     if ! grep -qE '^hdmi_drive=' "$BOOTCFG"; then
       echo "hdmi_drive=2" >>"$BOOTCFG"
       log "added hdmi_drive=2"

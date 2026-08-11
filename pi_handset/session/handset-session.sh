@@ -279,8 +279,11 @@ launch_phone() {
     log "not launching Digivice (recovery flag)"
     return 0
   fi
-  # Digivice owns SPI — stop desktop mirror first
+  # Digivice owns SPI — stop desktop mirror first; kill any prior phone UI
+  # (two writers on ST7789 = static/snow on the panel)
   stop_desktop_spi_mirror
+  pkill -f "handset_app.py" 2>/dev/null || true
+  sleep 0.35
   # Hide software pointer while phone UI runs
   /usr/local/bin/digivice-fix-cursor --stop 2>/dev/null \
     || bash "$(dirname "$0")/fix-cursor.sh" --stop 2>/dev/null || true
@@ -289,6 +292,8 @@ launch_phone() {
   digivice_display_env
   apply_digivice_layout
   export ESP_HANDSET_KIOSK=1
+  # never carry junk SPEED/SWAP from bad full-update experiments
+  unset ESP_ST7789_SPEED ESP_ST7789_SWAP ESP_ST7789_INVERT 2>/dev/null || true
   local app="$PREFIX/handset_app.py"
   if [[ ! -f "$app" ]]; then
     log "ERROR missing $app"
@@ -302,7 +307,7 @@ launch_phone() {
       return 1
     fi
   fi
-  log "starting $app DISPLAY=${DISPLAY:-} WAYLAND=${WAYLAND_DISPLAY:-}"
+  log "starting $app DISPLAY=${DISPLAY:-} WAYLAND=${WAYLAND_DISPLAY:-} SPI=$ESP_HANDSET_SPI_BACKEND"
   exec /usr/bin/python3 "$app" >>"$LOG" 2>&1
 }
 

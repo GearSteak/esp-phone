@@ -52,9 +52,10 @@ else
   echo "  added dtoverlay=vc4-kms-v3d"
 fi
 
-# Help picky monitors
-grep -qE '^hdmi_force_hotplug=' "$BOOTCFG" || echo "hdmi_force_hotplug=1" >>"$BOOTCFG"
+# Help picky monitors (drive only — NEVER force_hotplug; kills userspace SPI)
 grep -qE '^hdmi_drive=' "$BOOTCFG" || echo "hdmi_drive=2" >>"$BOOTCFG"
+# Strip any leftover force_hotplug from earlier digivice scripts
+sed -i '/^hdmi_force_hotplug=/d' "$BOOTCFG" 2>/dev/null || true
 
 # Un-comment Digivice SPI block if previously disabled
 if grep -q '# --- ESP Digivice display' "$BOOTCFG"; then

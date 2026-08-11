@@ -336,30 +336,42 @@ fi
 if [[ "$SPI_FIX" -eq 1 ]]; then
   log "Undo HDMI hotplug + restore pre-hotplug SPI path"
 
+  # Kill thrashers + any dual SPI owners
   systemctl disable --now digivice-hdmi-hotplug.service 2>/dev/null || true
   rm -f /etc/systemd/system/digivice-hdmi-hotplug.service
   rm -f /etc/udev/rules.d/99-digivice-hdmi-hotplug.rules
   systemctl daemon-reload 2>/dev/null || true
   udevadm control --reload-rules 2>/dev/null || true
+  pkill -9 -f handset_app.py 2>/dev/null || true
+  pkill -9 -f desktop_spi_mirror.py 2>/dev/null || true
+  rm -f /run/digivice-st7789.lock
+  # kernel mipi_dbi if still loaded fights spidev → static
+  modprobe -r mipi_dbi_spi 2>/dev/null || true
+  modprobe -r panel_mipi_dbi 2>/dev/null || true
+  modprobe -r mipi_dbi 2>/dev/null || true
+  sleep 0.3
 
   BOOTCFG=""
   for c in /boot/firmware/config.txt /boot/config.txt; do
     [[ -f "$c" ]] && BOOTCFG="$c" && break
   done
+  HAD_FORCE=0
   if [[ -n "$BOOTCFG" ]]; then
     cp -a "$BOOTCFG" "${BOOTCFG}.bak.full-update" 2>/dev/null || true
-    # Remove everything the hotplug installer added
+    if grep -qE '^hdmi_force_hotplug=' "$BOOTCFG"; then
+      HAD_FORCE=1
+    fi
     sed -i '/^hdmi_force_hotplug=/d' "$BOOTCFG"
     sed -i '/^# hdmi_force_hotplug=/d' "$BOOTCFG"
     sed -i '/^hdmi_blanking=/d' "$BOOTCFG"
     sed -i '/digivice: disabled (broke SPI/d' "$BOOTCFG"
     sed -i -E 's/^dtoverlay=vc4-kms-v3d,nohdmi/dtoverlay=vc4-kms-v3d/' "$BOOTCFG"
     sed -i -E 's/^dtoverlay=vc4-kms-v3d(|,.*)$/dtoverlay=vc4-kms-v3d/' "$BOOTCFG"
-    # Keep userspace SPI: spi=on, no mipi-dbi
     sed -i '/# --- ESP Digivice display/,/# --- END ESP Digivice display/d' "$BOOTCFG"
     sed -i '/^dtoverlay=mipi-dbi-spi/d' "$BOOTCFG"
     if ! grep -qE '^dtparam=spi=on' "$BOOTCFG"; then
       echo "dtparam=spi=on" >>"$BOOTCFG"
+      NEED_REBOOT=1
     fi
     if ! grep -q 'ESP Digivice SPI userspace' "$BOOTCFG"; then
       cat >>"$BOOTCFG" <<'EOF'
@@ -369,9 +381,12 @@ dtparam=spi=on
 # --- END ESP Digivice SPI userspace ---
 EOF
     fi
-    # force_hotplug only fully clears after reboot
-    NEED_REBOOT=1
-    log "config cleaned (hdmi_force_hotplug gone) — reboot required once"
+    log "config SPI/HDMI lines:" 
+    grep -nE 'hdmi_|spi|mipi|vc4' "$BOOTCFG" | tee -a "$LOG" || true
+    if [[ "$HAD_FORCE" -eq 1 ]]; then
+      NEED_REBOOT=1
+      log "removed hdmi_force_hotplug — reboot required"
+    fi
   fi
 
   mkdir -p /etc/esp-handset
@@ -397,28 +412,32 @@ EOF
   sleep 0.3
 
   if [[ -e /dev/spidev0.0 ]]; then
-    log "spidev OK — quick red paint with stock driver"
+    log "spidev OK — stock driver test (must be solid red, not static)"
     export PYTHONPATH="$PREFIX"
     export ESP_HANDSET_SPI_BACKEND=userspace
-    # clear any bad speed override from previous failed fixes
     unset ESP_ST7789_SPEED ESP_ST7789_SWAP ESP_ST7789_INVERT
+    rm -f /run/digivice-st7789.lock
     /usr/bin/python3 - <<'PY' 2>&1 | tee -a "$LOG" || true
-import sys
+import sys, time
 sys.path.insert(0, "/opt/esp-handset")
 from esp_handset import st7789_spi as st
 try:
     st.close(blank_panel=False)
 except Exception:
     pass
-if st.init():
-    st.fill(255, 0, 0)
-    st.close(blank_panel=False)
-    print("[spi] stock driver painted red")
-else:
-    print("[spi] init failed")
+if not st.init():
+    print("[spi] INIT FAILED — check log, dual process?, spidev")
+    sys.exit(0)
+print("[spi] painting solid RED 1s then GREEN 1s — if you see STATIC, wiring/driver bus issue")
+st.fill(255, 0, 0)
+time.sleep(1.0)
+st.fill(0, 200, 0)
+time.sleep(0.5)
+st.close(blank_panel=False)
+print("[spi] test done")
 PY
   else
-    log "no spidev0.0 yet — will appear after reboot"
+    log "no /dev/spidev0.0 — reboot required"
     NEED_REBOOT=1
   fi
 else
