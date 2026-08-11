@@ -68,6 +68,19 @@ def _backend() -> str:
         return "userspace"
     if b in ("drm", "kms", "panel"):
         return "drm"
+    # Instructables / Adafruit DRM path wins over auto-spidev
+    for path in (
+        "/etc/esp-handset/spi-mode",
+        "/etc/esp-handset/display-mode",
+        "/etc/esp-handset/spi-backend",
+    ):
+        try:
+            with open(path, encoding="utf-8") as f:
+                t = f.read().lower()
+            if "instructables" in t or t.strip() == "drm":
+                return "drm"
+        except OSError:
+            pass
     if os.path.isfile("/etc/esp-handset/spi-userspace"):
         return "userspace"
     if os.path.exists("/dev/spidev0.0"):

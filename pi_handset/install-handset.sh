@@ -167,6 +167,9 @@ install -m 755 "$ROOT/display/spi-doctor.sh" /usr/local/bin/digivice-spi-doctor
 install -m 755 "$ROOT/display/spi-doctor.sh" "$PREFIX/display/spi-doctor.sh"
 install -m 755 "$ROOT/display/install-spi-userspace.sh" /usr/local/bin/digivice-install-spi-userspace
 install -m 755 "$ROOT/display/install-spi-userspace.sh" "$PREFIX/display/install-spi-userspace.sh"
+install -m 755 "$ROOT/display/install-instructables-mirror.sh" /usr/local/bin/digivice-install-instructables
+install -m 755 "$ROOT/display/install-instructables-mirror.sh" "$PREFIX/display/install-instructables-mirror.sh"
+install -m 755 "$ROOT/session/spi-drm-activate.sh" /usr/local/bin/digivice-spi-drm-activate
 
 # Convenience
 cat >/usr/local/bin/handset-spi <<'EOF'

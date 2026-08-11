@@ -40,15 +40,39 @@ kill_phone_ui() {
   pkill -f "handset_app.py" 2>/dev/null || true
 }
 
+spi_drm_mode() {
+  # Instructables / Adafruit: mipi-dbi panel is a real OS display
+  if [[ -f /etc/esp-handset/spi-userspace ]]; then
+    return 1
+  fi
+  if [[ -f /etc/esp-handset/spi-mode ]] \
+    && grep -qi instructables /etc/esp-handset/spi-mode 2>/dev/null; then
+    return 0
+  fi
+  if [[ -f /etc/esp-handset/display-mode ]] \
+    && grep -qi instructables /etc/esp-handset/display-mode 2>/dev/null; then
+    return 0
+  fi
+  [[ "${ESP_HANDSET_SPI_BACKEND:-}" == "drm" ]] && return 0
+  if [[ -f /etc/esp-handset/spi-backend ]] \
+    && grep -qi '^drm' /etc/esp-handset/spi-backend 2>/dev/null; then
+    return 0
+  fi
+  if [[ -f /etc/esp-handset/env ]] \
+    && grep -q 'ESP_HANDSET_SPI_BACKEND=drm' /etc/esp-handset/env 2>/dev/null; then
+    return 0
+  fi
+  return 1
+}
+
 spi_userspace_on() {
-  # Explicit flag
+  # Never userspace when Instructables DRM mode is active
+  if spi_drm_mode; then
+    return 1
+  fi
   if [[ -f /etc/esp-handset/spi-userspace ]] \
     || [[ "${ESP_HANDSET_SPI_BACKEND:-}" == "userspace" ]] \
     || grep -q 'ESP_HANDSET_SPI_BACKEND=userspace' /etc/esp-handset/env 2>/dev/null; then
-    return 0
-  fi
-  # If Digivice already drives the panel via spidev, still mirror
-  if [[ -e /dev/spidev0.0 || -e /dev/spidev0.1 ]]; then
     return 0
   fi
   return 1
@@ -68,6 +92,23 @@ desktop_mirror_bin() {
   echo ""
 }
 
+activate_spi_drm() {
+  local s
+  for s in \
+    /usr/local/bin/digivice-spi-drm-activate \
+    "$PREFIX/session/spi-drm-activate.sh" \
+    "$(dirname "$0")/spi-drm-activate.sh"
+  do
+    if [[ -x "$s" || -f "$s" ]]; then
+      log "SPI DRM activate (Instructables path): $s"
+      bash "$s" >>"$LOG" 2>&1 || true
+      return 0
+    fi
+  done
+  log "WARN: digivice-spi-drm-activate missing"
+  return 1
+}
+
 stop_desktop_spi_mirror() {
   local m
   m="$(desktop_mirror_bin)"
@@ -79,9 +120,16 @@ stop_desktop_spi_mirror() {
 }
 
 start_desktop_spi_mirror() {
+  # Instructables DRM path: OS owns the panel — no Python grab mirror
+  if spi_drm_mode; then
+    log "desktop SPI: DRM mode (Instructables) — enable panel head"
+    stop_desktop_spi_mirror
+    activate_spi_drm
+    return 0
+  fi
   if ! spi_userspace_on; then
-    log "desktop SPI mirror skipped (not userspace SPI)"
-    log "  fix: sudo digivice-install-spi-userspace && reboot"
+    log "desktop SPI: try DRM activate (no userspace flag)"
+    activate_spi_drm || true
     return 0
   fi
   export DISPLAY="${DISPLAY:-:0}"
@@ -93,7 +141,6 @@ start_desktop_spi_mirror() {
     log "desktop-spi-mirror.sh missing"
     return 1
   fi
-  # Free SPI after Digivice release (GPIO/spidev handoff can take a beat)
   pkill -f "handset_app.py" 2>/dev/null || true
   rm -f /tmp/digivice-st7789.lock /run/digivice-st7789.lock 2>/dev/null || true
   sleep 0.8
