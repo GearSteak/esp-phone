@@ -34,7 +34,7 @@ BRANCH="${ESP_HANDSET_BRANCH:-main}"
 LOG_DIR="${HOME:-/tmp}/.esp-handset"
 LOG="${LOG_DIR}/full-update.log"
 WITH_DISPLAY=0
-WITH_SPI_USER=1
+WITH_SPI_USER=0
 SPI_FIX=1
 DO_RESTART=1
 DO_REBOOT=0
@@ -330,50 +330,36 @@ if [[ -x /usr/local/bin/digivice-ensure-buttons ]]; then
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════
-#  SCREEN FIX (built-in — this is the one-command fix for blank 2" / HDMI mess)
+#  UNDO HDMI HOTPLUG DAMAGE only — restore known-good SPI stack (pre-hotplug)
+#  Do NOT rewrite ST7789 clocks / pixel packing (that caused static).
 # ═══════════════════════════════════════════════════════════════════════════
 if [[ "$SPI_FIX" -eq 1 ]]; then
-  log "Screen fix: undo HDMI hotplug thrash + restore userspace ST7789"
+  log "Undo HDMI hotplug + restore pre-hotplug SPI path"
 
-  # Kill thrashers
   systemctl disable --now digivice-hdmi-hotplug.service 2>/dev/null || true
   rm -f /etc/systemd/system/digivice-hdmi-hotplug.service
   rm -f /etc/udev/rules.d/99-digivice-hdmi-hotplug.rules
   systemctl daemon-reload 2>/dev/null || true
   udevadm control --reload-rules 2>/dev/null || true
-  if [[ -x /usr/local/bin/digivice-hdmi-hotplug ]]; then
-    bash /usr/local/bin/digivice-hdmi-hotplug --disable 2>&1 | tee -a "$LOG" || true
-  fi
 
-  # Firmware/config
   BOOTCFG=""
   for c in /boot/firmware/config.txt /boot/config.txt; do
     [[ -f "$c" ]] && BOOTCFG="$c" && break
   done
   if [[ -n "$BOOTCFG" ]]; then
     cp -a "$BOOTCFG" "${BOOTCFG}.bak.full-update" 2>/dev/null || true
+    # Remove everything the hotplug installer added
+    sed -i '/^hdmi_force_hotplug=/d' "$BOOTCFG"
+    sed -i '/^# hdmi_force_hotplug=/d' "$BOOTCFG"
+    sed -i '/^hdmi_blanking=/d' "$BOOTCFG"
+    sed -i '/digivice: disabled (broke SPI/d' "$BOOTCFG"
     sed -i -E 's/^dtoverlay=vc4-kms-v3d,nohdmi/dtoverlay=vc4-kms-v3d/' "$BOOTCFG"
     sed -i -E 's/^dtoverlay=vc4-kms-v3d(|,.*)$/dtoverlay=vc4-kms-v3d/' "$BOOTCFG"
-    if ! grep -qE '^dtoverlay=vc4-kms-v3d' "$BOOTCFG"; then
-      echo "dtoverlay=vc4-kms-v3d" >>"$BOOTCFG"
-    fi
-    # ghost HDMI head = broken X + broken SPI mirror
-    if grep -qE '^hdmi_force_hotplug=' "$BOOTCFG"; then
-      sed -i '/^hdmi_force_hotplug=/d' "$BOOTCFG"
-      NEED_REBOOT=1
-      log "removed hdmi_force_hotplug (reboot will finish firmware apply)"
-    fi
-    sed -i '/^hdmi_blanking=/d' "$BOOTCFG" || true
-    # mipi-dbi steals SPI from spidev — kill it so /dev/spidev0.0 exists
-    if grep -qE 'mipi-dbi-spi|ESP Digivice display' "$BOOTCFG"; then
-      sed -i '/# --- ESP Digivice display/,/# --- END ESP Digivice display/d' "$BOOTCFG"
-      sed -i '/^dtoverlay=mipi-dbi-spi/d' "$BOOTCFG"
-      NEED_REBOOT=1
-      log "removed mipi-dbi-spi DRM block (userspace SPI)"
-    fi
+    # Keep userspace SPI: spi=on, no mipi-dbi
+    sed -i '/# --- ESP Digivice display/,/# --- END ESP Digivice display/d' "$BOOTCFG"
+    sed -i '/^dtoverlay=mipi-dbi-spi/d' "$BOOTCFG"
     if ! grep -qE '^dtparam=spi=on' "$BOOTCFG"; then
       echo "dtparam=spi=on" >>"$BOOTCFG"
-      NEED_REBOOT=1
     fi
     if ! grep -q 'ESP Digivice SPI userspace' "$BOOTCFG"; then
       cat >>"$BOOTCFG" <<'EOF'
@@ -383,20 +369,18 @@ dtparam=spi=on
 # --- END ESP Digivice SPI userspace ---
 EOF
     fi
-    log "config: $BOOTCFG OK"
+    # force_hotplug only fully clears after reboot
+    NEED_REBOOT=1
+    log "config cleaned (hdmi_force_hotplug gone) — reboot required once"
   fi
 
-  # Flags always
   mkdir -p /etc/esp-handset
   echo userspace >/etc/esp-handset/spi-userspace
   echo userspace >/etc/esp-handset/spi-backend
+  # ORIGINAL simple env — no 16MHz/SWAP hacks that broke panels
   cat >/etc/esp-handset/env <<'EOF'
 ESP_HANDSET_SPI_BACKEND=userspace
 ESP_HANDSET_SKIP_LAYOUT=1
-ESP_ST7789_SPEED=16000000
-ESP_ST7789_SWAP=1
-ESP_ST7789_INVERT=1
-ESP_ST7789_FPS_MS=40
 EOF
   [[ -f /etc/esp-handset/panel-rotation ]] || echo 180 >/etc/esp-handset/panel-rotation
   mkdir -p /etc/profile.d
@@ -404,60 +388,37 @@ EOF
 export ESP_HANDSET_SPI_BACKEND=userspace
 EOF
 
-  # Optional full install-spi-userspace (dedupe + packages)
-  if [[ "$WITH_SPI_USER" -eq 1 && -f "$ROOT/display/install-spi-userspace.sh" ]]; then
-    log "ensure install-spi-userspace.sh"
-    bash "$ROOT/display/install-spi-userspace.sh" 2>&1 | tee -a "$LOG" || true
-  fi
+  # packages only — skip re-running install-spi script that re-appends junk
+  apt-get install -y python3-spidev python3-rpi.gpio 2>/dev/null \
+    || apt-get install -y python3-spidev 2>/dev/null || true
 
   pkill -9 -f handset_app.py 2>/dev/null || true
   pkill -9 -f desktop_spi_mirror.py 2>/dev/null || true
-  sleep 0.4
+  sleep 0.3
 
   if [[ -e /dev/spidev0.0 ]]; then
-    log "spidev0.0 present — force reinit @16MHz (kills static) + solid colors"
-    export PYTHONPATH="$PREFIX:${PYTHONPATH:-}"
+    log "spidev OK — quick red paint with stock driver"
+    export PYTHONPATH="$PREFIX"
     export ESP_HANDSET_SPI_BACKEND=userspace
-    export ESP_ST7789_SPEED=16000000
-    export ESP_ST7789_SWAP=1
-    export ESP_ST7789_INVERT=1
+    # clear any bad speed override from previous failed fixes
+    unset ESP_ST7789_SPEED ESP_ST7789_SWAP ESP_ST7789_INVERT
     /usr/bin/python3 - <<'PY' 2>&1 | tee -a "$LOG" || true
-import sys, time, os
+import sys
 sys.path.insert(0, "/opt/esp-handset")
-os.environ["ESP_ST7789_SPEED"] = "16000000"
-os.environ["ESP_ST7789_SWAP"] = "1"
-os.environ["ESP_ST7789_INVERT"] = "1"
-try:
-    from esp_handset import st7789_spi as st
-except Exception as e:
-    print("[spi-wake] import failed:", e)
-    sys.exit(0)
-# Force cold reinit even if a zombie process left the bus messy
+from esp_handset import st7789_spi as st
 try:
     st.close(blank_panel=False)
 except Exception:
     pass
-ok = False
-if hasattr(st, "reinit"):
-    ok = st.reinit()
+if st.init():
+    st.fill(255, 0, 0)
+    st.close(blank_panel=False)
+    print("[spi] stock driver painted red")
 else:
-    ok = st.init()
-if not ok:
-    print("[spi-wake] init failed")
-    sys.exit(0)
-st.wake_display()
-for r, g, b, n in ((255, 0, 0, "RED"), (0, 255, 0, "GREEN"), (0, 0, 255, "BLUE")):
-    print("[spi-wake]", n)
-    st.fill(r, g, b)
-    st.wake_display()
-    time.sleep(0.5)
-st.fill(0, 160, 0)
-st.wake_display()
-st.close(blank_panel=False)
-print("[spi-wake] panel solid colors OK @16MHz — static should be gone")
+    print("[spi] init failed")
 PY
   else
-    log "WARN: no /dev/spidev0.0 — reboot required after config change"
+    log "no spidev0.0 yet — will appear after reboot"
     NEED_REBOOT=1
   fi
 else
@@ -484,20 +445,16 @@ log " FULL UPDATE OK  rev=${REV:-?}  → $PREFIX"
 log " Log: $LOG"
 log "════════════════════════════════════════"
 
-if [[ "$DO_REBOOT" -eq 1 || ( "$NEED_REBOOT" -eq 1 && ! -e /dev/spidev0.0 ) ]]; then
-  log "Rebooting in 4s so SPI / firmware takes effect…"
-  log "After boot: Digivice should autostart; or: handset-phone"
+if [[ "$DO_REBOOT" -eq 1 || "$NEED_REBOOT" -eq 1 ]]; then
+  log "Rebooting in 4s (clears hdmi_force_hotplug firmware state + loads SPI)…"
+  log "After login Digivice should paint cleanly on 2\" again"
   sleep 4
   reboot
   exit 0
 fi
 
-if [[ "$NEED_REBOOT" -eq 1 ]]; then
-  log "NOTE: config.txt changed — reboot when convenient:  sudo reboot"
-fi
-
 if [[ "$DO_RESTART" -eq 1 ]]; then
-  log "Restarting Digivice UI (userspace SPI)…"
+  log "Restarting Digivice UI (stock SPI @40M default)…"
   pkill -9 -f handset_app.py 2>/dev/null || true
   pkill -9 -f desktop_spi_mirror.py 2>/dev/null || true
   sleep 0.6
@@ -510,10 +467,6 @@ if [[ "$DO_RESTART" -eq 1 ]]; then
     XAUTHORITY="$USER_HOME/.Xauthority" \
     HOME="$USER_HOME" \
     ESP_HANDSET_SPI_BACKEND=userspace \
-    ESP_ST7789_SPEED=16000000 \
-    ESP_ST7789_SWAP=1 \
-    ESP_ST7789_INVERT=1 \
-    ESP_ST7789_FPS_MS=40 \
     PYTHONPATH="$PREFIX" \
     bash -c 'set -a; [ -f /etc/esp-handset/env ] && . /etc/esp-handset/env; set +a; nohup /usr/local/bin/handset-phone >>"$HOME/.esp-handset/handset.log" 2>&1 &' || true
   sleep 1.5
@@ -526,10 +479,6 @@ if [[ "$DO_RESTART" -eq 1 ]]; then
 fi
 
 echo ""
-echo "Done. One command next time:"
-echo "  sudo digivice-full-update"
-if [[ "$NEED_REBOOT" -eq 1 && -e /dev/spidev0.0 ]]; then
-  echo "(config cleaned; if panel still weird once: sudo reboot)"
-fi
+echo "Done.  sudo digivice-full-update"
 echo ""
 exit 0
