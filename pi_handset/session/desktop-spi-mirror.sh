@@ -94,6 +94,9 @@ start_mirror() {
   pkill -f "handset_app.py" 2>/dev/null || true
   sleep 0.4
   stop_mirror
+  # Drop exclusive SPI lock files left by crashed paint/update tests
+  rm -f /tmp/digivice-st7789.lock /run/digivice-st7789.lock \
+    "${HOME}/.esp-handset/st7789.lock" 2>/dev/null || true
 
   local py root
   py="$(app_py)"
@@ -112,6 +115,11 @@ start_mirror() {
   export ESP_HANDSET_SPI_BACKEND=userspace
   export DISPLAY="${DISPLAY:-:0}"
   export QT_QPA_PLATFORM="${QT_QPA_PLATFORM:-xcb}"
+  if [[ -z "${XAUTHORITY:-}" ]]; then
+    for xa in "${HOME}/.Xauthority" /home/*/.Xauthority; do
+      [[ -f "$xa" ]] && export XAUTHORITY="$xa" && break
+    done
+  fi
 
   log "starting $py DISPLAY=$DISPLAY XAUTHORITY=${XAUTHORITY:-none} HOME=$HOME"
   # Run as real GUI user if we are root
@@ -126,7 +134,7 @@ start_mirror() {
       PYTHONPATH="$PYTHONPATH" \
       ESP_HANDSET_SPI_BACKEND=userspace \
       QT_QPA_PLATFORM=xcb \
-      ESP_MIRROR_INIT_RETRIES=10 \
+      ESP_MIRROR_INIT_RETRIES=12 \
       nohup /usr/bin/python3 "$py" >>"$h/.esp-handset/handset.log" 2>&1 &
     echo $! >"$PIDF"
     chown "$u:$u" "$PIDF" 2>/dev/null || true
@@ -148,11 +156,13 @@ start_mirror() {
   tail -n 25 "$LOG" 2>/dev/null | tee -a "$LOG" >&2 || true
   # Try one more time without nohup buffering quirks
   sleep 0.5
+  rm -f /tmp/digivice-st7789.lock /run/digivice-st7789.lock 2>/dev/null || true
   if [[ "$(id -u)" -eq 0 && -n "${SUDO_USER:-}" && "${SUDO_USER}" != "root" ]]; then
     local u="$SUDO_USER" h
     h="$(getent passwd "$u" | cut -d: -f6)"
     sudo -u "$u" env HOME="$h" DISPLAY=:0 XAUTHORITY="$h/.Xauthority" \
       PYTHONPATH="$PYTHONPATH" ESP_HANDSET_SPI_BACKEND=userspace \
+      ESP_MIRROR_INIT_RETRIES=12 \
       /usr/bin/python3 "$py" >>"$h/.esp-handset/handset.log" 2>&1 &
     echo $! >"$PIDF"
   else

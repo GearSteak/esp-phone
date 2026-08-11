@@ -68,6 +68,11 @@ def main() -> int:
         )
         return 1
     st.wake_display()
+    # Wipe leftover full-update red/green so a failed X grab never leaves a solid color
+    try:
+        st.fill(0, 0, 0)
+    except Exception:
+        pass
 
     keep_aspect = os.environ.get("ESP_MIRROR_KEEP_ASPECT", "1").strip() not in (
         "0",
@@ -123,12 +128,23 @@ def main() -> int:
 
     _last_log = [0.0]
     _blank_streak = [0]
+    _fail_streak = [0]
+
+    def paint_status(r: int, g: int, b: int) -> None:
+        try:
+            st.fill(r, g, b)
+        except Exception:
+            pass
 
     def tick() -> None:
         if not running:
             return
         scr = pick_screen()
         if scr is None:
+            _fail_streak[0] += 1
+            if _fail_streak[0] % 30 == 1:
+                print("[desktop-mirror] no X screens — is DISPLAY=:0 up?", flush=True)
+                paint_status(20, 20, 80)  # dark blue = mirror alive, no screen
             return
         try:
             pix = scr.grabWindow(0)
@@ -137,15 +153,21 @@ def main() -> int:
             if now - _last_log[0] > 5:
                 print(f"[desktop-mirror] grab failed: {e}", flush=True)
                 _last_log[0] = now
+            _fail_streak[0] += 1
+            if _fail_streak[0] % 25 == 1:
+                paint_status(80, 20, 20)  # dark red = grab error
             return
         if pix.isNull():
             _blank_streak[0] += 1
+            _fail_streak[0] += 1
             if _blank_streak[0] == 10 or _blank_streak[0] % 50 == 0:
                 print(
                     f"[desktop-mirror] null grab screen={scr.name()} "
                     f"geo={scr.geometry().width()}x{scr.geometry().height()}",
                     flush=True,
                 )
+            if _blank_streak[0] % 20 == 1:
+                paint_status(20, 60, 20)  # dark green = null grab (not solid test green)
             return
         src = pix.toImage()
         if src.isNull():
@@ -177,6 +199,7 @@ def main() -> int:
                     if _blank_streak[0] > 10:
                         print("[desktop-mirror] content OK", flush=True)
                     _blank_streak[0] = 0
+                    _fail_streak[0] = 0
         except Exception:
             pass
 

@@ -433,8 +433,10 @@ st.fill(255, 0, 0)
 time.sleep(1.0)
 st.fill(0, 200, 0)
 time.sleep(0.5)
+# Never leave green stickied on the panel (desktop mirror may fail first grab)
+st.fill(0, 0, 0)
 st.close(blank_panel=False)
-print("[spi] test done")
+print("[spi] test done (ended black)")
 PY
   else
     log "no /dev/spidev0.0 — reboot required"

@@ -94,6 +94,8 @@ start_desktop_spi_mirror() {
     return 1
   fi
   # Free SPI after Digivice release (GPIO/spidev handoff can take a beat)
+  pkill -f "handset_app.py" 2>/dev/null || true
+  rm -f /tmp/digivice-st7789.lock /run/digivice-st7789.lock 2>/dev/null || true
   sleep 0.8
   bash "$m" stop >>"$LOG" 2>&1 || true
   sleep 0.3
@@ -104,6 +106,7 @@ start_desktop_spi_mirror() {
   else
     log "WARN: desktop → SPI mirror not running — retry in 1s"
     sleep 1
+    rm -f /tmp/digivice-st7789.lock /run/digivice-st7789.lock 2>/dev/null || true
     bash "$m" start >>"$LOG" 2>&1 || true
     bash "$m" status >>"$LOG" 2>&1 || log "ERROR: mirror failed — see $LOG"
   fi
