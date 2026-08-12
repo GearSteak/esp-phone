@@ -410,11 +410,19 @@ def make_share_gps_page(modem, on_back: Callable[[], None], on_status) -> QWidge
             return
         try:
             modem.gps_on()
-            g = modem.gps_info() or "no fix"
-            fix["text"] = g
-            info.setText(g)
+            fix = modem.gps_fix()
+            if fix.get("ok"):
+                fix["text"] = fix.get("raw") or ""
+                info.setText(fix.get("detail") or fix.get("summary") or "")
+            elif fix.get("searching"):
+                fix["text"] = fix.get("raw") or ""
+                info.setText("Searching…\n" + (fix.get("detail") or ""))
+            else:
+                g = modem.gps_info() or "no fix"
+                fix["text"] = g
+                info.setText(g)
         except Exception as e:
-            info.setText(str(e))
+            info.setText(str(e).strip() or "GPS error")
 
     def do_share():
         num = to.text().strip()

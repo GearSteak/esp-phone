@@ -788,28 +788,149 @@ def make_lora_page(bridge, on_back, on_status) -> QWidget:
 
 
 def make_gps_page(modem, on_back, on_status) -> QWidget:
+    """SIM7600 GNSS — status on-page (no blank QMessageBox on 240×320)."""
+    from PyQt5.QtCore import QTimer
+
     body = QWidget()
     lay = QVBoxLayout(body)
-    info = QLabel("GPS off / no fix")
-    info.setWordWrap(True)
-    on_btn = QPushButton("GPS ON + poll")
-    lay.addWidget(info)
+    lay.setSpacing(4)
+    tip = QLabel(
+        "GNSS antenna on SIM7600 IPEX.\n"
+        "Outdoors · cold start 30–120s."
+    )
+    tip.setWordWrap(True)
+    tip.setStyleSheet("color:#9ab;font-size:10px;")
+    summary = QLabel("GPS off")
+    summary.setWordWrap(True)
+    summary.setAlignment(Qt.AlignCenter)
+    summary.setStyleSheet(
+        "font-size:14px; font-weight:700; padding:8px;"
+        "background:#1a2230; color:#cde;"
+    )
+    detail = QLabel("")
+    detail.setWordWrap(True)
+    detail.setAlignment(Qt.AlignCenter)
+    detail.setStyleSheet("font-size:11px; color:#9ab;")
+    on_btn = QPushButton("Start GPS")
+    on_btn.setMinimumHeight(32)
+    on_btn.setStyleSheet("font-weight:700;")
+    poll_btn = QPushButton("Refresh")
+    poll_btn.setMinimumHeight(28)
+    off_btn = QPushButton("Stop GPS")
+    off_btn.setMinimumHeight(28)
+    lay.addWidget(tip)
+    lay.addWidget(summary)
+    lay.addWidget(detail)
     lay.addWidget(on_btn)
+    lay.addWidget(poll_btn)
+    lay.addWidget(off_btn)
     lay.addStretch(1)
 
-    def do_gps():
+    state = {"on": False}
+    timer = QTimer(body)
+    timer.setInterval(4000)
+
+    def _show(fix: dict, err: str = "") -> None:
+        if err:
+            summary.setText("ERROR")
+            summary.setStyleSheet(
+                "font-size:14px; font-weight:700; padding:8px;"
+                "background:#4a1010; color:#ff8a8a;"
+            )
+            detail.setText(err)
+            on_status(err.split("\n")[0][:60])
+            return
+        if fix.get("ok"):
+            summary.setText("FIX\n" + str(fix.get("summary") or ""))
+            summary.setStyleSheet(
+                "font-size:13px; font-weight:700; padding:8px;"
+                "background:#0d3d1f; color:#7dffa0;"
+            )
+            detail.setText(str(fix.get("detail") or ""))
+            on_status(str(fix.get("summary") or "")[:60])
+        elif fix.get("searching"):
+            summary.setText("SEARCHING…")
+            summary.setStyleSheet(
+                "font-size:14px; font-weight:700; padding:8px;"
+                "background:#3a2a10; color:#ffcc66;"
+            )
+            detail.setText(str(fix.get("detail") or "Wait outdoors"))
+            on_status("GPS searching")
+        else:
+            summary.setText(str(fix.get("summary") or "No fix"))
+            summary.setStyleSheet(
+                "font-size:14px; font-weight:700; padding:8px;"
+                "background:#1a2230; color:#cde;"
+            )
+            detail.setText(str(fix.get("detail") or ""))
+
+    def _poll() -> None:
         if not modem:
-            QMessageBox.warning(body, "GPS", "SIM7600 not connected")
+            _show({}, "SIM7600 not connected.\nPlug HAT USB / check ttyUSB.")
             return
         try:
-            modem.gps_on()
-            text = modem.gps_info() or "no fix yet"
-            info.setText(text)
-            on_status(text[:60])
+            fix = modem.gps_fix()
+            _show(fix)
         except Exception as e:
-            QMessageBox.warning(body, "GPS", str(e))
+            msg = str(e).strip() or repr(e) or "Unknown modem error"
+            _show({}, msg)
 
-    on_btn.clicked.connect(do_gps)
+    def do_start() -> None:
+        if not modem:
+            _show({}, "SIM7600 not connected.\nPlug HAT USB / check ttyUSB.")
+            return
+        summary.setText("STARTING…")
+        summary.setStyleSheet(
+            "font-size:14px; font-weight:700; padding:8px;"
+            "background:#1a3040; color:#9cf;"
+        )
+        detail.setText("Sending AT+CGPS=1…")
+        try:
+            modem.gps_on()
+            state["on"] = True
+            if not timer.isActive():
+                timer.start()
+            detail.setText("GNSS on — polling for fix…")
+            _poll()
+        except Exception as e:
+            state["on"] = False
+            timer.stop()
+            msg = str(e).strip() or repr(e) or "Start failed"
+            _show({}, msg)
+
+    def do_stop() -> None:
+        timer.stop()
+        state["on"] = False
+        if modem:
+            try:
+                modem.gps_off()
+            except Exception:
+                pass
+        summary.setText("GPS off")
+        summary.setStyleSheet(
+            "font-size:14px; font-weight:700; padding:8px;"
+            "background:#1a2230; color:#cde;"
+        )
+        detail.setText("Stopped.")
+        on_status("GPS off")
+
+    def on_tick() -> None:
+        if state["on"]:
+            _poll()
+
+    on_btn.clicked.connect(do_start)
+    poll_btn.clicked.connect(_poll)
+    off_btn.clicked.connect(do_stop)
+    timer.timeout.connect(on_tick)
+    # Initial modem presence check (no popup)
+    if not modem:
+        _show({}, "SIM7600 not connected.\nPlug HAT USB / check ttyUSB.")
+    else:
+        try:
+            port = getattr(modem, "port", "?")
+            detail.setText(f"Modem AT: {port}\nPress Start GPS")
+        except Exception:
+            pass
     return page_chrome("GPS", body, on_back)
 
 

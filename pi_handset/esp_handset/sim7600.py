@@ -150,19 +150,121 @@ class Sim7600:
         return False
 
     def gps_on(self) -> bool:
-        r = self._at("AT+CGPS=1", wait=2.0)
-        return "OK" in r
+        """Power on GNSS (SIM7600: CGPS; some fw also accept CGNSSPWR)."""
+        if not self._ser:
+            raise RuntimeError("SIM7600 not open — check USB /dev/ttyUSB*")
+        # Prefer classic SIM7600 standalone GPS; try a few variants
+        for cmd, wait in (
+            ("AT+CGPS=1", 8.0),
+            ("AT+CGPS=1,1", 8.0),
+            ("AT+CGNSSPWR=1", 15.0),
+        ):
+            r = self._at(cmd, wait=wait)
+            if "OK" in r or "READY" in r.upper():
+                return True
+        # Already on often returns ERROR — treat as ok if INFO responds
+        info = self._at("AT+CGPSINFO", wait=3.0)
+        if "+CGPSINFO:" in info:
+            return True
+        raise RuntimeError(
+            "GNSS failed to start.\n"
+            "Check GNSS antenna (IPEX),\n"
+            "modem USB, and AT port."
+        )
 
     def gps_off(self) -> bool:
-        r = self._at("AT+CGPS=0", wait=2.0)
+        if not self._ser:
+            return False
+        r = self._at("AT+CGPS=0", wait=3.0)
+        self._at("AT+CGNSSPWR=0", wait=5.0)
         return "OK" in r
 
     def gps_info(self) -> Optional[str]:
-        r = self._at("AT+CGPSINFO", wait=2.0)
+        """Raw +CGPSINFO line, or None."""
+        if not self._ser:
+            raise RuntimeError("SIM7600 not open")
+        r = self._at("AT+CGPSINFO", wait=3.0)
         for line in r.splitlines():
             if "+CGPSINFO:" in line:
                 return line.strip()
+        if "ERROR" in r:
+            raise RuntimeError("AT+CGPSINFO ERROR — turn GPS on first")
         return None
+
+    @staticmethod
+    def _nmea_ddmm_to_deg(ddmm: str, hemi: str) -> Optional[float]:
+        try:
+            v = float(ddmm)
+        except ValueError:
+            return None
+        deg = int(v // 100)
+        minutes = v - deg * 100
+        dec = deg + minutes / 60.0
+        if hemi.upper() in ("S", "W"):
+            dec = -dec
+        return dec
+
+    def gps_fix(self) -> dict:
+        """Parsed GNSS state for UI.
+
+        Returns keys: ok, searching, raw, lat, lon, alt, summary, detail
+        """
+        out: dict = {
+            "ok": False,
+            "searching": False,
+            "raw": "",
+            "lat": None,
+            "lon": None,
+            "alt": None,
+            "summary": "No data",
+            "detail": "",
+        }
+        raw = self.gps_info()
+        if not raw:
+            out["summary"] = "No CGPSINFO yet"
+            out["detail"] = "Start GPS, wait outdoors 30–120s"
+            out["searching"] = True
+            return out
+        out["raw"] = raw
+        payload = raw.split(":", 1)[-1].strip()
+        parts = [p.strip() for p in payload.split(",")]
+        # Empty fix: +CGPSINFO:,,,,,,,,
+        if not parts or not parts[0]:
+            out["searching"] = True
+            out["summary"] = "Searching for satellites"
+            out["detail"] = (
+                "Needs GNSS antenna + sky view.\n"
+                "Cold start often 30–120 seconds."
+            )
+            return out
+        lat = self._nmea_ddmm_to_deg(parts[0], parts[1] if len(parts) > 1 else "N")
+        lon = self._nmea_ddmm_to_deg(
+            parts[2] if len(parts) > 2 else "",
+            parts[3] if len(parts) > 3 else "E",
+        )
+        alt = None
+        if len(parts) > 6 and parts[6]:
+            try:
+                alt = float(parts[6])
+            except ValueError:
+                alt = None
+        if lat is None or lon is None:
+            out["searching"] = True
+            out["summary"] = "Searching for satellites"
+            out["detail"] = "Partial CGPSINFO — keep waiting outdoors"
+            return out
+        out["ok"] = True
+        out["lat"] = lat
+        out["lon"] = lon
+        out["alt"] = alt
+        out["summary"] = f"{lat:.5f}, {lon:.5f}"
+        detail = f"Lat {lat:.6f}\nLon {lon:.6f}"
+        if alt is not None:
+            detail += f"\nAlt {alt:.1f} m"
+        if len(parts) > 5 and parts[4] and parts[5]:
+            detail += f"\nUTC {parts[4]} {parts[5]}"
+        out["detail"] = detail
+        return out
 
     def signal(self) -> Optional[str]:
         r = self._at("AT+CSQ", wait=1.5)
