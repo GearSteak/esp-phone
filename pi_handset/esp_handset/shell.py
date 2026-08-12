@@ -127,7 +127,9 @@ class PhoneShell(QMainWindow):
         self._tick_clock()
         self.setFocusPolicy(Qt.StrongFocus)
         self.setAttribute(Qt.WA_KeyboardFocusChange, True)
-        # Escape (Back button) triple-tap → desktop
+        # Escape (Back): navigate back. Triple-Back → desktop ONLY on Digivice home
+        # (never while in Calls/SMS/… submenus). Also debounce duplicate Escapes —
+        # buttons daemon emits both uinput + xdotool, so one press ≈ two Key_Escape.
         self._esc_exits = 0
         self._esc_last_ms = 0
 
@@ -438,23 +440,50 @@ class PhoneShell(QMainWindow):
             self._request_desktop()
             event.accept()
             return
-        # Triple Escape/Back within 1.5s → desktop (works with hard Back button)
+        # Back / Escape
         if key == Qt.Key_Escape:
             import time as _time
 
             now = int(_time.time() * 1000)
+            # Collapse uinput+xdotool double-fire into one logical press
+            if now - self._esc_last_ms < 90:
+                event.accept()
+                return
+            # Reset streak if paused
             if now - self._esc_last_ms > 1500:
                 self._esc_exits = 0
             self._esc_last_ms = now
-            self._esc_exits += 1
-            if self._esc_exits >= 3:
-                self._esc_exits = 0
-                self._request_desktop()
+
+            on_home = (self._nav[-1] if self._nav else "home") == "home" and len(
+                self._nav
+            ) <= 1
+
+            if on_home:
+                # Only from Digivice home: Back×3 leaves to Linux desktop
+                self._esc_exits += 1
+                if self._esc_exits >= 3:
+                    self._esc_exits = 0
+                    self._request_desktop()
+                    event.accept()
+                    return
+                # Single/double Back on home — stay (Home button is for home)
                 event.accept()
                 return
-            # fall through to normal Back handling once for single Esc
-        else:
+
+            # In a submenu / app: always just go back one level
             self._esc_exits = 0
+            if self._osk.isVisible():
+                self.hide_osk()
+                event.accept()
+                return
+            self.back()
+            event.accept()
+            return
+        else:
+            # Don't clear esc streak on Home key noise
+            if key not in (Qt.Key_Home,):
+                self._esc_exits = 0
+
         # Home = Digivice home screen only (never exit to Linux desktop)
         if key == Qt.Key_Home:
             self.home()
@@ -483,11 +512,7 @@ class PhoneShell(QMainWindow):
                 event.accept()
                 return
 
-        if key == Qt.Key_Escape:
-            self.back()
-            event.accept()
-            return
-        # Home already handled above (Digivice home only)
+        # Escape already handled above
 
         if key in (Qt.Key_Return, Qt.Key_Enter) and not self._osk.isVisible():
             w = self.focusWidget()
