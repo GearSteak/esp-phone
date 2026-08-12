@@ -202,6 +202,10 @@ if [[ -f "$ROOT/session/home-relaunch.sh" ]]; then
   install -m 755 "$ROOT/session/home-relaunch.sh" "$PREFIX/session/home-relaunch.sh"
   install -m 755 "$ROOT/session/home-relaunch.sh" /usr/local/bin/digivice-home-relaunch
 fi
+if [[ -f "$ROOT/session/apply-update.sh" ]]; then
+  install -m 755 "$ROOT/session/apply-update.sh" "$PREFIX/session/apply-update.sh"
+  install -m 755 "$ROOT/session/apply-update.sh" /usr/local/bin/digivice-apply-update
+fi
 install -m 755 "$ROOT/session/fix-cursor.sh" /usr/local/bin/digivice-fix-cursor 2>/dev/null || true
 install -m 755 "$ROOT/session/restore-desktop-displays.sh" /usr/local/bin/digivice-restore-desktop 2>/dev/null || true
 install -m 755 "$ROOT/session/desktop-spi-mirror.sh" /usr/local/bin/digivice-desktop-mirror 2>/dev/null || true
@@ -250,6 +254,7 @@ cat >/etc/sudoers.d/esp-handset-update <<EOF
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-full-update
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-update
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-gui-update
+$USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-apply-update
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-power
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-ensure-buttons
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-fix-cursor

@@ -22,14 +22,18 @@ LOG="${LOG_DIR}/update.log"
 CHECK_ONLY=0
 RESTART=0
 FULL=0
+PULL_ONLY=0
+INSTALL_ONLY=0
 
 for a in "$@"; do
   case "$a" in
     --check) CHECK_ONLY=1 ;;
     --restart) RESTART=1 ;;
     --full) FULL=1 ;;
+    --pull-only) PULL_ONLY=1 ;;
+    --install-only|--no-pull) INSTALL_ONLY=1 ;;
     -h|--help)
-      sed -n '2,16p' "$0"
+      sed -n '2,20p' "$0"
       exit 0
       ;;
   esac
@@ -145,17 +149,28 @@ install_tree() {
   local USER_NAME
   USER_NAME="$(real_user)"
 
-  log "Installing software → $PREFIX (user=$USER_NAME)"
-  mkdir -p "$PREFIX" "$PREFIX/session" /etc/esp-handset
-  cp -a "$ROOT/esp_handset" "$PREFIX/"
-  cp -a "$ROOT/session/." "$PREFIX/session/" 2>/dev/null || true
-  install -m 755 "$ROOT/esp_handset/hat_inputd.py" "$PREFIX/hat_inputd.py"
-  install -m 755 "$ROOT/esp_handset/buttons_inputd.py" "$PREFIX/buttons_inputd.py"
-  install -m 755 "$ROOT/esp_handset/cardkb_inputd.py" "$PREFIX/cardkb_inputd.py"
-  install -m 755 "$ROOT/esp_handset/t9_keypad_inputd.py" "$PREFIX/t9_keypad_inputd.py"
-  install -m 755 "$ROOT/esp_handset/handset_app.py" "$PREFIX/handset_app.py"
-  install -m 755 "$ROOT/esp_handset/esp_keyd.py" "$PREFIX/esp_keyd.py"
-  install -m 755 "$ROOT/session/handset-session.sh" "$PREFIX/session/handset-session.sh"
+  # GUI update: install into .staging so we never overwrite the live tree while
+  # Digivice (running from /opt) is still in memory — that was crashing the Pi.
+  local DEST="$PREFIX"
+  if [[ "${ESP_HANDSET_STAGE:-0}" == "1" ]]; then
+    DEST="${PREFIX}.staging"
+    log "Staging install → $DEST (live $PREFIX untouched)"
+    rm -rf "$DEST"
+  fi
+
+  log "Installing software → $DEST (user=$USER_NAME)"
+  mkdir -p "$DEST" "$DEST/session" /etc/esp-handset
+  cp -a "$ROOT/esp_handset" "$DEST/"
+  cp -a "$ROOT/session/." "$DEST/session/" 2>/dev/null || true
+  install -m 755 "$ROOT/esp_handset/hat_inputd.py" "$DEST/hat_inputd.py"
+  install -m 755 "$ROOT/esp_handset/buttons_inputd.py" "$DEST/buttons_inputd.py"
+  install -m 755 "$ROOT/esp_handset/cardkb_inputd.py" "$DEST/cardkb_inputd.py"
+  install -m 755 "$ROOT/esp_handset/t9_keypad_inputd.py" "$DEST/t9_keypad_inputd.py"
+  install -m 755 "$ROOT/esp_handset/handset_app.py" "$DEST/handset_app.py"
+  install -m 755 "$ROOT/esp_handset/esp_keyd.py" "$DEST/esp_keyd.py"
+  install -m 755 "$ROOT/session/handset-session.sh" "$DEST/session/handset-session.sh"
+
+  # Wrappers in /usr/local are fine to refresh while UI runs (not mmap'd code)
   install -m 755 "$ROOT/session/handset-session.sh" /usr/local/bin/handset-session
   for pair in \
     "mirror-displays.sh:digivice-mirror-displays" \
@@ -173,23 +188,41 @@ install_tree() {
     "hdmi-hotplug.sh:digivice-hdmi-hotplug" \
     "gui-update.sh:digivice-gui-update" \
     "home-relaunch.sh:digivice-home-relaunch" \
-    "power.sh:digivice-power"
+    "apply-update.sh:digivice-apply-update" \
+    "power.sh:digivice-power" \
+    "full-update.sh:digivice-full-update"
   do
     src="${pair%%:*}"
     dst="${pair##*:}"
     if [[ -f "$ROOT/session/$src" ]]; then
-      install -m 755 "$ROOT/session/$src" "$PREFIX/session/$src"
+      install -m 755 "$ROOT/session/$src" "$DEST/session/$src"
       install -m 755 "$ROOT/session/$src" "/usr/local/bin/$dst"
     fi
   done
 
   if [[ -d "$ROOT/display" ]]; then
-    cp -a "$ROOT/display" "$PREFIX/"
-    install -m 755 "$ROOT/display/recover-hdmi.sh" /usr/local/bin/digivice-recover-hdmi 2>/dev/null || true
-    install -m 755 "$ROOT/display/set-panel-rotation.sh" /usr/local/bin/digivice-set-rotation 2>/dev/null || true
-    install -m 755 "$ROOT/display/spi-doctor.sh" /usr/local/bin/digivice-spi-doctor 2>/dev/null || true
-    install -m 755 "$ROOT/display/install-spi-userspace.sh" /usr/local/bin/digivice-install-spi-userspace 2>/dev/null || true
+    cp -a "$ROOT/display" "$DEST/"
+    if [[ "${ESP_HANDSET_STAGE:-0}" != "1" ]]; then
+      install -m 755 "$ROOT/display/recover-hdmi.sh" /usr/local/bin/digivice-recover-hdmi 2>/dev/null || true
+      install -m 755 "$ROOT/display/set-panel-rotation.sh" /usr/local/bin/digivice-set-rotation 2>/dev/null || true
+      install -m 755 "$ROOT/display/spi-doctor.sh" /usr/local/bin/digivice-spi-doctor 2>/dev/null || true
+      install -m 755 "$ROOT/display/install-spi-userspace.sh" /usr/local/bin/digivice-install-spi-userspace 2>/dev/null || true
+    fi
   fi
+
+  if [[ "${ESP_HANDSET_STAGE:-0}" == "1" ]]; then
+    date -Iseconds >"$DEST/.ready"
+    log "Staged OK — apply with digivice-apply-update after UI exits"
+    remember_repo "$REPO"
+    log "Install OK (staged)"
+    return 0
+  fi
+
+  cat >/usr/local/bin/handset-phone <<'EOF'
+#!/bin/bash
+exec /usr/local/bin/handset-session phone
+EOF
+  chmod +x /usr/local/bin/handset-phone
 
   if [[ -d /etc/sudoers.d ]]; then
     cat >/etc/sudoers.d/esp-handset-update <<EOF
@@ -197,10 +230,12 @@ install_tree() {
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-update
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-full-update
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-gui-update
+$USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-apply-update
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-power
 $USER_NAME ALL=(root) NOPASSWD: $PREFIX/session/update-handset.sh
 $USER_NAME ALL=(root) NOPASSWD: $PREFIX/session/full-update.sh
 $USER_NAME ALL=(root) NOPASSWD: $PREFIX/session/gui-update.sh
+$USER_NAME ALL=(root) NOPASSWD: $PREFIX/session/apply-update.sh
 $USER_NAME ALL=(root) NOPASSWD: $PREFIX/session/power.sh
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-ensure-buttons
 $USER_NAME ALL=(root) NOPASSWD: $PREFIX/session/ensure-buttons.sh
@@ -210,6 +245,10 @@ EOF
   if [[ -f "$ROOT/session/gui-update.sh" ]]; then
     install -m 755 "$ROOT/session/gui-update.sh" "$PREFIX/session/gui-update.sh"
     install -m 755 "$ROOT/session/gui-update.sh" /usr/local/bin/digivice-gui-update
+  fi
+  if [[ -f "$ROOT/session/apply-update.sh" ]]; then
+    install -m 755 "$ROOT/session/apply-update.sh" "$PREFIX/session/apply-update.sh"
+    install -m 755 "$ROOT/session/apply-update.sh" /usr/local/bin/digivice-apply-update
   fi
   if [[ -f "$ROOT/session/power.sh" ]]; then
     install -m 755 "$ROOT/session/power.sh" "$PREFIX/session/power.sh"
@@ -265,6 +304,8 @@ if [[ "$(id -u)" -ne 0 ]]; then
       ESP_HANDSET_REPO="${ESP_HANDSET_REPO:-}" \
       ESP_HANDSET_GIT_URL="$GIT_URL" \
       ESP_HANDSET_BRANCH="$BRANCH" \
+      ESP_HANDSET_SOFT_SERVICES="${ESP_HANDSET_SOFT_SERVICES:-0}" \
+      ESP_HANDSET_STAGE="${ESP_HANDSET_STAGE:-0}" \
       HOME="$(real_home)" \
       SUDO_USER="$(real_user)" \
       DISPLAY="${DISPLAY:-:0}" \
@@ -277,52 +318,61 @@ REPO="$(ensure_repo)" || exit 1
 export ESP_HANDSET_REPO="$REPO"
 log "Repo: $REPO"
 
-if [[ -d "$REPO/.git" ]]; then
-  log "Fetching $BRANCH…"
-  as_user git -C "$REPO" remote set-url origin "$GIT_URL" 2>/dev/null || true
-  if ! as_user git -C "$REPO" fetch --prune origin "$BRANCH" 2>&1 | tee -a "$LOG"; then
-    log "ERROR: git fetch failed (network / GitHub?). Refusing to reset or install."
-    log "  Working tree left untouched. Try again when online, or:"
-    log "  sudo digivice-full-update"
-    exit 2
-  fi
+if [[ "$INSTALL_ONLY" -ne 1 ]]; then
+  if [[ -d "$REPO/.git" ]]; then
+    log "Fetching $BRANCH…"
+    as_user git -C "$REPO" remote set-url origin "$GIT_URL" 2>/dev/null || true
+    if ! as_user git -C "$REPO" fetch --prune origin "$BRANCH" 2>&1 | tee -a "$LOG"; then
+      log "ERROR: git fetch failed (network / GitHub?). Refusing to reset or install."
+      log "  Working tree left untouched. Try again when online, or:"
+      log "  sudo digivice-full-update"
+      exit 2
+    fi
 
-  LOCAL="$(as_user git -C "$REPO" rev-parse --short HEAD 2>/dev/null || echo '?')"
-  REMOTE="$(as_user git -C "$REPO" rev-parse --short "origin/$BRANCH" 2>/dev/null || echo '?')"
-  log "Local  $LOCAL"
-  log "Remote $REMOTE"
+    LOCAL="$(as_user git -C "$REPO" rev-parse --short HEAD 2>/dev/null || echo '?')"
+    REMOTE="$(as_user git -C "$REPO" rev-parse --short "origin/$BRANCH" 2>/dev/null || echo '?')"
+    log "Local  $LOCAL"
+    log "Remote $REMOTE"
 
-  if [[ "$CHECK_ONLY" -eq 1 ]]; then
-    if [[ "$LOCAL" != "$REMOTE" && "$REMOTE" != "?" ]]; then
-      log "Update available"
+    if [[ "$CHECK_ONLY" -eq 1 ]]; then
+      if [[ "$LOCAL" != "$REMOTE" && "$REMOTE" != "?" ]]; then
+        log "Update available"
+        exit 0
+      fi
+      log "Up to date"
       exit 0
     fi
-    log "Up to date"
-    exit 0
-  fi
 
-  if [[ "$REMOTE" == "?" ]]; then
-    log "ERROR: origin/$BRANCH missing after fetch — abort (no install)"
-    exit 2
-  fi
+    if [[ "$REMOTE" == "?" ]]; then
+      log "ERROR: origin/$BRANCH missing after fetch — abort (no install)"
+      exit 2
+    fi
 
-  log "Syncing working tree to origin/$BRANCH…"
-  # Tracked local edits only — never stash -u (that hid/corrupted untracked files)
-  as_user git -C "$REPO" stash push -m "digivice-update auto-stash" 2>/dev/null || true
-  as_user git -C "$REPO" checkout "$BRANCH" 2>/dev/null \
-    || as_user git -C "$REPO" checkout -B "$BRANCH" "origin/$BRANCH"
-  if ! as_user git -C "$REPO" reset --hard "origin/$BRANCH" 2>&1 | tee -a "$LOG"; then
-    log "ERROR: git reset --hard failed — tree may be dirty; NOT installing"
-    exit 3
+    log "Syncing working tree to origin/$BRANCH…"
+    # Tracked local edits only — never stash -u (that hid/corrupted untracked files)
+    as_user git -C "$REPO" stash push -m "digivice-update auto-stash" 2>/dev/null || true
+    as_user git -C "$REPO" checkout "$BRANCH" 2>/dev/null \
+      || as_user git -C "$REPO" checkout -B "$BRANCH" "origin/$BRANCH"
+    if ! as_user git -C "$REPO" reset --hard "origin/$BRANCH" 2>&1 | tee -a "$LOG"; then
+      log "ERROR: git reset --hard failed — tree may be dirty; NOT installing"
+      exit 3
+    fi
+    LOCAL="$(as_user git -C "$REPO" rev-parse --short HEAD 2>/dev/null || echo '?')"
+    log "Now at $LOCAL"
+  else
+    log "WARN: not a git checkout — install only from existing tree"
+    if [[ "$CHECK_ONLY" -eq 1 ]]; then
+      log "No git metadata"
+      exit 0
+    fi
   fi
-  LOCAL="$(as_user git -C "$REPO" rev-parse --short HEAD 2>/dev/null || echo '?')"
-  log "Now at $LOCAL"
 else
-  log "WARN: not a git checkout — install only from existing tree"
-  if [[ "$CHECK_ONLY" -eq 1 ]]; then
-    log "No git metadata"
-    exit 0
-  fi
+  log "Install-only — skipping git fetch"
+fi
+
+if [[ "$PULL_ONLY" -eq 1 ]]; then
+  log "Pull-only — skipping install (GUI will stage/apply separately)"
+  exit 0
 fi
 
 if [[ "$(id -u)" -ne 0 ]]; then
@@ -343,17 +393,26 @@ if [[ $rc -ne 0 ]]; then
 fi
 
 # Sanity: installed tree must look like Digivice
-if [[ ! -f "$PREFIX/esp_handset/handset_app.py" && ! -f "$PREFIX/handset_app.py" ]]; then
+CHECK_ROOT="$PREFIX"
+if [[ "${ESP_HANDSET_STAGE:-0}" == "1" ]]; then
+  CHECK_ROOT="${PREFIX}.staging"
+fi
+if [[ ! -f "$CHECK_ROOT/esp_handset/handset_app.py" && ! -f "$CHECK_ROOT/handset_app.py" ]]; then
   log "ERROR: install missing handset_app.py — refusing success"
   exit 4
 fi
-if [[ ! -x /usr/local/bin/handset-session && ! -x /usr/local/bin/handset-phone ]]; then
-  log "ERROR: handset-session/phone missing after install"
-  exit 4
+if [[ "${ESP_HANDSET_STAGE:-0}" != "1" ]]; then
+  if [[ ! -x /usr/local/bin/handset-session && ! -x /usr/local/bin/handset-phone ]]; then
+    log "ERROR: handset-session/phone missing after install"
+    exit 4
+  fi
 fi
 
 REV="$(as_user git -C "$REPO" rev-parse --short HEAD 2>/dev/null || echo '?')"
 STAMP="ok rev=$REV $(date -Iseconds)"
+if [[ "${ESP_HANDSET_STAGE:-0}" == "1" ]]; then
+  STAMP="staged rev=$REV $(date -Iseconds)"
+fi
 mkdir -p "$(real_home)/.esp-handset" /etc/esp-handset
 echo "$STAMP" >"$(real_home)/.esp-handset/last_update" 2>/dev/null || true
 echo "$STAMP" >/etc/esp-handset/last_update 2>/dev/null || true
