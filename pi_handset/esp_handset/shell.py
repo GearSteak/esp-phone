@@ -454,6 +454,12 @@ class PhoneShell(QMainWindow):
                 self._esc_exits = 0
             self._esc_last_ms = now
 
+            if self._osk.isVisible():
+                self._esc_exits = 0
+                self.hide_osk()
+                event.accept()
+                return
+
             on_home = (self._nav[-1] if self._nav else "home") == "home" and len(
                 self._nav
             ) <= 1
@@ -472,10 +478,6 @@ class PhoneShell(QMainWindow):
 
             # In a submenu / app: always just go back one level
             self._esc_exits = 0
-            if self._osk.isVisible():
-                self.hide_osk()
-                event.accept()
-                return
             self.back()
             event.accept()
             return
