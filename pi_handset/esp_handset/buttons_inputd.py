@@ -279,80 +279,66 @@ def _home_relaunch_bin() -> Optional[str]:
 
 
 def relaunch_digivice() -> None:
-    """Home on Linux desktop → queue isolated Digivice launch (never spawn GUI here).
+    """Home on Linux desktop → run the same command you'd type in a terminal.
 
-    Spawning Qt/SPI from this root GPIO daemon froze/crashed Pi Zero 2 W.
-    We only touch a request file; digivice-home-request.path runs the relaunch
-    in a separate systemd unit.
+    Just:  handset-phone   (as the desktop user, backgrounded).
+    No systemd path units, no SPI teardown scripts — those kept crashing the Pi.
     """
     global _LAST_RELAUNCH
     if digivice_running():
         log("HOME ignored — Digivice already running")
         return
     now = time.monotonic()
-    if now - _LAST_RELAUNCH < 10.0:
-        log("HOME ignored — relaunch debounce")
+    if now - _LAST_RELAUNCH < 5.0:
+        log("HOME ignored — debounce")
         return
     _LAST_RELAUNCH = now
 
     write_mode_phone()
     user, home = resolve_gui_user()
-    req = Path("/run/digivice-home-request")
-    stamp = f"{time.time()} user={user}\n"
-    try:
-        req.write_text(stamp, encoding="utf-8")
-        try:
-            os.chmod(req, 0o666)
-        except OSError:
-            pass
-    except OSError as e:
-        log(f"HOME request file failed: {e}")
-        # Fallback: user home flag + best-effort systemctl
-        try:
-            p = Path(home) / ".esp-handset" / "home-request"
-            p.parent.mkdir(parents=True, exist_ok=True)
-            p.write_text(stamp, encoding="utf-8")
-        except OSError:
-            pass
+    disp = find_display()
+    auth = os.path.join(home, ".Xauthority")
+    if not os.path.isfile(auth):
+        auth = find_xauthority() or auth
 
-    log_path = os.path.join(home, ".esp-handset", "home-relaunch.log")
+    log_dir = os.path.join(home, ".esp-handset")
     try:
-        os.makedirs(os.path.dirname(log_path), exist_ok=True)
-        with open(log_path, "a", encoding="utf-8") as logf:
-            logf.write(
-                f"\n--- buttons HOME queue {time.strftime('%Y-%m-%d %H:%M:%S')} "
-                f"user={user} ---\n"
-            )
+        os.makedirs(log_dir, exist_ok=True)
     except OSError:
-        pass
+        log_dir = "/tmp"
+    log_path = os.path.join(log_dir, "home-relaunch.log")
 
-    # Prefer isolated systemd unit (separate cgroup from this daemon)
-    started = False
-    for cmd in (
-        ["systemctl", "start", "digivice-home-request.service"],
-        ["systemctl", "start", "digivice-home-request.service", "--no-block"],
-    ):
-        try:
-            r = subprocess.run(
-                cmd,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                timeout=3,
-                check=False,
-            )
-            if r.returncode == 0:
-                started = True
-                log("HOME → systemctl start digivice-home-request")
-                break
-        except Exception as e:
-            log(f"systemctl start: {e}")
-
-    if not started:
-        # Path unit may pick up the file; if units missing, log loudly
-        log(
-            "HOME → wrote /run/digivice-home-request "
-            "(enable: sudo digivice-full-update)"
+    # Exact equivalent of opening a terminal and running:  handset-phone &
+    # Use nohup + background so the GPIO daemon never waits on Digivice.
+    phone = "/usr/local/bin/handset-phone"
+    if not os.path.isfile(phone):
+        phone = "handset-phone"
+    inner = (
+        f'echo "=== HOME $(date -Iseconds) ===" >>"{log_path}"; '
+        f'export DISPLAY="{disp}" XAUTHORITY="{auth}" HOME="{home}" '
+        f'USER="{user}" LOGNAME="{user}" ESP_HANDSET_SKIP_LAYOUT=1; '
+        f'nohup {phone} >>"{log_path}" 2>&1 </dev/null &'
+    )
+    cmd = [
+        "sudo",
+        "-u",
+        user,
+        "-H",
+        "bash",
+        "-c",
+        inner,
+    ]
+    try:
+        subprocess.Popen(
+            cmd,
+            start_new_session=True,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
         )
+        log(f"HOME → sudo -u {user} handset-phone &  DISPLAY={disp}")
+    except Exception as e:
+        log(f"HOME handset-phone failed: {e}")
 
 
 def find_xauthority() -> Optional[str]:
