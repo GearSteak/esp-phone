@@ -198,6 +198,10 @@ install -m 755 "$ROOT/session/gui-update.sh" "$PREFIX/session/gui-update.sh"
 install -m 755 "$ROOT/session/gui-update.sh" /usr/local/bin/digivice-gui-update
 install -m 755 "$ROOT/session/update-handset.sh" /usr/local/bin/digivice-update 2>/dev/null || true
 install -m 755 "$ROOT/session/ensure-buttons.sh" /usr/local/bin/digivice-ensure-buttons 2>/dev/null || true
+if [[ -f "$ROOT/session/home-relaunch.sh" ]]; then
+  install -m 755 "$ROOT/session/home-relaunch.sh" "$PREFIX/session/home-relaunch.sh"
+  install -m 755 "$ROOT/session/home-relaunch.sh" /usr/local/bin/digivice-home-relaunch
+fi
 install -m 755 "$ROOT/session/fix-cursor.sh" /usr/local/bin/digivice-fix-cursor 2>/dev/null || true
 install -m 755 "$ROOT/session/restore-desktop-displays.sh" /usr/local/bin/digivice-restore-desktop 2>/dev/null || true
 install -m 755 "$ROOT/session/desktop-spi-mirror.sh" /usr/local/bin/digivice-desktop-mirror 2>/dev/null || true

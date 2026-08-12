@@ -159,6 +159,54 @@ def resolve_gui_user() -> tuple:
     candidates: List[str] = []
     if env_u and env_u != "root":
         candidates.append(env_u)
+    # Prefer active graphical session (loginctl)
+    try:
+        r = subprocess.run(
+            ["loginctl", "list-sessions", "--no-legend"],
+            capture_output=True,
+            text=True,
+            timeout=2,
+            check=False,
+        )
+        for line in (r.stdout or "").splitlines():
+            parts = line.split()
+            if not parts:
+                continue
+            sid = parts[0]
+            try:
+                info = subprocess.run(
+                    ["loginctl", "show-session", sid, "-p", "User", "-p", "Name", "-p", "Type"],
+                    capture_output=True,
+                    text=True,
+                    timeout=2,
+                    check=False,
+                )
+            except Exception:
+                continue
+            uid = name = stype = ""
+            for row in (info.stdout or "").splitlines():
+                if row.startswith("User="):
+                    uid = row.split("=", 1)[-1].strip()
+                elif row.startswith("Name="):
+                    name = row.split("=", 1)[-1].strip()
+                elif row.startswith("Type="):
+                    stype = row.split("=", 1)[-1].strip()
+            if uid in ("", "0"):
+                continue
+            if not name:
+                try:
+                    import pwd
+
+                    name = pwd.getpwuid(int(uid)).pw_name
+                except Exception:
+                    continue
+            if name and name != "root":
+                if stype in ("x11", "wayland", "mir", "tty", ""):
+                    candidates.insert(0, name)
+                else:
+                    candidates.append(name)
+    except Exception:
+        pass
     for path in sorted(glob.glob("/home/*/.Xauthority")):
         parts = path.split("/")
         if len(parts) >= 3 and parts[2] not in ("", "root"):
@@ -219,65 +267,102 @@ def load_uinput_mod() -> None:
         pass
 
 
+def _home_relaunch_bin() -> Optional[str]:
+    for p in (
+        "/usr/local/bin/digivice-home-relaunch",
+        "/opt/esp-handset/session/home-relaunch.sh",
+        str(Path(__file__).resolve().parent.parent / "session" / "home-relaunch.sh"),
+    ):
+        if os.path.isfile(p):
+            return p
+    return None
+
+
 def relaunch_digivice() -> None:
-    """Home on Linux desktop → Digivice as GUI user (never root — that crashes X)."""
+    """Home on Linux desktop → Digivice via safe wrapper (never root Qt)."""
     global _LAST_RELAUNCH
     if digivice_running():
         log("HOME ignored — Digivice already running")
         return
     now = time.monotonic()
-    if now - _LAST_RELAUNCH < 4.0:
+    # Long debounce: Pi Zero can't survive spam-launch / SPI fights
+    if now - _LAST_RELAUNCH < 8.0:
         log("HOME ignored — relaunch debounce")
         return
     _LAST_RELAUNCH = now
 
-    user, home = resolve_gui_user()
     write_mode_phone()
+    script = _home_relaunch_bin()
+    user, home = resolve_gui_user()
     disp = find_display()
     auth = os.path.join(home, ".Xauthority")
     if not os.path.isfile(auth):
         auth = find_xauthority() or auth
-
-    inner = (
-        "pkill -f desktop_spi_mirror.py 2>/dev/null || true; "
-        "sleep 0.3; "
-        "if [ -x /usr/local/bin/handset-phone ]; then "
-        "  exec /usr/local/bin/handset-phone; "
-        "elif [ -x /usr/local/bin/handset-session ]; then "
-        "  exec /usr/local/bin/handset-session phone; "
-        "fi"
-    )
-    cmd = [
-        "sudo",
-        "-u",
-        user,
-        "-H",
-        "env",
-        f"HOME={home}",
-        f"USER={user}",
-        f"LOGNAME={user}",
-        f"DISPLAY={disp}",
-        f"XAUTHORITY={auth}",
-        "bash",
-        "-lc",
-        inner,
-    ]
-    log_path = os.path.join(home, ".esp-handset", "handset.log")
+    log_path = os.path.join(home, ".esp-handset", "home-relaunch.log")
     try:
         os.makedirs(os.path.dirname(log_path), exist_ok=True)
     except OSError:
-        log_path = "/tmp/digivice-relaunch.log"
+        log_path = "/tmp/digivice-home-relaunch.log"
+
     try:
         logf = open(log_path, "a", encoding="utf-8")
-        logf.write(f"\n--- Home relaunch {time.strftime('%Y-%m-%d %H:%M:%S')} as {user} ---\n")
+        logf.write(
+            f"\n--- buttons HOME {time.strftime('%Y-%m-%d %H:%M:%S')} "
+            f"user={user} script={script} ---\n"
+        )
         logf.flush()
+    except OSError:
+        logf = subprocess.DEVNULL
+
+    env = os.environ.copy()
+    env["HOME"] = home
+    env["USER"] = user
+    env["LOGNAME"] = user
+    env["DISPLAY"] = disp
+    env["XAUTHORITY"] = auth
+    env["DIGI_GUI_USER"] = user
+    env["ESP_HANDSET_SKIP_LAYOUT"] = "1"
+    env["ESP_HANDSET_SKIP_PIN"] = "1"
+    env.pop("WAYLAND_DISPLAY", None)
+
+    try:
+        if script:
+            # Script drops root → GUI user itself. Fire-and-forget.
+            subprocess.Popen(
+                ["bash", script] if not os.access(script, os.X_OK) else [script],
+                start_new_session=True,
+                stdout=logf,
+                stderr=subprocess.STDOUT,
+                env=env,
+            )
+            log(f"HOME → digivice-home-relaunch (→ {user}) DISPLAY={disp}")
+            return
+
+        # Fallback if script not installed yet
+        log("WARN: digivice-home-relaunch missing — fallback sudo -u handset-phone")
+        cmd = [
+            "sudo",
+            "-u",
+            user,
+            "-H",
+            "env",
+            f"HOME={home}",
+            f"USER={user}",
+            f"DISPLAY={disp}",
+            f"XAUTHORITY={auth}",
+            "ESP_HANDSET_SKIP_LAYOUT=1",
+            "ESP_HANDSET_SKIP_PIN=1",
+            "QT_QPA_PLATFORM=xcb",
+            "handset-phone",
+        ]
         subprocess.Popen(
             cmd,
             start_new_session=True,
             stdout=logf,
             stderr=subprocess.STDOUT,
+            env=env,
         )
-        log(f"HOME → Digivice as {user} DISPLAY={disp}")
+        log(f"HOME → fallback Digivice as {user} DISPLAY={disp}")
     except Exception as e:
         log(f"relaunch Digivice failed: {e}")
 
@@ -547,7 +632,10 @@ def main() -> int:
                         elif name == "HOME":
                             # Never Super/start-menu — Home always returns to Digivice
                             if down:
-                                relaunch_digivice()
+                                try:
+                                    relaunch_digivice()
+                                except Exception as e:
+                                    log(f"HOME relaunch crash-guard: {e}")
                         # d-pad: continuous motion while held (below)
                         if down and name in ("UP", "DOWN", "LEFT", "RIGHT"):
                             log(f"DESKTOP hold {name}")

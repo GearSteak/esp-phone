@@ -86,6 +86,8 @@ install -m 755 "$ROOT/session/full-update.sh" "$PREFIX/session/full-update.sh"
 install -m 755 "$ROOT/session/full-update.sh" /usr/local/bin/digivice-full-update
 install -m 755 "$ROOT/session/gui-update.sh" "$PREFIX/session/gui-update.sh"
 install -m 755 "$ROOT/session/gui-update.sh" /usr/local/bin/digivice-gui-update
+install -m 755 "$ROOT/session/home-relaunch.sh" "$PREFIX/session/home-relaunch.sh"
+install -m 755 "$ROOT/session/home-relaunch.sh" /usr/local/bin/digivice-home-relaunch
 install -m 755 "$ROOT/session/ensure-buttons.sh" "$PREFIX/session/ensure-buttons.sh"
 install -m 755 "$ROOT/session/ensure-buttons.sh" /usr/local/bin/digivice-ensure-buttons
 # Seed binary only — do NOT enable udev auto HDMI (breaks 2\" SPI)

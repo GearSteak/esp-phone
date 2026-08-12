@@ -172,6 +172,7 @@ install_tree() {
     "restore-desktop-displays.sh:digivice-restore-desktop" \
     "hdmi-hotplug.sh:digivice-hdmi-hotplug" \
     "gui-update.sh:digivice-gui-update" \
+    "home-relaunch.sh:digivice-home-relaunch" \
     "power.sh:digivice-power"
   do
     src="${pair%%:*}"
