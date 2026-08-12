@@ -138,6 +138,18 @@ def write_mode_phone() -> None:
             pass
 
 
+def load_uinput_mod() -> None:
+    try:
+        subprocess.run(
+            ["modprobe", "uinput"],
+            check=False,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    except Exception:
+        pass
+
+
 def relaunch_digivice() -> None:
     """Home on Linux desktop → Digivice (not Super / start menu)."""
     if digivice_running():
@@ -173,15 +185,6 @@ def relaunch_digivice() -> None:
         log("HOME → relaunch Digivice")
     except Exception as e:
         log(f"relaunch Digivice failed: {e}")
-    try:
-        subprocess.run(
-            ["modprobe", "uinput"],
-            check=False,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-    except Exception:
-        pass
 
 
 def find_xauthority() -> Optional[str]:
