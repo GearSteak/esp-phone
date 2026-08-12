@@ -372,9 +372,8 @@ launch_phone() {
   stop_desktop_spi_mirror
   pkill -f "handset_app.py" 2>/dev/null || true
   sleep 0.35
-  # Hide software pointer while phone UI runs
-  /usr/local/bin/digivice-fix-cursor --stop 2>/dev/null \
-    || bash "$(dirname "$0")/fix-cursor.sh" --stop 2>/dev/null || true
+  # Digivice phone UI — hide mouse (system + any leftover yellow overlay)
+  hide_phone_cursor
   ensure_buttons_daemon
   mode_set phone
   digivice_display_env

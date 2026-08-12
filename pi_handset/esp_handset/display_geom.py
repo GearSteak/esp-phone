@@ -268,6 +268,10 @@ class MultiDisplayKiosk:
             pass
         self.source.setFixedSize(W, H)
         self.source.resize(W, H)
+        try:
+            self.source.setCursor(Qt.BlankCursor)
+        except Exception:
+            pass
 
         primary = QGuiApplication.primaryScreen()
         # Park just off the primary corner so it stays mapped for grab() without

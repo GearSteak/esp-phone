@@ -395,6 +395,10 @@ export DISPLAY="${DISPLAY:-:0}"
 export XAUTHORITY="${XAUTHORITY:-$USER_HOME/.Xauthority}"
 if [[ -x /usr/local/bin/digivice-fix-cursor ]]; then
   /usr/local/bin/digivice-fix-cursor --permanent 2>&1 | tee -a "$LOG" || true
+  # System cursor only — kill yellow overlay + remove double-cursor autostart
+  sudo -u "$USER_NAME" env DISPLAY="${DISPLAY:-:0}" XAUTHORITY="$USER_HOME/.Xauthority" \
+    /usr/local/bin/digivice-fix-cursor --stop 2>&1 | tee -a "$LOG" || true
+  rm -f "$USER_HOME/.config/autostart/digivice-pointer.desktop" 2>/dev/null || true
   sudo -u "$USER_NAME" env DISPLAY="${DISPLAY:-:0}" XAUTHORITY="$USER_HOME/.Xauthority" \
     /usr/local/bin/digivice-fix-cursor 2>&1 | tee -a "$LOG" || true
 fi
