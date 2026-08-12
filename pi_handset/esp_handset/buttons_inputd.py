@@ -113,29 +113,61 @@ def read_mode() -> str:
     return "desktop"
 
 
+_LAST_RELAUNCH = 0.0
+
+
+def resolve_gui_user() -> tuple:
+    """(username, home) for the desktop user — Digivice must not run as root."""
+    env_u = (os.environ.get("DIGI_GUI_USER") or "").strip()
+    candidates: List[str] = []
+    if env_u and env_u != "root":
+        candidates.append(env_u)
+    for path in sorted(glob.glob("/home/*/.Xauthority")):
+        parts = path.split("/")
+        if len(parts) >= 3 and parts[2] not in ("", "root"):
+            candidates.append(parts[2])
+    for u in ("pi", "isaac"):
+        candidates.append(u)
+    seen = set()
+    for u in candidates:
+        if u in seen:
+            continue
+        seen.add(u)
+        try:
+            import pwd
+
+            pw = pwd.getpwnam(u)
+            return u, pw.pw_dir
+        except Exception:
+            home = f"/home/{u}"
+            if os.path.isdir(home):
+                return u, home
+    return "pi", "/home/pi"
+
+
 def write_mode_phone() -> None:
     """Prefer Digivice so autostart / buttons stay in phone mode."""
     payload = "phone\n"
-    for p in mode_file_candidates():
+    user, home = resolve_gui_user()
+    targets = [
+        Path(home) / ".esp-handset" / "session_mode",
+        Path("/etc/esp-handset/ui_mode"),
+    ]
+    for p in targets:
         try:
             p.parent.mkdir(parents=True, exist_ok=True)
             p.write_text(payload, encoding="utf-8")
+            if str(p).startswith("/home/"):
+                try:
+                    import pwd
+
+                    pw = pwd.getpwnam(user)
+                    os.chown(p.parent, pw.pw_uid, pw.pw_gid)
+                    os.chown(p, pw.pw_uid, pw.pw_gid)
+                except Exception:
+                    pass
         except OSError:
             continue
-    try:
-        Path("/etc/esp-handset").mkdir(parents=True, exist_ok=True)
-        Path("/etc/esp-handset/ui_mode").write_text(payload, encoding="utf-8")
-    except OSError:
-        try:
-            subprocess.run(
-                ["sudo", "-n", "tee", "/etc/esp-handset/ui_mode"],
-                input=payload.encode(),
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                check=False,
-            )
-        except Exception:
-            pass
 
 
 def load_uinput_mod() -> None:
@@ -151,38 +183,64 @@ def load_uinput_mod() -> None:
 
 
 def relaunch_digivice() -> None:
-    """Home on Linux desktop → Digivice (not Super / start menu)."""
+    """Home on Linux desktop → Digivice as GUI user (never root — that crashes X)."""
+    global _LAST_RELAUNCH
     if digivice_running():
-        log("HOME ignored — Digivice already running (use phone-mode Home)")
+        log("HOME ignored — Digivice already running")
         return
+    now = time.monotonic()
+    if now - _LAST_RELAUNCH < 4.0:
+        log("HOME ignored — relaunch debounce")
+        return
+    _LAST_RELAUNCH = now
+
+    user, home = resolve_gui_user()
     write_mode_phone()
-    env = os.environ.copy()
-    env.setdefault("DISPLAY", find_display())
-    xa = find_xauthority()
-    if xa:
-        env["XAUTHORITY"] = xa
-    for home in glob.glob("/home/*"):
-        if os.path.isdir(home):
-            env.setdefault("HOME", home)
-            break
-    cmd = (
-        "sleep 0.25; "
+    disp = find_display()
+    auth = os.path.join(home, ".Xauthority")
+    if not os.path.isfile(auth):
+        auth = find_xauthority() or auth
+
+    inner = (
         "pkill -f desktop_spi_mirror.py 2>/dev/null || true; "
+        "sleep 0.3; "
         "if [ -x /usr/local/bin/handset-phone ]; then "
-        "  /usr/local/bin/handset-phone; "
+        "  exec /usr/local/bin/handset-phone; "
         "elif [ -x /usr/local/bin/handset-session ]; then "
-        "  /usr/local/bin/handset-session phone; "
+        "  exec /usr/local/bin/handset-session phone; "
         "fi"
     )
+    cmd = [
+        "sudo",
+        "-u",
+        user,
+        "-H",
+        "env",
+        f"HOME={home}",
+        f"USER={user}",
+        f"LOGNAME={user}",
+        f"DISPLAY={disp}",
+        f"XAUTHORITY={auth}",
+        "bash",
+        "-lc",
+        inner,
+    ]
+    log_path = os.path.join(home, ".esp-handset", "handset.log")
     try:
+        os.makedirs(os.path.dirname(log_path), exist_ok=True)
+    except OSError:
+        log_path = "/tmp/digivice-relaunch.log"
+    try:
+        logf = open(log_path, "a", encoding="utf-8")
+        logf.write(f"\n--- Home relaunch {time.strftime('%Y-%m-%d %H:%M:%S')} as {user} ---\n")
+        logf.flush()
         subprocess.Popen(
-            ["bash", "-c", cmd],
+            cmd,
             start_new_session=True,
-            env=env,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            stdout=logf,
+            stderr=subprocess.STDOUT,
         )
-        log("HOME → relaunch Digivice")
+        log(f"HOME → Digivice as {user} DISPLAY={disp}")
     except Exception as e:
         log(f"relaunch Digivice failed: {e}")
 
