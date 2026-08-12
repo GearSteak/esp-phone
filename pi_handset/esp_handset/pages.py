@@ -211,46 +211,158 @@ def make_sms_page(modem, on_back, on_status) -> QWidget:
 
 
 def make_contacts_page(on_back, open_dial: Callable[[str], None]) -> QWidget:
+    """Alphabetized contact list; ＋ Add stays under the list and moves down as you add."""
+    from PyQt5.QtWidgets import QSizePolicy
+
     body = QWidget()
     lay = QVBoxLayout(body)
-    lst = QListWidget()
-    name = QLineEdit()
-    name.setPlaceholderText("Name")
-    num = QLineEdit()
-    num.setPlaceholderText("Number")
-    add = QPushButton("Add contact")
-    dial = QPushButton("Dial selected")
-    lay.addWidget(lst, 1)
-    lay.addWidget(name)
-    lay.addWidget(num)
-    lay.addWidget(add)
-    lay.addWidget(dial)
+    lay.setContentsMargins(2, 2, 2, 2)
+    lay.setSpacing(4)
 
-    def refresh():
-        contacts = _load_json(CONTACTS, [])
-        lst.clear()
+    tip = QLabel("Confirm = dial · list A→Z")
+    tip.setStyleSheet("color:#9ab;font-size:10px;")
+    tip.setWordWrap(True)
+    lay.addWidget(tip)
+
+    # Growing stack of contact rows (not a fixed viewport list)
+    list_wrap = QWidget()
+    list_lay = QVBoxLayout(list_wrap)
+    list_lay.setContentsMargins(0, 0, 0, 0)
+    list_lay.setSpacing(3)
+    lay.addWidget(list_wrap)
+
+    add_btn = QPushButton("＋ Add contact")
+    add_btn.setStyleSheet("font-weight:700; min-height:32px;")
+    lay.addWidget(add_btn)
+
+    # Inline add form (shown under Add; stays at bottom of scroll content)
+    form = QWidget()
+    form.setVisible(False)
+    form_lay = QVBoxLayout(form)
+    form_lay.setContentsMargins(0, 4, 0, 0)
+    form_lay.setSpacing(4)
+    name_ed = QLineEdit()
+    name_ed.setPlaceholderText("Name")
+    num_ed = QLineEdit()
+    num_ed.setPlaceholderText("Number")
+    row = QHBoxLayout()
+    save_btn = QPushButton("Save")
+    save_btn.setStyleSheet("font-weight:700;")
+    cancel_btn = QPushButton("Cancel")
+    row.addWidget(save_btn, 1)
+    row.addWidget(cancel_btn, 1)
+    form_lay.addWidget(name_ed)
+    form_lay.addWidget(num_ed)
+    form_lay.addLayout(row)
+    lay.addWidget(form)
+
+    def _sort_key(c: dict):
+        n = str(c.get("name") or "").strip()
+        num = str(c.get("number") or "").strip()
+        return (n.casefold() or num.casefold(), num)
+
+    def _clear_list() -> None:
+        while list_lay.count():
+            item = list_lay.takeAt(0)
+            w = item.widget()
+            if w is not None:
+                w.deleteLater()
+
+    def refresh() -> None:
+        _clear_list()
+        raw = _load_json(CONTACTS, [])
+        if not isinstance(raw, list):
+            raw = []
+        contacts = sorted(
+            [c for c in raw if isinstance(c, dict) and c.get("number")],
+            key=_sort_key,
+        )
+        # Persist sorted order so file stays alphabetical
+        if contacts != raw:
+            _save_json(CONTACTS, contacts)
+
+        if not contacts:
+            empty = QLabel("No contacts yet.")
+            empty.setStyleSheet("color:#678;font-size:11px;")
+            list_lay.addWidget(empty)
+
+        last_letter = ""
         for c in contacts:
-            lst.addItem(f"{c.get('name','')}  {c.get('number','')}")
-        body._contacts = contacts  # type: ignore[attr-defined]
+            name = str(c.get("name") or "").strip() or str(c.get("number") or "")
+            number = str(c.get("number") or "").strip()
+            letter = name[:1].upper() if name else "#"
+            if not letter.isalpha():
+                letter = "#"
+            if letter != last_letter:
+                hdr = QLabel(letter)
+                hdr.setStyleSheet(
+                    "color:#ffd700;font-size:11px;font-weight:700;"
+                    "padding:4px 2px 0 2px;"
+                )
+                hdr.setFocusPolicy(Qt.NoFocus)
+                list_lay.addWidget(hdr)
+                last_letter = letter
 
-    def do_add():
-        n = name.text().strip()
-        number = num.text().strip()
+            label = f"{name}  ·  {number}" if name != number else number
+            btn = QPushButton(label)
+            btn.setStyleSheet(
+                "text-align:left; padding:8px 8px; min-height:30px;"
+            )
+            btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+            num_capture = number
+
+            def _dial(_checked=False, n=num_capture) -> None:
+                if n:
+                    open_dial(n)
+
+            btn.clicked.connect(_dial)
+            list_lay.addWidget(btn)
+
+        body._contacts = contacts  # type: ignore[attr-defined]
+        # Keep Add under the list in the scroll content
+        add_btn.raise_()
+
+    def show_form() -> None:
+        form.setVisible(True)
+        add_btn.setVisible(False)
+        name_ed.clear()
+        num_ed.clear()
+        name_ed.setFocus(Qt.OtherFocusReason)
+        try:
+            from esp_handset import digi_nav
+
+            digi_nav.clear_highlights(body)
+            digi_nav._highlight(name_ed, True)
+        except Exception:
+            pass
+
+    def hide_form() -> None:
+        form.setVisible(False)
+        add_btn.setVisible(True)
+        name_ed.clear()
+        num_ed.clear()
+
+    def do_save() -> None:
+        n = name_ed.text().strip()
+        number = num_ed.text().strip()
         if not number:
+            num_ed.setFocus(Qt.OtherFocusReason)
             return
         contacts = _load_json(CONTACTS, [])
+        if not isinstance(contacts, list):
+            contacts = []
         contacts.append({"name": n or number, "number": number})
+        contacts = sorted(
+            [c for c in contacts if isinstance(c, dict) and c.get("number")],
+            key=_sort_key,
+        )
         _save_json(CONTACTS, contacts)
+        hide_form()
         refresh()
 
-    def do_dial():
-        contacts = getattr(body, "_contacts", [])
-        row = lst.currentRow()
-        if 0 <= row < len(contacts):
-            open_dial(contacts[row]["number"])
-
-    add.clicked.connect(do_add)
-    dial.clicked.connect(do_dial)
+    add_btn.clicked.connect(show_form)
+    save_btn.clicked.connect(do_save)
+    cancel_btn.clicked.connect(hide_form)
     refresh()
     return page_chrome("Contacts", body, on_back)
 
