@@ -143,7 +143,7 @@ if [[ -d "$REPO/.git" ]]; then
     sudo -u "$USER_NAME" git clone --branch "$BRANCH" --depth 1 "$GIT_URL" "$REPO" \
       2>&1 | tee -a "$LOG" || die "git clone failed (network?)"
   else
-    sudo -u "$USER_NAME" git -C "$REPO" stash push -u -m "full-update" 2>/dev/null || true
+    sudo -u "$USER_NAME" git -C "$REPO" stash push -m "full-update" 2>/dev/null || true
     sudo -u "$USER_NAME" git -C "$REPO" checkout "$BRANCH" 2>/dev/null \
       || sudo -u "$USER_NAME" git -C "$REPO" checkout -B "$BRANCH" "origin/$BRANCH"
     if ! sudo -u "$USER_NAME" git -C "$REPO" reset --hard "origin/$BRANCH" 2>&1 | tee -a "$LOG"; then

@@ -224,16 +224,22 @@ EOF
 
   remember_repo "$REPO"
 
-  # Buttons MUST be on boot — rewrite unit + enable (update used to only restart)
-  if [[ -f "$PREFIX/session/ensure-buttons.sh" ]]; then
-    bash "$PREFIX/session/ensure-buttons.sh" 2>&1 | tee -a "$LOG" || true
+  # GUI Settings update: copy binaries only — do not rewrite/restart input daemons
+  # mid-flight (that felt like a crash / "corruption" on the 2" panel).
+  if [[ "${ESP_HANDSET_SOFT_SERVICES:-0}" == "1" ]]; then
+    log "Soft services: skip ensure-buttons / keyd restart (GUI update)"
   else
-    systemctl daemon-reload 2>/dev/null || true
-    systemctl enable digi-buttons-inputd.service 2>/dev/null || true
-    systemctl restart digi-buttons-inputd.service 2>/dev/null || true
+    # Buttons MUST be on boot — rewrite unit + enable (update used to only restart)
+    if [[ -f "$PREFIX/session/ensure-buttons.sh" ]]; then
+      bash "$PREFIX/session/ensure-buttons.sh" 2>&1 | tee -a "$LOG" || true
+    else
+      systemctl daemon-reload 2>/dev/null || true
+      systemctl enable digi-buttons-inputd.service 2>/dev/null || true
+      systemctl restart digi-buttons-inputd.service 2>/dev/null || true
+    fi
+    systemctl enable esp-keyd.service 2>/dev/null || true
+    systemctl restart esp-keyd.service 2>/dev/null || true
   fi
-  systemctl enable esp-keyd.service 2>/dev/null || true
-  systemctl restart esp-keyd.service 2>/dev/null || true
 
   if [[ "$FULL" -eq 1 ]]; then
     log "FULL: re-running install-display.sh (may undo userspace SPI)"
@@ -273,7 +279,12 @@ log "Repo: $REPO"
 if [[ -d "$REPO/.git" ]]; then
   log "Fetching $BRANCH…"
   as_user git -C "$REPO" remote set-url origin "$GIT_URL" 2>/dev/null || true
-  as_user git -C "$REPO" fetch --prune origin "$BRANCH" 2>&1 | tee -a "$LOG"
+  if ! as_user git -C "$REPO" fetch --prune origin "$BRANCH" 2>&1 | tee -a "$LOG"; then
+    log "ERROR: git fetch failed (network / GitHub?). Refusing to reset or install."
+    log "  Working tree left untouched. Try again when online, or:"
+    log "  sudo digivice-full-update"
+    exit 2
+  fi
 
   LOCAL="$(as_user git -C "$REPO" rev-parse --short HEAD 2>/dev/null || echo '?')"
   REMOTE="$(as_user git -C "$REPO" rev-parse --short "origin/$BRANCH" 2>/dev/null || echo '?')"
@@ -289,15 +300,22 @@ if [[ -d "$REPO/.git" ]]; then
     exit 0
   fi
 
-  if [[ "$REMOTE" != "?" ]]; then
-    log "Syncing working tree to origin/$BRANCH…"
-    as_user git -C "$REPO" stash push -u -m "digivice-update auto-stash" 2>/dev/null || true
-    as_user git -C "$REPO" checkout "$BRANCH" 2>/dev/null \
-      || as_user git -C "$REPO" checkout -B "$BRANCH" "origin/$BRANCH"
-    as_user git -C "$REPO" reset --hard "origin/$BRANCH" 2>&1 | tee -a "$LOG"
-    LOCAL="$(as_user git -C "$REPO" rev-parse --short HEAD 2>/dev/null || echo '?')"
-    log "Now at $LOCAL"
+  if [[ "$REMOTE" == "?" ]]; then
+    log "ERROR: origin/$BRANCH missing after fetch — abort (no install)"
+    exit 2
   fi
+
+  log "Syncing working tree to origin/$BRANCH…"
+  # Tracked local edits only — never stash -u (that hid/corrupted untracked files)
+  as_user git -C "$REPO" stash push -m "digivice-update auto-stash" 2>/dev/null || true
+  as_user git -C "$REPO" checkout "$BRANCH" 2>/dev/null \
+    || as_user git -C "$REPO" checkout -B "$BRANCH" "origin/$BRANCH"
+  if ! as_user git -C "$REPO" reset --hard "origin/$BRANCH" 2>&1 | tee -a "$LOG"; then
+    log "ERROR: git reset --hard failed — tree may be dirty; NOT installing"
+    exit 3
+  fi
+  LOCAL="$(as_user git -C "$REPO" rev-parse --short HEAD 2>/dev/null || echo '?')"
+  log "Now at $LOCAL"
 else
   log "WARN: not a git checkout — install only from existing tree"
   if [[ "$CHECK_ONLY" -eq 1 ]]; then
@@ -312,6 +330,10 @@ if [[ "$(id -u)" -ne 0 ]]; then
   exit 1
 fi
 
+# Soft mode (GUI Settings update): install files only; defer button-daemon rewrite
+# so Digivice keys stay alive until the UI restarts itself.
+SOFT_SERVICES="${ESP_HANDSET_SOFT_SERVICES:-0}"
+
 install_tree "$REPO"
 rc=$?
 if [[ $rc -ne 0 ]]; then
@@ -319,22 +341,45 @@ if [[ $rc -ne 0 ]]; then
   exit "$rc"
 fi
 
-log "Update complete."
+# Sanity: installed tree must look like Digivice
+if [[ ! -f "$PREFIX/esp_handset/handset_app.py" && ! -f "$PREFIX/handset_app.py" ]]; then
+  log "ERROR: install missing handset_app.py — refusing success"
+  exit 4
+fi
+if [[ ! -x /usr/local/bin/handset-session && ! -x /usr/local/bin/handset-phone ]]; then
+  log "ERROR: handset-session/phone missing after install"
+  exit 4
+fi
+
+REV="$(as_user git -C "$REPO" rev-parse --short HEAD 2>/dev/null || echo '?')"
+STAMP="ok rev=$REV $(date -Iseconds)"
+mkdir -p "$(real_home)/.esp-handset" /etc/esp-handset
+echo "$STAMP" >"$(real_home)/.esp-handset/last_update" 2>/dev/null || true
+echo "$STAMP" >/etc/esp-handset/last_update 2>/dev/null || true
+chown "$(real_user):$(real_user)" "$(real_home)/.esp-handset/last_update" 2>/dev/null || true
+
+log "Update complete. $STAMP"
 
 if [[ "$RESTART" -eq 1 ]]; then
   log "Restarting Digivice UI…"
   export DISPLAY="${DISPLAY:-:0}"
-  nohup bash -c '
+  UH="$(real_home)"
+  UU="$(real_user)"
+  XA="${XAUTHORITY:-$UH/.Xauthority}"
+  nohup bash -c "
     sleep 0.8
     pkill -f handset_app.py 2>/dev/null || true
-    sleep 0.4
-    export DISPLAY="${DISPLAY:-:0}"
-    if [[ -x /usr/local/bin/handset-phone ]]; then
-      /usr/local/bin/handset-phone
+    sleep 0.5
+    export DISPLAY=\"${DISPLAY:-:0}\"
+    export XAUTHORITY=\"$XA\"
+    export HOME=\"$UH\"
+    if id \"$UU\" >/dev/null 2>&1 && [[ \"\$(id -u)\" -eq 0 ]]; then
+      sudo -u \"$UU\" -H env DISPLAY=\"${DISPLAY:-:0}\" XAUTHORITY=\"$XA\" HOME=\"$UH\" \
+        bash -lc 'handset-phone 2>/dev/null || handset-session phone'
     else
-      /usr/local/bin/handset-session phone
+      handset-phone 2>/dev/null || handset-session phone
     fi
-  ' >>"$LOG" 2>&1 &
+  " >>"$LOG" 2>&1 &
 fi
 
 exit 0

@@ -219,20 +219,24 @@ def make_contacts_page(on_back, open_dial: Callable[[str], None]) -> QWidget:
     lay.setContentsMargins(2, 2, 2, 2)
     lay.setSpacing(4)
 
-    # Growing stack of contact rows (not a fixed viewport list)
+    # Growing stack of contact rows — Maximum height so empty viewport
+    # space is NOT between the list and Add (that was the "dead space").
     list_wrap = QWidget()
+    list_wrap.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
     list_lay = QVBoxLayout(list_wrap)
     list_lay.setContentsMargins(0, 0, 0, 0)
-    list_lay.setSpacing(3)
-    lay.addWidget(list_wrap)
+    list_lay.setSpacing(2)
+    lay.addWidget(list_wrap, 0)
 
     add_btn = QPushButton("＋ Add contact")
-    add_btn.setStyleSheet("font-weight:700; min-height:32px;")
-    lay.addWidget(add_btn)
+    add_btn.setStyleSheet("font-weight:700; min-height:28px;")
+    add_btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+    lay.addWidget(add_btn, 0)
 
     # Inline add form (shown under Add; stays at bottom of scroll content)
     form = QWidget()
     form.setVisible(False)
+    form.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
     form_lay = QVBoxLayout(form)
     form_lay.setContentsMargins(0, 4, 0, 0)
     form_lay.setSpacing(4)
@@ -249,7 +253,9 @@ def make_contacts_page(on_back, open_dial: Callable[[str], None]) -> QWidget:
     form_lay.addWidget(name_ed)
     form_lay.addWidget(num_ed)
     form_lay.addLayout(row)
-    lay.addWidget(form)
+    lay.addWidget(form, 0)
+    # Spare vertical room goes *below* Add, not between list and Add
+    lay.addStretch(1)
 
     def _sort_key(c: dict):
         n = str(c.get("name") or "").strip()
@@ -292,7 +298,7 @@ def make_contacts_page(on_back, open_dial: Callable[[str], None]) -> QWidget:
                 hdr = QLabel(letter)
                 hdr.setStyleSheet(
                     "color:#ffd700;font-size:11px;font-weight:700;"
-                    "padding:4px 2px 0 2px;"
+                    "padding:2px 2px 0 2px;"
                 )
                 hdr.setFocusPolicy(Qt.NoFocus)
                 list_lay.addWidget(hdr)
@@ -301,7 +307,7 @@ def make_contacts_page(on_back, open_dial: Callable[[str], None]) -> QWidget:
             label = f"{name}  ·  {number}" if name != number else number
             btn = QPushButton(label)
             btn.setStyleSheet(
-                "text-align:left; padding:8px 8px; min-height:30px;"
+                "text-align:left; padding:5px 6px; min-height:24px;"
             )
             btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
             num_capture = number
@@ -314,7 +320,6 @@ def make_contacts_page(on_back, open_dial: Callable[[str], None]) -> QWidget:
             list_lay.addWidget(btn)
 
         body._contacts = contacts  # type: ignore[attr-defined]
-        # Keep Add under the list in the scroll content
         add_btn.raise_()
 
     def show_form() -> None:
@@ -989,6 +994,7 @@ def make_settings_hub(on_back, open_page: Callable[[str], None], on_linux) -> QW
     lay.addWidget(tip)
     for key, label in [
         ("set_update", "★ Update Digivice"),
+        ("set_mouse", "Mouse speed"),
         ("set_appearance", "Appearance"),
         ("set_network", "Network / modem"),
         ("set_accounts", "Accounts (SIP)"),
@@ -1100,28 +1106,34 @@ def make_power_page(on_back: Callable[[], None]) -> QWidget:
 def make_update_page(on_back: Callable[[], None]) -> QWidget:
     """One button: git pull → install to /opt → restart Digivice.
 
-    No Yes/No dialogs (hard buttons can't confirm them).
-    Updater must not kill this UI mid-run; we restart only after success.
+    Software-only (no SPI/boot). Updater must not kill this UI mid-run;
+    we restart only after a verified success exit code.
     """
     from PyQt5.QtCore import QProcess, QProcessEnvironment, QTimer
 
     body = QWidget()
     lay = QVBoxLayout(body)
     tip = QLabel(
-        "One press: check GitHub, install, restart Digivice."
+        "Software only: GitHub → /opt → restart.\n"
+        "Does NOT touch display/SPI/boot "
+        "(use terminal digivice-full-update for that)."
     )
     tip.setWordWrap(True)
     tip.setStyleSheet("color:#9ab;font-size:10px;")
     status = QLabel("Ready.")
     status.setWordWrap(True)
+    meta = QLabel("")
+    meta.setWordWrap(True)
+    meta.setStyleSheet("color:#678;font-size:9px;")
     log = QTextEdit()
     log.setReadOnly(True)
-    log.setMinimumHeight(120)
+    log.setMinimumHeight(100)
     log.setStyleSheet("font-size:9px; font-family: monospace;")
     update_btn = QPushButton("Update Digivice")
     update_btn.setStyleSheet("font-weight:700; min-height:36px;")
     lay.addWidget(tip)
     lay.addWidget(status)
+    lay.addWidget(meta)
     lay.addWidget(log, 1)
     lay.addWidget(update_btn)
 
@@ -1129,12 +1141,53 @@ def make_update_page(on_back: Callable[[], None]) -> QWidget:
     proc.setProcessChannelMode(QProcess.MergedChannels)
     env = QProcessEnvironment.systemEnvironment()
     env.insert("DISPLAY", os.environ.get("DISPLAY", ":0"))
+    if os.environ.get("XAUTHORITY"):
+        env.insert("XAUTHORITY", os.environ["XAUTHORITY"])
     env.insert(
         "PATH",
         "/usr/local/bin:/usr/bin:/bin:" + os.environ.get("PATH", ""),
     )
     env.insert("PYTHONUNBUFFERED", "1")
+    env.insert("ESP_HANDSET_SOFT_SERVICES", "1")
     proc.setProcessEnvironment(env)
+
+    watchdog = QTimer(body)
+    watchdog.setSingleShot(True)
+
+    def _read_stamp() -> str:
+        for p in (
+            DATA / "last_update",
+            Path("/etc/esp-handset/last_update"),
+            DATA / "last_gui_update",
+        ):
+            try:
+                if p.is_file():
+                    return p.read_text(encoding="utf-8").strip()[:80]
+            except OSError:
+                continue
+        return "(never)"
+
+    def _installed_hint() -> str:
+        for p in (
+            Path("/opt/esp-handset/handset_app.py"),
+            Path("/opt/esp-handset/esp_handset/__init__.py"),
+        ):
+            if p.is_file():
+                try:
+                    import time as _t
+
+                    ts = _t.strftime(
+                        "%Y-%m-%d %H:%M", _t.localtime(p.stat().st_mtime)
+                    )
+                    return f"Installed files: {ts}"
+                except OSError:
+                    return "Installed: /opt/esp-handset"
+        return "Installed: missing — run sudo digivice-full-update once"
+
+    def refresh_meta() -> None:
+        meta.setText(f"Last: {_read_stamp()}\n{_installed_hint()}")
+
+    refresh_meta()
 
     def _gui_update_bin() -> list:
         for p in (
@@ -1151,8 +1204,37 @@ def make_update_page(on_back: Callable[[], None]) -> QWidget:
             "/opt/esp-handset/session/update-handset.sh",
         ):
             if os.path.isfile(p):
-                return ["sudo", "-n", p]
+                return ["sudo", "-n", "env", "ESP_HANDSET_SOFT_SERVICES=1", p]
         return ["sudo", "-n", "/usr/local/bin/digivice-gui-update"]
+
+    def _preflight() -> Optional[str]:
+        """Return error string if update cannot run safely."""
+        try:
+            r = subprocess.run(
+                ["sudo", "-n", "true"],
+                capture_output=True,
+                timeout=5,
+                check=False,
+            )
+            if r.returncode != 0:
+                return (
+                    "Passwordless sudo missing.\n"
+                    "Seed once over HDMI/SSH:\n"
+                    "  sudo digivice-full-update"
+                )
+        except Exception as e:
+            return f"sudo check failed: {e}"
+        bin_cmd = _gui_update_bin()
+        target = bin_cmd[-1] if bin_cmd else ""
+        if target.endswith("digivice-gui-update") and not os.path.isfile(
+            "/usr/local/bin/digivice-gui-update"
+        ):
+            if not os.path.isfile("/opt/esp-handset/session/gui-update.sh"):
+                return (
+                    "Updater missing.\n"
+                    "  sudo digivice-full-update"
+                )
+        return None
 
     def append_out() -> None:
         data = bytes(proc.readAllStandardOutput()).decode("utf-8", "replace")
@@ -1163,20 +1245,35 @@ def make_update_page(on_back: Callable[[], None]) -> QWidget:
         log.moveCursor(QTextCursor.End)
 
     def restart_digivice() -> None:
+        import shlex
+
         status.setText("Restarting Digivice…")
         log.append("\n--- restarting ---\n")
         env2 = os.environ.copy()
         env2.setdefault("DISPLAY", ":0")
+        home = str(Path.home())
+        log_path = str(DATA / "restart.log")
+        DATA.mkdir(parents=True, exist_ok=True)
+        qlog = shlex.quote(log_path)
+        qhome = shlex.quote(home)
+        script = (
+            f"exec >>{qlog} 2>&1; "
+            "echo \"=== restart $(date -Iseconds) ===\"; "
+            "sleep 0.7; "
+            "pkill -f handset_app.py 2>/dev/null || true; "
+            "sleep 0.5; "
+            f"export HOME={qhome} DISPLAY=${{DISPLAY:-:0}}; "
+            "if command -v handset-phone >/dev/null 2>&1; then "
+            "  handset-phone; "
+            "elif command -v handset-session >/dev/null 2>&1; then "
+            "  handset-session phone; "
+            "else "
+            "  echo FATAL: handset-phone missing; "
+            "fi"
+        )
         try:
             subprocess.Popen(
-                [
-                    "bash",
-                    "-c",
-                    "sleep 0.6; "
-                    "pkill -f handset_app.py 2>/dev/null || true; "
-                    "sleep 0.3; "
-                    "/usr/local/bin/handset-phone || handset-phone || true",
-                ],
+                ["bash", "-c", script],
                 start_new_session=True,
                 env=env2,
                 stdout=subprocess.DEVNULL,
@@ -1186,31 +1283,44 @@ def make_update_page(on_back: Callable[[], None]) -> QWidget:
             status.setText(f"Restart failed: {e}")
             update_btn.setEnabled(True)
             return
-        QTimer.singleShot(400, lambda: os._exit(0))
+        QTimer.singleShot(500, lambda: os._exit(0))
+
+    def on_timeout() -> None:
+        if proc.state() == QProcess.NotRunning:
+            return
+        log.append("\n--- TIMEOUT (10 min) — killing updater ---\n")
+        proc.kill()
+        update_btn.setEnabled(True)
+        status.setText("Timed out — Digivice still running")
 
     def on_finished(code: int, _st) -> None:
+        watchdog.stop()
         append_out()
+        refresh_meta()
         if code == 0:
             status.setText("Installed. Restarting…")
             log.append("\n--- OK — restarting Digivice ---\n")
-            # brief pause so last log lines paint before we exit
             QTimer.singleShot(700, restart_digivice)
         else:
             update_btn.setEnabled(True)
-            status.setText(f"Failed (exit {code})")
+            status.setText(f"Failed (exit {code}) — UI left running")
             log.append(
-                "\n--- FAILED ---\n"
-                "If sudo denied, seed once from HDMI terminal:\n"
-                "  sudo digivice-full-update\n"
+                "\n--- FAILED (safe: no restart) ---\n"
+                "Common fixes:\n"
+                "  • Wi‑Fi / GitHub down → try later\n"
+                "  • sudo denied → sudo digivice-full-update once\n"
+                "  • Log: ~/.esp-handset/update.log\n"
             )
 
     def on_error(err) -> None:
+        watchdog.stop()
         update_btn.setEnabled(True)
         status.setText(f"Start error: {err}")
         log.append(f"\nQProcess error: {err}\n")
 
     proc.readyReadStandardOutput.connect(append_out)
     proc.finished.connect(on_finished)
+    watchdog.timeout.connect(on_timeout)
     try:
         proc.errorOccurred.connect(on_error)
     except Exception:
@@ -1219,6 +1329,13 @@ def make_update_page(on_back: Callable[[], None]) -> QWidget:
     def do_update() -> None:
         if proc.state() != QProcess.NotRunning:
             status.setText("Already running…")
+            return
+        err = _preflight()
+        if err:
+            status.setText("Cannot update")
+            log.clear()
+            log.append(err + "\n")
+            update_btn.setEnabled(True)
             return
         bin_cmd = _gui_update_bin()
         log.clear()
@@ -1234,9 +1351,88 @@ def make_update_page(on_back: Callable[[], None]) -> QWidget:
                 "Missing digivice-gui-update.\n"
                 "  sudo digivice-full-update\n"
             )
+            return
+        watchdog.start(10 * 60 * 1000)
 
     update_btn.clicked.connect(do_update)
     return page_chrome("Update", body, on_back)
+
+
+def make_mouse_page(on_back: Callable[[], None]) -> QWidget:
+    """Desktop d-pad mouse speed (buttons daemon reads ~/.esp-handset/mouse_step)."""
+    from PyQt5.QtWidgets import QSizePolicy
+
+    PRESETS = [
+        ("Very slow", 3),
+        ("Slow", 6),
+        ("Normal", 10),
+        ("Fast", 16),
+        ("Turbo", 24),
+    ]
+    step_path = DATA / "mouse_step"
+    etc_path = Path("/etc/esp-handset/mouse_step")
+
+    body = QWidget()
+    lay = QVBoxLayout(body)
+    tip = QLabel(
+        "D-pad mouse speed on Linux desktop.\n"
+        "(Phone Digivice UI uses keys, not the mouse.)"
+    )
+    tip.setWordWrap(True)
+    tip.setStyleSheet("color:#9ab;font-size:10px;")
+    cur = QLabel("")
+    cur.setWordWrap(True)
+    cur.setStyleSheet("font-weight:700;")
+    lay.addWidget(tip)
+    lay.addWidget(cur)
+
+    def _read_step() -> int:
+        for p in (step_path, etc_path):
+            try:
+                if p.is_file():
+                    v = int(p.read_text(encoding="utf-8").strip().split()[0])
+                    if 1 <= v <= 64:
+                        return v
+            except (OSError, ValueError):
+                continue
+        return 10
+
+    def _label_for(v: int) -> str:
+        for name, n in PRESETS:
+            if n == v:
+                return name
+        return f"Custom ({v})"
+
+    def refresh() -> None:
+        v = _read_step()
+        cur.setText(f"Current: {_label_for(v)}  ·  step {v}")
+
+    def set_step(n: int) -> None:
+        DATA.mkdir(parents=True, exist_ok=True)
+        step_path.write_text(f"{n}\n", encoding="utf-8")
+        try:
+            subprocess.run(
+                ["sudo", "-n", "tee", str(etc_path)],
+                input=f"{n}\n".encode(),
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=3,
+                check=False,
+            )
+        except Exception:
+            pass
+        refresh()
+
+    for name, n in PRESETS:
+        b = QPushButton(f"{name}  ({n})")
+        b.setMinimumHeight(28)
+        b.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        b.clicked.connect(lambda _=False, v=n: set_step(v))
+        lay.addWidget(b)
+
+    lay.addStretch(1)
+    refresh()
+    return page_chrome("Mouse speed", body, on_back)
 
 
 def make_about_page(modem, on_back) -> QWidget:
@@ -1278,7 +1474,8 @@ def make_help_page(on_back) -> QWidget:
         "Home → Digivice home (never desktop)\n"
         "F12 / F10 / Ctrl+Q → desktop\n"
         "Settings → Linux → Exit\n"
-        "Settings → Update → download\n"
+        "Settings → Update → software only\n"
+        "Settings → Mouse → desktop pointer speed\n"
         "Settings → Power → Off/Restart (x2)\n"
         "SSH: digivice-leave\n"
         "Settings → Linux → confirm",

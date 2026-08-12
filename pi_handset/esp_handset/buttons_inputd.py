@@ -49,7 +49,8 @@ XDOTOOL_KEYS = {
 
 DEBOUNCE_S = float(os.environ.get("DIGI_BTN_DEBOUNCE", "0.025"))
 SCAN_S = float(os.environ.get("DIGI_BTN_SCAN", "0.012"))
-MOUSE_STEP = int(os.environ.get("DIGI_BTN_MOUSE_STEP", "12"))
+# Default slightly slower than old 12 — Settings → Mouse can change live
+_DEFAULT_MOUSE_STEP = int(os.environ.get("DIGI_BTN_MOUSE_STEP", "10"))
 ACTIVE_HIGH = os.environ.get("DIGI_BTN_ACTIVE_HIGH", "0").strip() in (
     "1",
     "true",
@@ -57,6 +58,9 @@ ACTIVE_HIGH = os.environ.get("DIGI_BTN_ACTIVE_HIGH", "0").strip() in (
 )
 MODE_PATHS = [
     Path("/etc/esp-handset/ui_mode"),
+]
+MOUSE_STEP_PATHS = [
+    Path("/etc/esp-handset/mouse_step"),
 ]
 
 
@@ -82,6 +86,39 @@ def mode_file_candidates() -> List[Path]:
     if env_home:
         paths.append(Path(env_home) / ".esp-handset" / "session_mode")
     return paths
+
+
+def mouse_step_candidates() -> List[Path]:
+    paths: List[Path] = []
+    for home in glob.glob("/home/*"):
+        paths.append(Path(home) / ".esp-handset" / "mouse_step")
+    paths.append(Path("/root/.esp-handset/mouse_step"))
+    env_home = os.environ.get("HOME")
+    if env_home:
+        paths.append(Path(env_home) / ".esp-handset" / "mouse_step")
+    paths.extend(MOUSE_STEP_PATHS)
+    return paths
+
+
+def read_mouse_step() -> int:
+    """Pixels per scan tick while a d-pad direction is held (desktop mode)."""
+    best: Optional[tuple] = None  # (mtime, value)
+    for p in mouse_step_candidates():
+        try:
+            if not p.is_file():
+                continue
+            raw = p.read_text(encoding="utf-8").strip().split()[0]
+            v = int(raw)
+            if not (1 <= v <= 64):
+                continue
+            mtime = p.stat().st_mtime
+            if best is None or mtime >= best[0]:
+                best = (mtime, v)
+        except (OSError, ValueError, IndexError):
+            continue
+    if best is not None:
+        return best[1]
+    return _DEFAULT_MOUSE_STEP
 
 
 def digivice_running() -> bool:
@@ -449,8 +486,9 @@ def main() -> int:
 
     xinj = XInject()
     mode = read_mode()
+    mouse_step = read_mouse_step()
     log(
-        f"ready mode={mode}  mouse_step={MOUSE_STEP}  "
+        f"ready mode={mode}  mouse_step={mouse_step}  "
         + " ".join(f"{n}=BCM{p}" for n, p in pins.items())
     )
     log(
@@ -464,16 +502,21 @@ def main() -> int:
     held = {n: is_pressed(levels[n]) for n in pins}
     last_mode_check = 0.0
     last_mode = mode
+    last_step = mouse_step
 
     try:
         while True:
             now = time.monotonic()
             if now - last_mode_check > 0.4:
                 mode = read_mode()
+                mouse_step = read_mouse_step()
                 last_mode_check = now
                 if mode != last_mode:
                     log(f"mode → {mode}")
                     last_mode = mode
+                if mouse_step != last_step:
+                    log(f"mouse_step → {mouse_step}")
+                    last_step = mouse_step
 
             for name, pin in pins.items():
                 try:
@@ -524,13 +567,13 @@ def main() -> int:
             if mode == "desktop":
                 dx = dy = 0
                 if held.get("LEFT"):
-                    dx -= MOUSE_STEP
+                    dx -= mouse_step
                 if held.get("RIGHT"):
-                    dx += MOUSE_STEP
+                    dx += mouse_step
                 if held.get("UP"):
-                    dy -= MOUSE_STEP
+                    dy -= mouse_step
                 if held.get("DOWN"):
-                    dy += MOUSE_STEP
+                    dy += mouse_step
                 if dx or dy:
                     try:
                         device.emit(uinput.REL_X, dx, syn=False)

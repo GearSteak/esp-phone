@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Digivice Settings → single Update button runner.
-# Pulls git, installs to /opt, never kills Digivice mid-run
-# (UI restarts itself after this exits 0).
+# Software-only: git pull + install to /opt. Never touches display/SPI/boot config.
+# Does not kill Digivice mid-run (UI restarts itself after exit 0).
 #
 #   digivice-gui-update
 #
@@ -17,8 +17,10 @@ if [[ "$(id -u)" -ne 0 ]]; then
       SUDO_USER="${SUDO_USER:-$USER}" \
       USER="${USER}" \
       DISPLAY="${DISPLAY:-:0}" \
+      XAUTHORITY="${XAUTHORITY:-}" \
       ESP_HANDSET_PREFIX="$PREFIX" \
       ESP_HANDSET_REPO="${ESP_HANDSET_REPO:-}" \
+      ESP_HANDSET_SOFT_SERVICES=1 \
       PATH="/usr/local/bin:/usr/bin:/bin:$PATH" \
       bash "$0" "$@"
   fi
@@ -35,14 +37,18 @@ run() {
   fi
 }
 
-echo "[gui-update] pull + install  $(date -Iseconds)"
+echo "[gui-update] software pull + install  $(date -Iseconds)"
+echo "[gui-update] (no display/SPI/boot changes)"
+
+# Soft services: install files; leave button daemon alone until UI restart
+export ESP_HANDSET_SOFT_SERVICES=1
 
 # git fetch/pull + install to /opt (no mid-run UI kill)
 if [[ -x /usr/local/bin/digivice-update ]]; then
-  run /usr/local/bin/digivice-update
+  run env ESP_HANDSET_SOFT_SERVICES=1 /usr/local/bin/digivice-update
   rc=$?
 elif [[ -f "$PREFIX/session/update-handset.sh" ]]; then
-  run bash "$PREFIX/session/update-handset.sh"
+  run env ESP_HANDSET_SOFT_SERVICES=1 bash "$PREFIX/session/update-handset.sh"
   rc=$?
 else
   echo "ERROR: digivice-update missing"
@@ -51,6 +57,11 @@ else
 fi
 
 if [[ ${rc:-1} -eq 0 ]]; then
+  # Verify install looks sane before telling UI to restart
+  if [[ ! -f "$PREFIX/handset_app.py" && ! -f "$PREFIX/esp_handset/handset_app.py" ]]; then
+    echo "[gui-update] FAILED — handset_app.py missing after install"
+    exit 4
+  fi
   echo "[gui-update] OK — Digivice UI will restart"
   echo "ok $(date -Iseconds)" >"${HOME:-/tmp}/.esp-handset/last_gui_update" 2>/dev/null || true
   for h in /home/*/.esp-handset; do
@@ -58,5 +69,6 @@ if [[ ${rc:-1} -eq 0 ]]; then
   done
 else
   echo "[gui-update] FAILED rc=$rc"
+  echo "[gui-update] Tree/install left as-is where possible. Digivice stays running."
 fi
 exit "${rc:-1}"
