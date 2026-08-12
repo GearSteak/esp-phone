@@ -454,27 +454,12 @@ class PhoneShell(QMainWindow):
                 return
             # fall through to normal Back handling once for single Esc
         else:
-            # don't reset esc on home taps — handled separately
-            if key not in (Qt.Key_Home,):
-                self._esc_exits = 0
-        # Triple Home button within 1.5s → desktop (no keyboard needed)
+            self._esc_exits = 0
+        # Home = Digivice home screen only (never exit to Linux desktop)
         if key == Qt.Key_Home:
-            import time as _time
-
-            now = int(_time.time() * 1000)
-            if now - self._home_last_ms > 1500:
-                self._home_exits = 0
-            self._home_last_ms = now
-            self._home_exits += 1
-            if self._home_exits >= 3:
-                self._home_exits = 0
-                self._request_desktop()
-                event.accept()
-                return
-            # fall through to single-home → go home after this block
-        else:
-            if key != Qt.Key_Escape:
-                self._home_exits = 0
+            self.home()
+            event.accept()
+            return
         if self._osk.isVisible():
             mapping = {
                 Qt.Key_Left: "left",
@@ -502,10 +487,7 @@ class PhoneShell(QMainWindow):
             self.back()
             event.accept()
             return
-        if key == Qt.Key_Home:
-            self.home()
-            event.accept()
-            return
+        # Home already handled above (Digivice home only)
 
         if key in (Qt.Key_Return, Qt.Key_Enter) and not self._osk.isVisible():
             w = self.focusWidget()

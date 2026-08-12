@@ -497,8 +497,8 @@ Usage: handset-session <command>
   spi-prove  — red on SPI (HDMI off 6s) then restore HDMI  ← run this first if SPI dark
   spi-phone  — Digivice on SPI only (HDMI off). handset-desktop restores HDMI.
 
-Hard exit Digivice: Back×3 or Home×3 or handset-desktop
-On desktop, 2\" SPI mirrors the Linux desktop (userspace ST7789).
+Hard exit Digivice: Back×3 or handset-desktop (Home = Digivice, never desktop exit)
+On desktop, Home relaunches Digivice. 2\" SPI mirrors Linux desktop when left.
 EOF
     exit 1
     ;;
