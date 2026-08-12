@@ -206,6 +206,10 @@ if [[ -f "$ROOT/session/apply-update.sh" ]]; then
   install -m 755 "$ROOT/session/apply-update.sh" "$PREFIX/session/apply-update.sh"
   install -m 755 "$ROOT/session/apply-update.sh" /usr/local/bin/digivice-apply-update
 fi
+if [[ -f "$ROOT/session/install-home-request.sh" ]]; then
+  install -m 755 "$ROOT/session/install-home-request.sh" "$PREFIX/session/install-home-request.sh"
+  bash "$ROOT/session/install-home-request.sh" 2>&1 | tee -a "$LOG" || true
+fi
 install -m 755 "$ROOT/session/fix-cursor.sh" /usr/local/bin/digivice-fix-cursor 2>/dev/null || true
 install -m 755 "$ROOT/session/restore-desktop-displays.sh" /usr/local/bin/digivice-restore-desktop 2>/dev/null || true
 install -m 755 "$ROOT/session/desktop-spi-mirror.sh" /usr/local/bin/digivice-desktop-mirror 2>/dev/null || true

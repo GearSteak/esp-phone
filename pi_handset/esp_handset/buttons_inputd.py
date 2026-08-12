@@ -279,92 +279,80 @@ def _home_relaunch_bin() -> Optional[str]:
 
 
 def relaunch_digivice() -> None:
-    """Home on Linux desktop → Digivice via safe wrapper (never root Qt)."""
+    """Home on Linux desktop → queue isolated Digivice launch (never spawn GUI here).
+
+    Spawning Qt/SPI from this root GPIO daemon froze/crashed Pi Zero 2 W.
+    We only touch a request file; digivice-home-request.path runs the relaunch
+    in a separate systemd unit.
+    """
     global _LAST_RELAUNCH
     if digivice_running():
         log("HOME ignored — Digivice already running")
         return
     now = time.monotonic()
-    # Long debounce: Pi Zero can't survive spam-launch / SPI fights
-    if now - _LAST_RELAUNCH < 8.0:
+    if now - _LAST_RELAUNCH < 10.0:
         log("HOME ignored — relaunch debounce")
         return
     _LAST_RELAUNCH = now
 
     write_mode_phone()
-    script = _home_relaunch_bin()
     user, home = resolve_gui_user()
-    disp = find_display()
-    auth = os.path.join(home, ".Xauthority")
-    if not os.path.isfile(auth):
-        auth = find_xauthority() or auth
+    req = Path("/run/digivice-home-request")
+    stamp = f"{time.time()} user={user}\n"
+    try:
+        req.write_text(stamp, encoding="utf-8")
+        try:
+            os.chmod(req, 0o666)
+        except OSError:
+            pass
+    except OSError as e:
+        log(f"HOME request file failed: {e}")
+        # Fallback: user home flag + best-effort systemctl
+        try:
+            p = Path(home) / ".esp-handset" / "home-request"
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(stamp, encoding="utf-8")
+        except OSError:
+            pass
+
     log_path = os.path.join(home, ".esp-handset", "home-relaunch.log")
     try:
         os.makedirs(os.path.dirname(log_path), exist_ok=True)
-    except OSError:
-        log_path = "/tmp/digivice-home-relaunch.log"
-
-    try:
-        logf = open(log_path, "a", encoding="utf-8")
-        logf.write(
-            f"\n--- buttons HOME {time.strftime('%Y-%m-%d %H:%M:%S')} "
-            f"user={user} script={script} ---\n"
-        )
-        logf.flush()
-    except OSError:
-        logf = subprocess.DEVNULL
-
-    env = os.environ.copy()
-    env["HOME"] = home
-    env["USER"] = user
-    env["LOGNAME"] = user
-    env["DISPLAY"] = disp
-    env["XAUTHORITY"] = auth
-    env["DIGI_GUI_USER"] = user
-    env["ESP_HANDSET_SKIP_LAYOUT"] = "1"
-    env["ESP_HANDSET_SKIP_PIN"] = "1"
-    env.pop("WAYLAND_DISPLAY", None)
-
-    try:
-        if script:
-            # Script drops root → GUI user itself. Fire-and-forget.
-            subprocess.Popen(
-                ["bash", script] if not os.access(script, os.X_OK) else [script],
-                start_new_session=True,
-                stdout=logf,
-                stderr=subprocess.STDOUT,
-                env=env,
+        with open(log_path, "a", encoding="utf-8") as logf:
+            logf.write(
+                f"\n--- buttons HOME queue {time.strftime('%Y-%m-%d %H:%M:%S')} "
+                f"user={user} ---\n"
             )
-            log(f"HOME → digivice-home-relaunch (→ {user}) DISPLAY={disp}")
-            return
+    except OSError:
+        pass
 
-        # Fallback if script not installed yet
-        log("WARN: digivice-home-relaunch missing — fallback sudo -u handset-phone")
-        cmd = [
-            "sudo",
-            "-u",
-            user,
-            "-H",
-            "env",
-            f"HOME={home}",
-            f"USER={user}",
-            f"DISPLAY={disp}",
-            f"XAUTHORITY={auth}",
-            "ESP_HANDSET_SKIP_LAYOUT=1",
-            "ESP_HANDSET_SKIP_PIN=1",
-            "QT_QPA_PLATFORM=xcb",
-            "handset-phone",
-        ]
-        subprocess.Popen(
-            cmd,
-            start_new_session=True,
-            stdout=logf,
-            stderr=subprocess.STDOUT,
-            env=env,
+    # Prefer isolated systemd unit (separate cgroup from this daemon)
+    started = False
+    for cmd in (
+        ["systemctl", "start", "digivice-home-request.service"],
+        ["systemctl", "start", "digivice-home-request.service", "--no-block"],
+    ):
+        try:
+            r = subprocess.run(
+                cmd,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=3,
+                check=False,
+            )
+            if r.returncode == 0:
+                started = True
+                log("HOME → systemctl start digivice-home-request")
+                break
+        except Exception as e:
+            log(f"systemctl start: {e}")
+
+    if not started:
+        # Path unit may pick up the file; if units missing, log loudly
+        log(
+            "HOME → wrote /run/digivice-home-request "
+            "(enable: sudo digivice-full-update)"
         )
-        log(f"HOME → fallback Digivice as {user} DISPLAY={disp}")
-    except Exception as e:
-        log(f"relaunch Digivice failed: {e}")
 
 
 def find_xauthority() -> Optional[str]:

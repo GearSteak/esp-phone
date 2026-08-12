@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Digivice Home button → return to phone UI (safe path).
+# Digivice Home button → return to phone UI (minimal, isolated).
 #
-# Called from digi-buttons-inputd (runs as root). Must NEVER start Digivice
-# as root — that crashes the X session. Also avoids bash -lc, xrandr thrash,
-# and overlapping launches that OOM / wedge SPI on Pi Zero 2 W.
+# Started by digivice-home-request.service (NOT as a child of the GPIO
+# daemon). Spawning Qt from digi-buttons-inputd was freezing / crashing
+# Pi Zero 2 W (SPI fight + same cgroup OOM).
 #
 #   digivice-home-relaunch
 #
@@ -11,15 +11,17 @@ set +e
 set -u
 
 PREFIX="${ESP_HANDSET_PREFIX:-/opt/esp-handset}"
+REQ=/run/digivice-home-request
 LOCK="${DIGI_HOME_LOCK:-/run/digivice-home-relaunch.lock}"
-# Prefer user log under their home once we know the user
+
+# Clear request so the next Home press can recreate / retrigger the path unit
+rm -f "$REQ" 2>/dev/null || true
 
 resolve_gui_user() {
   if [[ -n "${DIGI_GUI_USER:-}" && "${DIGI_GUI_USER}" != "root" ]]; then
     echo "$DIGI_GUI_USER"
     return 0
   fi
-  # Active graphical session owner
   if command -v loginctl >/dev/null 2>&1; then
     local sid uid name
     while read -r sid; do
@@ -28,17 +30,11 @@ resolve_gui_user() {
       [[ -z "$uid" || "$uid" == "0" ]] && continue
       name="$(getent passwd "$uid" | cut -d: -f1)"
       if [[ -n "$name" && "$name" != "root" ]]; then
-        local t
-        t="$(loginctl show-session "$sid" -p Type --value 2>/dev/null || true)"
-        case "$t" in
-          x11|wayland|mir|tty) echo "$name"; return 0 ;;
-        esac
         echo "$name"
         return 0
       fi
     done < <(loginctl list-sessions --no-legend 2>/dev/null | awk '{print $1}')
   fi
-  # Owner of .Xauthority
   local p
   for p in /home/*/.Xauthority; do
     [[ -f "$p" ]] || continue
@@ -55,18 +51,40 @@ resolve_gui_user() {
   echo "pi"
 }
 
-# --- privilege drop: Digivice must run as the desktop user ---
+mem_available_kb() {
+  awk '/MemAvailable:/ {print $2; exit}' /proc/meminfo 2>/dev/null || echo 0
+}
+
+# --- privilege drop ---
 if [[ "$(id -u)" -eq 0 ]]; then
   USER_NAME="$(resolve_gui_user)"
   USER_HOME="$(getent passwd "$USER_NAME" | cut -d: -f6 || echo /home/"$USER_NAME")"
   AUTH="${XAUTHORITY:-$USER_HOME/.Xauthority}"
   [[ -f "$AUTH" ]] || AUTH="$USER_HOME/.Xauthority"
   DISP="${DISPLAY:-:0}"
-  mkdir -p "$USER_HOME/.esp-handset" 2>/dev/null || true
+  mkdir -p "$USER_HOME/.esp-handset" /etc/esp-handset 2>/dev/null || true
   chown "$USER_NAME:$USER_NAME" "$USER_HOME/.esp-handset" 2>/dev/null || true
-  echo "phone" >"$USER_HOME/.esp-handset/session_mode" 2>/dev/null || true
-  echo "phone" >/etc/esp-handset/ui_mode 2>/dev/null || true
+  echo phone >"$USER_HOME/.esp-handset/session_mode" 2>/dev/null || true
+  echo phone >/etc/esp-handset/ui_mode 2>/dev/null || true
   chown "$USER_NAME:$USER_NAME" "$USER_HOME/.esp-handset/session_mode" 2>/dev/null || true
+
+  # Stop SPI mirror as root (may need to signal processes) BEFORE user Qt starts
+  for m in \
+    /usr/local/bin/digivice-desktop-mirror \
+    "$PREFIX/session/desktop-spi-mirror.sh"
+  do
+    if [[ -f "$m" ]]; then
+      bash "$m" stop >/dev/null 2>&1 || true
+      break
+    fi
+  done
+  pkill -TERM -f "desktop_spi_mirror.py" 2>/dev/null || true
+  sleep 0.8
+  pkill -KILL -f "desktop_spi_mirror.py" 2>/dev/null || true
+  rm -f /tmp/digivice-st7789.lock /run/digivice-st7789.lock 2>/dev/null || true
+  # Let the SPI / DRM stack settle — rushing this wedged Zero 2 W
+  sleep 1.5
+
   exec sudo -u "$USER_NAME" -H env \
     HOME="$USER_HOME" \
     USER="$USER_NAME" \
@@ -77,25 +95,25 @@ if [[ "$(id -u)" -eq 0 ]]; then
     ESP_HANDSET_SKIP_LAYOUT=1 \
     ESP_HANDSET_SKIP_PIN=1 \
     ESP_HANDSET_KIOSK=1 \
+    ESP_HANDSET_MINIMAL_LAUNCH=1 \
     QT_QPA_PLATFORM=xcb \
     PATH="/usr/local/bin:/usr/bin:/bin" \
     bash "$0" "$@"
 fi
 
-# --- running as GUI user ---
+# --- GUI user ---
 LOG_DIR="${HOME}/.esp-handset"
 mkdir -p "$LOG_DIR" 2>/dev/null || true
 LOG="$LOG_DIR/home-relaunch.log"
 log() { echo "[$(date '+%H:%M:%S')] $*" | tee -a "$LOG"; }
 
-# Single-flight lock (user-writable fallback if /run not writable)
 if ! exec 9>"$LOCK" 2>/dev/null; then
   LOCK="$LOG_DIR/home-relaunch.lock"
   exec 9>"$LOCK" 2>/dev/null || true
 fi
 if command -v flock >/dev/null 2>&1; then
   if ! flock -n 9; then
-    log "HOME ignored — relaunch already in progress"
+    log "HOME ignored — already in progress"
     exit 0
   fi
 fi
@@ -105,63 +123,49 @@ if pgrep -f "handset_app.py" >/dev/null 2>&1; then
   exit 0
 fi
 
-log "HOME → Digivice (user=$(id -un) DISPLAY=${DISPLAY:-?} auth=${XAUTHORITY:-?})"
-
-# Mode files
-echo phone >"$LOG_DIR/session_mode" 2>/dev/null || true
-if [[ -w /etc/esp-handset/ui_mode ]] 2>/dev/null; then
-  echo phone >/etc/esp-handset/ui_mode 2>/dev/null || true
-elif command -v sudo >/dev/null 2>&1; then
-  echo phone | sudo -n tee /etc/esp-handset/ui_mode >/dev/null 2>&1 || true
+AVAIL="$(mem_available_kb)"
+log "HOME → Digivice minimal (user=$(id -un) DISPLAY=${DISPLAY:-?} mem_avail_kb=$AVAIL)"
+if [[ "${AVAIL:-0}" -gt 0 && "${AVAIL}" -lt 70000 ]]; then
+  log "WARN: very low memory (${AVAIL} kB) — Digivice may OOM; continuing anyway"
 fi
 
-# Stop desktop SPI mirror cleanly (SIGKILL races wedge the bus on Zero 2 W)
-stop_mirror() {
-  local m
-  for m in \
-    /usr/local/bin/digivice-desktop-mirror \
-    "$PREFIX/session/desktop-spi-mirror.sh" \
-    /opt/esp-handset/session/desktop-spi-mirror.sh
-  do
-    if [[ -x "$m" ]] || [[ -f "$m" ]]; then
-      bash "$m" stop >>"$LOG" 2>&1 || true
-      break
-    fi
-  done
-  # polite then firm
-  pkill -TERM -f "desktop_spi_mirror.py" 2>/dev/null || true
-  local i
-  for i in 1 2 3 4 5 6; do
-    pgrep -f "desktop_spi_mirror.py" >/dev/null 2>&1 || break
-    sleep 0.25
-  done
-  pkill -KILL -f "desktop_spi_mirror.py" 2>/dev/null || true
-  rm -f /tmp/digivice-st7789.lock /run/digivice-st7789.lock 2>/dev/null || true
-  sleep 0.6
-}
+echo phone >"$LOG_DIR/session_mode" 2>/dev/null || true
 
-stop_mirror
-
-# Skip xrandr layout surgery — thrashing outputs from Home has frozen sessions
 export ESP_HANDSET_SKIP_LAYOUT=1
 export ESP_HANDSET_SKIP_PIN=1
 export ESP_HANDSET_KIOSK=1
+export ESP_HANDSET_MINIMAL_LAUNCH=1
 export DISPLAY="${DISPLAY:-:0}"
 export QT_QPA_PLATFORM="${QT_QPA_PLATFORM:-xcb}"
-# Prefer X11 even if a Wayland var leaked into the service env
 unset WAYLAND_DISPLAY 2>/dev/null || true
+unset ESP_ST7789_SPEED ESP_ST7789_SWAP ESP_ST7789_INVERT 2>/dev/null || true
 
-# Launch Digivice (handset-session phone → exec python)
-if [[ -x /usr/local/bin/handset-session ]]; then
-  log "exec handset-session phone"
-  exec /usr/local/bin/handset-session phone >>"$LOG" 2>&1
-elif [[ -x /usr/local/bin/handset-phone ]]; then
-  log "exec handset-phone"
-  exec /usr/local/bin/handset-phone >>"$LOG" 2>&1
-elif [[ -f "$PREFIX/session/handset-session.sh" ]]; then
-  log "exec $PREFIX/session/handset-session.sh phone"
-  exec bash "$PREFIX/session/handset-session.sh" phone >>"$LOG" 2>&1
+# Extra settle after mirror stop (root phase already waited)
+sleep 0.5
+
+APP=""
+for c in \
+  "$PREFIX/handset_app.py" \
+  /opt/esp-handset/handset_app.py
+do
+  if [[ -f "$c" ]]; then
+    APP="$c"
+    break
+  fi
+done
+
+if [[ -z "$APP" ]]; then
+  log "ERROR: handset_app.py missing under $PREFIX"
+  exit 1
 fi
 
-log "ERROR: handset-session / handset-phone missing"
-exit 1
+# Minimal launch: do NOT call handset-session phone (ensure-buttons / layout /
+# cursor helpers are too heavy and racy from the Home button path).
+
+log "exec python3 $APP (PYTHONPATH=$PREFIX)"
+export PYTHONPATH="${PREFIX}:${PYTHONPATH:-}"
+# nice: don't starve X
+if command -v ionice >/dev/null 2>&1; then
+  exec ionice -c 3 nice -n 5 /usr/bin/python3 "$APP" >>"$LOG" 2>&1
+fi
+exec nice -n 5 /usr/bin/python3 "$APP" >>"$LOG" 2>&1
