@@ -995,6 +995,7 @@ def make_settings_hub(on_back, open_page: Callable[[str], None], on_linux) -> QW
     for key, label in [
         ("set_update", "★ Update Digivice"),
         ("set_mouse", "Mouse speed"),
+        ("set_debug", "Debug · Audio"),
         ("set_appearance", "Appearance"),
         ("set_network", "Network / modem"),
         ("set_accounts", "Accounts (SIP)"),
@@ -1435,6 +1436,312 @@ def make_mouse_page(on_back: Callable[[], None]) -> QWidget:
     return page_chrome("Mouse speed", body, on_back)
 
 
+def make_debug_page(on_back: Callable[[], None]) -> QWidget:
+    """Hardware debug: speaker tone, mic loopback, ALSA/PipeWire device list."""
+    from shutil import which
+
+    from PyQt5.QtCore import QProcess, QTimer
+    from PyQt5.QtWidgets import QSizePolicy
+
+    body = QWidget()
+    lay = QVBoxLayout(body)
+    lay.setSpacing(4)
+    tip = QLabel(
+        "Test the soldered mic & speaker.\n"
+        "Speaker = tone · Mic = 3s record then play."
+    )
+    tip.setWordWrap(True)
+    tip.setStyleSheet("color:#9ab;font-size:10px;")
+    status = QLabel("Ready.")
+    status.setWordWrap(True)
+    status.setStyleSheet("font-weight:700;")
+    devices = QTextEdit()
+    devices.setReadOnly(True)
+    devices.setMinimumHeight(70)
+    devices.setStyleSheet("font-size:8px; font-family: monospace;")
+
+    spk_btn = QPushButton("♪ Speaker test (2s)")
+    spk_btn.setMinimumHeight(30)
+    spk_btn.setStyleSheet("font-weight:700;")
+    mic_btn = QPushButton("◉ Mic test (record → play)")
+    mic_btn.setMinimumHeight(30)
+    mic_btn.setStyleSheet("font-weight:700;")
+    list_btn = QPushButton("List audio devices")
+    stop_btn = QPushButton("Stop test")
+
+    for b in (spk_btn, mic_btn, list_btn, stop_btn):
+        b.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+
+    lay.addWidget(tip)
+    lay.addWidget(status)
+    lay.addWidget(spk_btn)
+    lay.addWidget(mic_btn)
+    lay.addWidget(list_btn)
+    lay.addWidget(stop_btn)
+    lay.addWidget(devices, 1)
+
+    procs: list = []
+    test_wav = DATA / "debug_mic_test.wav"
+    busy = {"on": False}
+
+    def _which(name: str) -> Optional[str]:
+        return which(name)
+
+    def _kill_all() -> None:
+        for p in list(procs):
+            try:
+                if isinstance(p, QProcess):
+                    if p.state() != QProcess.NotRunning:
+                        p.kill()
+                        p.waitForFinished(800)
+                elif hasattr(p, "kill"):
+                    p.kill()
+            except Exception:
+                pass
+        procs.clear()
+        # Also stop common CLI leftovers
+        for name in ("speaker-test", "arecord", "aplay", "paplay", "ffplay", "mpv"):
+            try:
+                subprocess.run(
+                    ["pkill", "-f", name],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    timeout=2,
+                    check=False,
+                )
+            except Exception:
+                pass
+
+    def _set_busy(on: bool) -> None:
+        busy["on"] = on
+        spk_btn.setEnabled(not on)
+        mic_btn.setEnabled(not on)
+
+    def _run_cmd(cmd: list, timeout_ms: int = 0) -> QProcess:
+        p = QProcess(body)
+        p.setProcessChannelMode(QProcess.MergedChannels)
+        procs.append(p)
+        p.start(cmd[0], cmd[1:])
+        if timeout_ms > 0:
+
+            def _to() -> None:
+                if p.state() != QProcess.NotRunning:
+                    p.kill()
+
+            QTimer.singleShot(timeout_ms, _to)
+        return p
+
+    def _append_devices(text: str) -> None:
+        devices.moveCursor(QTextCursor.End)
+        devices.insertPlainText(text)
+        devices.moveCursor(QTextCursor.End)
+
+    def list_devices() -> None:
+        devices.clear()
+        chunks: list[str] = []
+        # Playback
+        if _which("aplay"):
+            r = subprocess.run(
+                ["aplay", "-l"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+                check=False,
+            )
+            chunks.append("=== PLAYBACK (aplay -l) ===\n")
+            chunks.append((r.stdout or r.stderr or "(empty)") + "\n")
+        # Capture
+        if _which("arecord"):
+            r = subprocess.run(
+                ["arecord", "-l"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+                check=False,
+            )
+            chunks.append("=== CAPTURE (arecord -l) ===\n")
+            chunks.append((r.stdout or r.stderr or "(empty)") + "\n")
+        # PipeWire / Pulse default
+        if _which("pactl"):
+            r = subprocess.run(
+                ["pactl", "info"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+                check=False,
+            )
+            lines = []
+            for line in (r.stdout or "").splitlines():
+                if any(
+                    k in line
+                    for k in (
+                        "Server Name",
+                        "Default Sink",
+                        "Default Source",
+                        "Server String",
+                    )
+                ):
+                    lines.append(line)
+            if lines:
+                chunks.append("=== PIPEWIRE/PULSE ===\n")
+                chunks.append("\n".join(lines) + "\n")
+        if not chunks:
+            chunks.append(
+                "No aplay/arecord/pactl found.\n"
+                "Install: sudo apt install alsa-utils pulseaudio-utils\n"
+            )
+        # Hint if no cards
+        joined = "".join(chunks)
+        if "card" not in joined.lower() and "Sink" not in joined:
+            chunks.append(
+                "\nNo sound card seen.\n"
+                "Check solder joints, USB audio dongle,\n"
+                "or dtoverlay for I2S amp/mic.\n"
+            )
+        devices.setPlainText("".join(chunks))
+        status.setText("Device list refreshed.")
+
+    def speaker_test() -> None:
+        if busy["on"]:
+            return
+        _kill_all()
+        _set_busy(True)
+        status.setText("Playing 880 Hz tone… listen for beep.")
+        # Prefer short sine via speaker-test; fall back to system sound / sox
+        if _which("speaker-test"):
+            p = _run_cmd(
+                ["speaker-test", "-t", "sine", "-f", "880", "-l", "1", "-c", "1"],
+                timeout_ms=3500,
+            )
+
+            def _done(_code=0, _st=None) -> None:
+                _set_busy(False)
+                status.setText(
+                    "Speaker test done.\n"
+                    "Heard a tone? Speaker OK. Silence? check amp/wiring."
+                )
+
+            p.finished.connect(_done)
+            return
+        oga = Path("/usr/share/sounds/freedesktop/stereo/bell.oga")
+        if not oga.is_file():
+            oga = Path("/usr/share/sounds/freedesktop/stereo/message.oga")
+        if _which("paplay") and oga.is_file():
+            p = _run_cmd(["paplay", str(oga)], timeout_ms=5000)
+
+            def _done2(_code=0, _st=None) -> None:
+                _set_busy(False)
+                status.setText("Played system sound. Hear it?")
+
+            p.finished.connect(_done2)
+            return
+        if _which("aplay") and Path("/usr/share/sounds/alsa/Front_Center.wav").is_file():
+            p = _run_cmd(
+                ["aplay", "/usr/share/sounds/alsa/Front_Center.wav"],
+                timeout_ms=5000,
+            )
+
+            def _done3(_code=0, _st=None) -> None:
+                _set_busy(False)
+                status.setText("Played ALSA sample. Hear it?")
+
+            p.finished.connect(_done3)
+            return
+        _set_busy(False)
+        status.setText("No speaker-test/paplay/aplay available.")
+        _append_devices(
+            "Install: sudo apt install alsa-utils\n"
+            "  (provides speaker-test + aplay)\n"
+        )
+
+    def mic_test() -> None:
+        if busy["on"]:
+            return
+        if not _which("arecord"):
+            status.setText("arecord missing — sudo apt install alsa-utils")
+            return
+        _kill_all()
+        DATA.mkdir(parents=True, exist_ok=True)
+        try:
+            if test_wav.is_file():
+                test_wav.unlink()
+        except OSError:
+            pass
+        _set_busy(True)
+        status.setText("Recording 3s — speak into the mic…")
+
+        # CD quality mono is fine for a loopback check
+        rec = _run_cmd(
+            [
+                "arecord",
+                "-d",
+                "3",
+                "-f",
+                "S16_LE",
+                "-r",
+                "16000",
+                "-c",
+                "1",
+                str(test_wav),
+            ],
+            timeout_ms=8000,
+        )
+
+        def _after_rec(code: int, _st) -> None:
+            if code != 0 or not test_wav.is_file() or test_wav.stat().st_size < 100:
+                _set_busy(False)
+                err = bytes(rec.readAllStandardOutput()).decode("utf-8", "replace")
+                status.setText(
+                    "Mic record FAILED.\n"
+                    "No capture device, bad wiring, or mic muted."
+                )
+                if err.strip():
+                    _append_devices("\n--- arecord ---\n" + err[-400:] + "\n")
+                return
+            status.setText("Playing recording — hear your voice?")
+            play_cmd = None
+            if _which("aplay"):
+                play_cmd = ["aplay", str(test_wav)]
+            elif _which("paplay"):
+                play_cmd = ["paplay", str(test_wav)]
+            elif _which("ffplay"):
+                play_cmd = ["ffplay", "-nodisp", "-autoexit", str(test_wav)]
+            elif _which("mpv"):
+                play_cmd = ["mpv", "--no-video", str(test_wav)]
+            if not play_cmd:
+                _set_busy(False)
+                status.setText(f"Recorded OK ({test_wav.stat().st_size} B) but no player.")
+                return
+            play = _run_cmd(play_cmd, timeout_ms=8000)
+
+            def _after_play(_c=0, _s=None) -> None:
+                _set_busy(False)
+                kb = test_wav.stat().st_size // 1024
+                status.setText(
+                    f"Mic loopback done ({kb} KB).\n"
+                    "Heard yourself? Mic+speaker OK.\n"
+                    "Silence on play only → speaker.\n"
+                    "Empty/noise → mic wiring/gain."
+                )
+
+            play.finished.connect(_after_play)
+
+        rec.finished.connect(_after_rec)
+
+    def stop_test() -> None:
+        _kill_all()
+        _set_busy(False)
+        status.setText("Stopped.")
+
+    spk_btn.clicked.connect(speaker_test)
+    mic_btn.clicked.connect(mic_test)
+    list_btn.clicked.connect(list_devices)
+    stop_btn.clicked.connect(stop_test)
+    # Auto-list once so the screen isn't empty
+    QTimer.singleShot(200, list_devices)
+    return page_chrome("Debug · Audio", body, on_back)
+
+
 def make_about_page(modem, on_back) -> QWidget:
     body = QWidget()
     lay = QVBoxLayout(body)
@@ -1476,6 +1783,7 @@ def make_help_page(on_back) -> QWidget:
         "Settings → Linux → Exit\n"
         "Settings → Update → software only\n"
         "Settings → Mouse → desktop pointer speed\n"
+        "Settings → Debug → mic / speaker test\n"
         "Settings → Power → Off/Restart (x2)\n"
         "SSH: digivice-leave\n"
         "Settings → Linux → confirm",

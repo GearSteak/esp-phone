@@ -56,6 +56,7 @@ TOOLS_APPS = [
 SETTINGS_APPS = [
     AppEntry("set_update", "Update", "Pull · install · restart", "↓"),
     AppEntry("set_mouse", "Mouse", "Desktop pointer speed", "⇔"),
+    AppEntry("set_debug", "Debug", "Mic · speaker · devices", "⚒"),
     AppEntry("set_appearance", "Look", "Wallpaper", "▣"),
     AppEntry("set_security", "Security", "PIN", "🔒"),
     AppEntry("set_network", "Network", "Wi‑Fi / LTE", "⌁"),

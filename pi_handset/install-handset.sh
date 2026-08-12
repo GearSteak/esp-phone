@@ -36,6 +36,7 @@ apt-get install -y \
   rpicam-apps \
   linphone-cli \
   pipewire pipewire-audio wireplumber \
+  alsa-utils \
   bluez \
   network-manager \
   modemmanager \

@@ -199,6 +199,7 @@ def build_app(bridge: Optional[EspBridge], modem: Optional[Sim7600]) -> PhoneShe
     shell.register_page("set_about", pages.make_about_page(modem, back))
     shell.register_page("set_update", pages.make_update_page(back))
     shell.register_page("set_mouse", pages.make_mouse_page(back))
+    shell.register_page("set_debug", pages.make_debug_page(back))
     shell.register_page("set_power", pages.make_power_page(back))
     shell.register_page("help", pages.make_help_page(back))
     shell.register_page(
