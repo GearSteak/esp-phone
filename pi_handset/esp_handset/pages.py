@@ -219,11 +219,6 @@ def make_contacts_page(on_back, open_dial: Callable[[str], None]) -> QWidget:
     lay.setContentsMargins(2, 2, 2, 2)
     lay.setSpacing(4)
 
-    tip = QLabel("Confirm = dial · list A→Z")
-    tip.setStyleSheet("color:#9ab;font-size:10px;")
-    tip.setWordWrap(True)
-    lay.addWidget(tip)
-
     # Growing stack of contact rows (not a fixed viewport list)
     list_wrap = QWidget()
     list_lay = QVBoxLayout(list_wrap)
