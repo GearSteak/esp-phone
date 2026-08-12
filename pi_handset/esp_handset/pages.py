@@ -866,7 +866,7 @@ def make_gps_page(modem, on_back, on_status) -> QWidget:
 
     def _poll() -> None:
         if not modem:
-            _show({}, "SIM7600 not connected.\nPlug HAT USB / check ttyUSB.")
+            _show({}, "SIM7600 not connected.\nPWR→3V3 · USB to Pi\nSettings→Network→Scan")
             return
         try:
             fix = modem.gps_fix()
@@ -877,7 +877,7 @@ def make_gps_page(modem, on_back, on_status) -> QWidget:
 
     def do_start() -> None:
         if not modem:
-            _show({}, "SIM7600 not connected.\nPlug HAT USB / check ttyUSB.")
+            _show({}, "SIM7600 not connected.\nPWR→3V3 · USB to Pi\nSettings→Network→Scan")
             return
         summary.setText("STARTING…")
         summary.setStyleSheet(
@@ -924,7 +924,7 @@ def make_gps_page(modem, on_back, on_status) -> QWidget:
     timer.timeout.connect(on_tick)
     # Initial modem presence check (no popup)
     if not modem:
-        _show({}, "SIM7600 not connected.\nPlug HAT USB / check ttyUSB.")
+        _show({}, "SIM7600 not connected.\nPWR→3V3 · USB to Pi\nSettings→Network→Scan")
     else:
         try:
             port = getattr(modem, "port", "?")
