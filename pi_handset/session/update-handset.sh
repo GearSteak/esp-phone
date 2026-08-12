@@ -280,6 +280,13 @@ EOF
     systemctl enable esp-keyd.service 2>/dev/null || true
     systemctl restart esp-keyd.service 2>/dev/null || true
   fi
+  # Home button → isolated Digivice launch (never from GPIO daemon cgroup)
+  if [[ -f "$ROOT/session/install-home-request.sh" ]]; then
+    install -m 755 "$ROOT/session/install-home-request.sh" "$PREFIX/session/install-home-request.sh"
+    bash "$ROOT/session/install-home-request.sh" 2>&1 | tee -a "$LOG" || true
+  elif [[ -f "$PREFIX/session/install-home-request.sh" ]]; then
+    bash "$PREFIX/session/install-home-request.sh" 2>&1 | tee -a "$LOG" || true
+  fi
 
   if [[ "$FULL" -eq 1 ]]; then
     log "FULL: re-running install-display.sh (may undo userspace SPI)"
