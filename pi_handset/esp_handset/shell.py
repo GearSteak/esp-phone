@@ -127,11 +127,9 @@ class PhoneShell(QMainWindow):
         self._tick_clock()
         self.setFocusPolicy(Qt.StrongFocus)
         self.setAttribute(Qt.WA_KeyboardFocusChange, True)
-        # Escape (Back button) triple-tap → desktop; Home triple → desktop
+        # Escape (Back button) triple-tap → desktop
         self._esc_exits = 0
         self._esc_last_ms = 0
-        self._home_exits = 0
-        self._home_last_ms = 0
 
     def showEvent(self, event) -> None:  # noqa: N802
         super().showEvent(event)

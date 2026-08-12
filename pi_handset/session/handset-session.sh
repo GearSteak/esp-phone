@@ -1,6 +1,7 @@
 #!/bin/bash
 # Digivice session helpers.
-# Leave Digivice: Back×3 | Home×3 | Settings→Linux | handset-desktop | digivice-leave
+# Leave Digivice: Back×3 | Settings→Linux | handset-desktop | digivice-leave
+# Home always returns to Digivice (on desktop: relaunches Digivice; in UI: home screen)
 # Recovery with no keyboard: put empty file digivice-desktop on the SD boot partition.
 
 set +e

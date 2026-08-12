@@ -1279,6 +1279,7 @@ def make_help_page(on_back) -> QWidget:
         "D-pad arrows move focus\n"
         "Type with on-screen keyboard\n"
         "Back×3 (Escape) → desktop\n"
+        "Home → Digivice home (never desktop)\n"
         "F12 / F10 / Ctrl+Q → desktop\n"
         "Settings → Linux → Exit\n"
         "Settings → Update → download\n"

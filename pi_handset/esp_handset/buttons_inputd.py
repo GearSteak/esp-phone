@@ -106,7 +106,64 @@ def read_mode() -> str:
     return "desktop"
 
 
-def load_uinput_mod() -> None:
+def write_mode_phone() -> None:
+    """Prefer Digivice so autostart / buttons stay in phone mode."""
+    payload = "phone\n"
+    for p in mode_file_candidates():
+        try:
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(payload, encoding="utf-8")
+        except OSError:
+            continue
+    try:
+        Path("/etc/esp-handset").mkdir(parents=True, exist_ok=True)
+        Path("/etc/esp-handset/ui_mode").write_text(payload, encoding="utf-8")
+    except OSError:
+        try:
+            subprocess.run(
+                ["sudo", "-n", "tee", "/etc/esp-handset/ui_mode"],
+                input=payload.encode(),
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=False,
+            )
+        except Exception:
+            pass
+
+
+def relaunch_digivice() -> None:
+    """Home on Linux desktop → Digivice (not Super / start menu)."""
+    write_mode_phone()
+    env = os.environ.copy()
+    env.setdefault("DISPLAY", find_display())
+    xa = find_xauthority()
+    if xa:
+        env["XAUTHORITY"] = xa
+    # Prefer GUI user home for logs
+    for home in glob.glob("/home/*"):
+        if os.path.isdir(home):
+            env.setdefault("HOME", home)
+            break
+    cmd = (
+        "sleep 0.25; "
+        "pkill -f desktop_spi_mirror.py 2>/dev/null || true; "
+        "if [ -x /usr/local/bin/handset-phone ]; then "
+        "  /usr/local/bin/handset-phone; "
+        "elif [ -x /usr/local/bin/handset-session ]; then "
+        "  /usr/local/bin/handset-session phone; "
+        "fi"
+    )
+    try:
+        subprocess.Popen(
+            ["bash", "-c", cmd],
+            start_new_session=True,
+            env=env,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        log("HOME → relaunch Digivice")
+    except Exception as e:
+        log(f"relaunch Digivice failed: {e}")
     try:
         subprocess.run(
             ["modprobe", "uinput"],
@@ -306,7 +363,6 @@ def main() -> int:
         uinput.BTN_MIDDLE,
         uinput.REL_X,
         uinput.REL_Y,
-        uinput.KEY_LEFTMETA,  # Super for desktop "Start" menu
     ]
     load_uinput_mod()
     try:
@@ -328,7 +384,7 @@ def main() -> int:
         + " ".join(f"{n}=BCM{p}" for n, p in pins.items())
     )
     log(
-        "  phone: keys · desktop: d-pad=mouse move Confirm=LMB Back=RMB Home=Super"
+        "  phone: keys · desktop: d-pad=mouse Confirm=LMB Back=RMB Home=Digivice"
     )
 
     levels = {n: gpio.read(p) for n, p in pins.items()}
@@ -376,12 +432,13 @@ def main() -> int:
                             device.emit(uinput.BTN_RIGHT, 1 if down else 0)
                             xinj.click(3, down)
                         elif name == "HOME":
-                            device.emit(uinput.KEY_LEFTMETA, 1 if down else 0)
-                            xinj.super_key(down)
+                            # Never Super/start-menu — Home always returns to Digivice
+                            if down:
+                                relaunch_digivice()
                         # d-pad: continuous motion while held (below)
                         if down and name in ("UP", "DOWN", "LEFT", "RIGHT"):
                             log(f"DESKTOP hold {name}")
-                        elif down:
+                        elif down and name != "HOME":
                             log(f"DESKTOP {name} down")
                     except Exception as e:
                         log(f"desktop emit {name}: {e}")
