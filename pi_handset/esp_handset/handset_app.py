@@ -392,6 +392,13 @@ def main() -> int:
         pass
 
     app = QApplication(sys.argv)
+    # Digivice is hard-button UI — never show a mouse pointer over the phone
+    try:
+        from PyQt5.QtCore import Qt as _QtCur
+
+        app.setOverrideCursor(_QtCur.BlankCursor)
+    except Exception:
+        pass
     store.ensure()
     bridge: Optional[EspBridge] = None
     modem: Optional[Sim7600] = None

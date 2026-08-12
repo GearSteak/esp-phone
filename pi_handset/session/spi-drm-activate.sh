@@ -123,16 +123,15 @@ xset -dpms 2>/dev/null || true
 log "done"
 xrandr --query 2>/dev/null | grep connected | tee -a "$LOG" || true
 
-# SPI dual-head almost always kills the hardware cursor plane — put the
-# amber software pointer on after layouts settle.
+# HW cursor usually works with DRM clone now — restore system cursor only.
+# Do NOT start the yellow overlay (double cursor).
 for c in \
   /usr/local/bin/digivice-fix-cursor \
   /opt/esp-handset/session/fix-cursor.sh
 do
   if [[ -f "$c" ]]; then
-    log "starting software pointer (cursor often missing on SPI clone)"
-    # slight delay so xrandr mode has stuck
-    ( sleep 0.8; bash "$c" >>"$LOG" 2>&1 ) &
+    log "restore system cursor (no yellow overlay)"
+    ( sleep 0.5; bash "$c" >>"$LOG" 2>&1 ) &
     break
   fi
 done

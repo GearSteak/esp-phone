@@ -285,31 +285,47 @@ show_desktop_chrome() {
     "$(dirname "$0")/fix-cursor.sh"
   do
     if [[ -f "$r" ]]; then
+      # Default: system cursor only (no yellow double-cursor)
       bash "$r" >>"$LOG" 2>&1 || true
       break
     fi
   done
 }
 
-# Always re-start software pointer after SPI layout changes (DRM reconfig
-# blanks the HW cursor plane; phone mode stops the overlay).
+# Always restore *system* cursor after SPI layout (no yellow overlay —
+# that caused double cursors once the black cursor came back).
 ensure_desktop_cursor() {
-  log "ensure desktop cursor (software overlay)"
+  log "ensure desktop cursor (system only, kill yellow overlay)"
   for r in \
     /usr/local/bin/digivice-fix-cursor \
     "$PREFIX/session/fix-cursor.sh" \
     "$(dirname "$0")/fix-cursor.sh"
   do
     if [[ -f "$r" ]]; then
-      # stop then start so a stale overlay doesn't stick after handset-phone
       bash "$r" --stop >>"$LOG" 2>&1 || true
-      sleep 0.2
       bash "$r" >>"$LOG" 2>&1 || true
       return 0
     fi
   done
+  pkill -f "pointer_overlay.py" 2>/dev/null || true
   log "WARN: digivice-fix-cursor missing"
   return 1
+}
+
+# Digivice phone UI: no mouse cursor
+hide_phone_cursor() {
+  log "hide cursor for Digivice UI"
+  for r in \
+    /usr/local/bin/digivice-fix-cursor \
+    "$PREFIX/session/fix-cursor.sh" \
+    "$(dirname "$0")/fix-cursor.sh"
+  do
+    if [[ -f "$r" ]]; then
+      bash "$r" --hide >>"$LOG" 2>&1 || true
+      return 0
+    fi
+  done
+  pkill -f "pointer_overlay.py" 2>/dev/null || true
 }
 
 ensure_buttons_daemon() {

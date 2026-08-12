@@ -103,6 +103,10 @@ class ScaledScreenHost(QWidget):
         )
         self.setFocusPolicy(Qt.StrongFocus)
         try:
+            self.setCursor(Qt.BlankCursor)
+        except Exception:
+            pass
+        try:
             self.setScreen(screen)
         except Exception:
             pass
