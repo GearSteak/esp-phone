@@ -41,7 +41,13 @@ def _usable(w: QWidget) -> bool:
         return False
     if w.focusPolicy() == Qt.NoFocus:
         return False
-    # Skip tiny chrome back if user prefers cycling content — keep it; Back key exists
+    # OSK has its own stick navigation — never steal focus onto keycaps
+    # from page digi_nav (also avoids ghosts if OSK visibility glitches)
+    p: Optional[QWidget] = w
+    while p is not None:
+        if p.objectName() == "oskRoot":
+            return False
+        p = p.parentWidget()
     return True
 
 

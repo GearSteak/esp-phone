@@ -9,7 +9,10 @@ Mode file (phone | desktop), checked every 0.4s:
   ~/.esp-handset/session_mode  (every user home)
 
 Phone  — arrows / Enter / Esc / Home  (uinput + xdotool keys)
-Desktop — d-pad moves pointer, Confirm=LMB, Back=RMB, Home=Super (menu)
+Desktop — d-pad=mouse, Confirm=LMB, Back=RMB, Home=relaunch Digivice
+
+If Digivice (handset_app) is running, mode is always phone — a stale
+desktop mode file must not steal the pad into mouse mode.
 
 handset-session writes mode on handset-phone / handset-desktop.
 """
@@ -81,7 +84,23 @@ def mode_file_candidates() -> List[Path]:
     return paths
 
 
+def digivice_running() -> bool:
+    try:
+        r = subprocess.run(
+            ["pgrep", "-f", "handset_app.py"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+        return r.returncode == 0
+    except Exception:
+        return False
+
+
 def read_mode() -> str:
+    # Digivice UI up → always phone keys (ignore stale desktop mode file)
+    if digivice_running():
+        return "phone"
     for p in mode_file_candidates():
         try:
             if not p.is_file():
@@ -91,18 +110,6 @@ def read_mode() -> str:
                 return m
         except OSError:
             continue
-    # Digivice running → phone; else prefer desktop so buttons mouse the desk
-    try:
-        r = subprocess.run(
-            ["pgrep", "-f", "handset_app.py"],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            check=False,
-        )
-        if r.returncode == 0:
-            return "phone"
-    except Exception:
-        pass
     return "desktop"
 
 
@@ -133,13 +140,15 @@ def write_mode_phone() -> None:
 
 def relaunch_digivice() -> None:
     """Home on Linux desktop → Digivice (not Super / start menu)."""
+    if digivice_running():
+        log("HOME ignored — Digivice already running (use phone-mode Home)")
+        return
     write_mode_phone()
     env = os.environ.copy()
     env.setdefault("DISPLAY", find_display())
     xa = find_xauthority()
     if xa:
         env["XAUTHORITY"] = xa
-    # Prefer GUI user home for logs
     for home in glob.glob("/home/*"):
         if os.path.isdir(home):
             env.setdefault("HOME", home)
