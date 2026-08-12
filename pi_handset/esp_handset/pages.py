@@ -787,7 +787,7 @@ def make_lora_page(bridge, on_back, on_status) -> QWidget:
     return page_chrome("LoRa SOS", body, on_back)
 
 
-def make_gps_page(modem, on_back, on_status) -> QWidget:
+def make_gps_page(modem, on_back, on_status, get_modem=None) -> QWidget:
     """SIM7600 GNSS — status on-page (no blank QMessageBox on 240×320)."""
     from PyQt5.QtCore import QTimer
 
@@ -830,6 +830,11 @@ def make_gps_page(modem, on_back, on_status) -> QWidget:
     timer = QTimer(body)
     timer.setInterval(4000)
 
+    def _m():
+        if get_modem:
+            return get_modem()
+        return modem
+
     def _show(fix: dict, err: str = "") -> None:
         if err:
             summary.setText("ERROR")
@@ -865,19 +870,21 @@ def make_gps_page(modem, on_back, on_status) -> QWidget:
             detail.setText(str(fix.get("detail") or ""))
 
     def _poll() -> None:
-        if not modem:
-            _show({}, "SIM7600 not connected.\nPWR→3V3 · USB to Pi\nSettings→Network→Scan")
+        m = _m()
+        if not m:
+            _show({}, "SIM7600 not connected.\nSettings→Network→Reconnect")
             return
         try:
-            fix = modem.gps_fix()
+            fix = m.gps_fix()
             _show(fix)
         except Exception as e:
             msg = str(e).strip() or repr(e) or "Unknown modem error"
             _show({}, msg)
 
     def do_start() -> None:
-        if not modem:
-            _show({}, "SIM7600 not connected.\nPWR→3V3 · USB to Pi\nSettings→Network→Scan")
+        m = _m()
+        if not m:
+            _show({}, "SIM7600 not connected.\nSettings→Network→Reconnect")
             return
         summary.setText("STARTING…")
         summary.setStyleSheet(
@@ -886,7 +893,7 @@ def make_gps_page(modem, on_back, on_status) -> QWidget:
         )
         detail.setText("Sending AT+CGPS=1…")
         try:
-            modem.gps_on()
+            m.gps_on()
             state["on"] = True
             if not timer.isActive():
                 timer.start()
@@ -901,9 +908,10 @@ def make_gps_page(modem, on_back, on_status) -> QWidget:
     def do_stop() -> None:
         timer.stop()
         state["on"] = False
-        if modem:
+        m = _m()
+        if m:
             try:
-                modem.gps_off()
+                m.gps_off()
             except Exception:
                 pass
         summary.setText("GPS off")
@@ -922,16 +930,16 @@ def make_gps_page(modem, on_back, on_status) -> QWidget:
     poll_btn.clicked.connect(_poll)
     off_btn.clicked.connect(do_stop)
     timer.timeout.connect(on_tick)
-    # Initial modem presence check (no popup)
-    if not modem:
-        _show({}, "SIM7600 not connected.\nPWR→3V3 · USB to Pi\nSettings→Network→Scan")
+    m0 = _m()
+    if not m0:
+        _show({}, "SIM7600 not connected.\nSettings→Network→Reconnect")
     else:
         try:
-            port = getattr(modem, "port", "?")
-            detail.setText(f"Modem AT: {port}\nPress Start GPS")
+            detail.setText(f"Modem AT: {m0.port}\nPress Start GPS")
         except Exception:
             pass
     return page_chrome("GPS", body, on_back)
+
 
 
 def make_notes_page(on_back) -> QWidget:
@@ -2116,32 +2124,46 @@ def make_help_page(on_back) -> QWidget:
     )
 
 
-def make_network_page(modem, on_back, on_status) -> QWidget:
+def make_network_page(
+    modem,
+    on_back,
+    on_status,
+    get_modem=None,
+    set_modem=None,
+) -> QWidget:
     body = QWidget()
     lay = QVBoxLayout(body)
     lab = QLabel("Tap refresh for modem")
     lab.setWordWrap(True)
     lab.setStyleSheet("font-size:11px;")
-    btn = QPushButton("Refresh modem STATUS")
-    btn.setMinimumHeight(30)
-    scan = QPushButton("Scan USB / jumpers")
-    scan.setMinimumHeight(30)
+    btn = QPushButton("Refresh status")
+    btn.setMinimumHeight(28)
+    scan = QPushButton("Scan USB ports")
+    scan.setMinimumHeight(28)
+    recon = QPushButton("Reconnect modem")
+    recon.setMinimumHeight(30)
+    recon.setStyleSheet("font-weight:700;")
     lay.addWidget(lab)
     lay.addWidget(btn)
     lay.addWidget(scan)
+    lay.addWidget(recon)
     lay.addStretch(1)
 
+    def _cur():
+        if get_modem:
+            return get_modem()
+        return modem
+
     def refresh():
-        if not modem:
+        m = _cur()
+        if not m:
             from esp_handset.sim7600 import Sim7600
 
-            lab.setText(
-                "SIM7600 not connected\n\n" + Sim7600.diagnose()
-            )
+            lab.setText("SIM7600 not connected\n\n" + Sim7600.diagnose())
             return
         try:
-            csq = modem.signal() or "CSQ ?"
-            lab.setText(f"Port: {modem.port}\n{csq}")
+            csq = m.signal() or "CSQ ?"
+            lab.setText(f"Port: {m.port}\n{csq}")
             on_status(csq)
         except Exception as e:
             lab.setText(str(e).strip() or "modem error")
@@ -2152,7 +2174,32 @@ def make_network_page(modem, on_back, on_status) -> QWidget:
         lab.setText(Sim7600.diagnose())
         on_status("modem scan")
 
+    def do_reconnect():
+        from esp_handset.sim7600 import Sim7600
+
+        lab.setText("Connecting…\nprobing ttyUSB for AT")
+        old = _cur()
+        try:
+            if old is not None:
+                try:
+                    old.close()
+                except Exception:
+                    pass
+            m = Sim7600()
+            m.open(retries=8, retry_s=2.0)
+            if set_modem:
+                set_modem(m)
+            lab.setText(f"Connected!\nPort: {m.port}\n" + (m.signal() or ""))
+            on_status(f"modem {m.port}")
+        except Exception as e:
+            if set_modem:
+                set_modem(None)
+            msg = str(e).strip() or "reconnect failed"
+            lab.setText(msg + "\n\n" + Sim7600.diagnose())
+            on_status("modem fail")
+
     btn.clicked.connect(refresh)
     scan.clicked.connect(do_scan)
+    recon.clicked.connect(do_reconnect)
     refresh()
     return page_chrome("Network", body, on_back)

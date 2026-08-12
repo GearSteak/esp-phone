@@ -59,16 +59,49 @@ class Sim7600:
             for p in list_ports.comports():
                 vid = p.vid or 0
                 desc = (p.description or "").lower()
+                # SimTech / Qualcomm modem interfaces — not CP2102 UART bridge
                 if vid in (0x1E0E, 0x05C6) or "simcom" in desc or "sim7600" in desc:
                     candidates.append(p.device)
-        for path in sorted(glob.glob("/dev/ttyUSB*"), reverse=True):
-            if path not in candidates:
-                candidates.append(path)
-        for want in ("ttyUSB2", "ttyUSB3", "ttyUSB1"):
+        # Prefer typical AT interfaces (often ttyUSB2 on SimTech)
+        ranked: list[str] = []
+        for want in ("ttyUSB2", "ttyUSB3", "ttyUSB1", "ttyUSB4", "ttyUSB0", "ttyUSB5"):
             for c in candidates:
-                if c.endswith(want):
-                    return c
-        return candidates[0] if candidates else None
+                if c.endswith(want) and c not in ranked:
+                    ranked.append(c)
+        for c in candidates:
+            if c not in ranked:
+                ranked.append(c)
+        if ranked:
+            return ranked[0]
+        # Last resort: any ttyUSB (may be wrong jack — probe later)
+        usbs = sorted(glob.glob("/dev/ttyUSB*"))
+        return usbs[2] if len(usbs) > 2 else (usbs[0] if usbs else None)
+
+    @staticmethod
+    def list_usb_serial() -> list[str]:
+        """One line per /dev/ttyUSB* with VID if known."""
+        lines: list[str] = []
+        by_dev: dict[str, object] = {}
+        if list_ports:
+            for p in list_ports.comports():
+                by_dev[p.device] = p
+        for path in sorted(glob.glob("/dev/ttyUSB*")):
+            p = by_dev.get(path)
+            if p is not None:
+                vid = getattr(p, "vid", None) or 0
+                pid = getattr(p, "pid", None) or 0
+                desc = (getattr(p, "description", None) or "")[:28]
+                tag = ""
+                if vid == 0x1E0E:
+                    tag = " SIM7600-modem"
+                elif vid == 0x10C4:
+                    tag = " CP2102-UART-jack?"
+                elif vid == 0x05C6:
+                    tag = " Qualcomm"
+                lines.append(f"{os.path.basename(path)} {vid:04x}:{pid:04x}{tag} {desc}")
+            else:
+                lines.append(os.path.basename(path))
+        return lines
 
     @staticmethod
     def diagnose() -> str:
@@ -78,48 +111,142 @@ class Sim7600:
         if os.path.exists(prefer):
             try:
                 real = os.path.realpath(prefer)
-                lines.append(f"symlink OK: {prefer}")
+                lines.append(f"symlink: {prefer}")
                 lines.append(f" → {real}")
                 if real.endswith(("serial0", "ttyAMA0", "ttyS0")):
-                    lines.append("WARN: points at Pi UART — remove stale link")
+                    lines.append("WARN: points at Pi UART — remove it")
             except OSError:
                 lines.append(f"{prefer} exists")
         else:
-            lines.append("no /dev/sim7600-at")
-        usbs = sorted(glob.glob("/dev/ttyUSB*"))
-        if usbs:
-            lines.append("ttyUSB: " + ", ".join(os.path.basename(u) for u in usbs))
+            lines.append("no /dev/sim7600-at yet")
+        usb_lines = Sim7600.list_usb_serial()
+        if usb_lines:
+            lines.append("USB serial:")
+            lines.extend("  " + x for x in usb_lines)
+            if any("CP2102" in x for x in usb_lines) and not any(
+                "SIM7600-modem" in x or "1e0e" in x.lower() for x in usb_lines
+            ):
+                lines.append("")
+                lines.append("Wrong USB jack?")
+                lines.append("Use HAT 'USB' (modem),")
+                lines.append("not 'USB TO UART'.")
         else:
-            lines.append("no /dev/ttyUSB* at all")
+            lines.append("no /dev/ttyUSB*")
             lines.append("")
-            lines.append("Fix jumpers / USB:")
-            lines.append("• PWR jumper → 3V3 (not D6)")
-            lines.append("• USB cable Pi ↔ HAT USB")
-            lines.append("• Wait 20s for NET LED")
-            lines.append("• Flight jumper = off")
+            lines.append("Modem not enumerating:")
+            lines.append("• PWR→3V3, wait 20s")
+            lines.append("• Data USB cable (not charge-only)")
+            lines.append("• Try other Pi USB port")
         found = Sim7600.find_at_port()
         if found:
-            lines.append(f"will use: {found}")
+            lines.append(f"pick: {found}")
         else:
             lines.append("AT port: NOT FOUND")
         return "\n".join(lines)
 
-    def open(self) -> None:
+    @staticmethod
+    def _probe_at(port: str, baud: int = 115200) -> bool:
+        """True if this serial port answers AT with OK."""
+        if serial is None:
+            return False
+        try:
+            ser = serial.Serial(port, baud, timeout=0.4)
+        except Exception:
+            return False
+        try:
+            ser.reset_input_buffer()
+            ser.write(b"AT\r")
+            deadline = time.time() + 1.2
+            buf = ""
+            while time.time() < deadline:
+                chunk = ser.read(64)
+                if chunk:
+                    buf += chunk.decode("utf-8", errors="replace")
+                    if "OK" in buf:
+                        return True
+                    if "ERROR" in buf:
+                        break
+                else:
+                    time.sleep(0.05)
+            return False
+        except Exception:
+            return False
+        finally:
+            try:
+                ser.close()
+            except Exception:
+                pass
+
+    @classmethod
+    def find_live_at_port(cls, baud: int = 115200) -> Optional[str]:
+        """Scan ttyUSB* and return the first that answers AT."""
+        prefer = cls.find_at_port()
+        ordered: list[str] = []
+        if prefer:
+            ordered.append(prefer)
+        if list_ports:
+            for p in list_ports.comports():
+                vid = p.vid or 0
+                if vid in (0x1E0E, 0x05C6) and p.device not in ordered:
+                    ordered.append(p.device)
+        for path in sorted(glob.glob("/dev/ttyUSB*")):
+            if path not in ordered:
+                ordered.append(path)
+        for port in ordered:
+            if cls._probe_at(port, baud=baud):
+                return port
+        return None
+
+    def open(self, retries: int = 1, retry_s: float = 2.0) -> None:
         if serial is None:
             raise RuntimeError("pyserial not installed")
-        port = self.port or self.find_at_port()
-        if not port:
-            raise RuntimeError(
-                "No SIM7600 AT port (plug HAT USB / Zero pogo; check /dev/ttyUSB*)"
-            )
-        self.port = port
-        self._ser = serial.Serial(port, self.baud, timeout=0.2)
-        self._at("ATE0")
-        self._at("AT+CMGF=1")  # text mode
-        self._at("AT+CNMI=2,1,0,0,0")
-        self._stop.clear()
-        self._thread = threading.Thread(target=self._reader, daemon=True)
-        self._thread.start()
+        last_err: Optional[Exception] = None
+        for attempt in range(max(1, retries)):
+            port = self.port or self.find_live_at_port(baud=self.baud) or self.find_at_port()
+            if not port:
+                last_err = RuntimeError(
+                    "No SIM7600 AT port yet.\n"
+                    "Wait for boot, check USB jack\n"
+                    "(modem USB, not UART)."
+                )
+                time.sleep(retry_s)
+                continue
+            try:
+                self.port = port
+                self._ser = serial.Serial(port, self.baud, timeout=0.2)
+                # Confirm AT on the opened handle
+                r = self._at("AT", wait=1.5)
+                if "OK" not in r:
+                    self._ser.close()
+                    self._ser = None
+                    # Maybe wrong interface — probe others
+                    live = self.find_live_at_port(baud=self.baud)
+                    if live and live != port:
+                        self.port = live
+                        self._ser = serial.Serial(live, self.baud, timeout=0.2)
+                        r = self._at("AT", wait=1.5)
+                    if not self._ser or "OK" not in (r or ""):
+                        raise RuntimeError(
+                            f"Opened {port} but AT failed.\n"
+                            "Try Network → Reconnect."
+                        )
+                self._at("ATE0")
+                self._at("AT+CMGF=1")  # text mode
+                self._at("AT+CNMI=2,1,0,0,0")
+                self._stop.clear()
+                self._thread = threading.Thread(target=self._reader, daemon=True)
+                self._thread.start()
+                return
+            except Exception as e:
+                last_err = e
+                try:
+                    if self._ser:
+                        self._ser.close()
+                except Exception:
+                    pass
+                self._ser = None
+                time.sleep(retry_s)
+        raise last_err or RuntimeError("SIM7600 open failed")
 
     def close(self) -> None:
         self._stop.set()

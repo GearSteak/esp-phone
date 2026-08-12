@@ -105,6 +105,21 @@ class BridgeSignals(QObject):
 def build_app(bridge: Optional[EspBridge], modem: Optional[Sim7600]) -> PhoneShell:
     shell = PhoneShell()
     DATA.mkdir(parents=True, exist_ok=True)
+    signals = BridgeSignals()
+    # Mutable so Settings → Network → Reconnect can attach a late modem
+    modem_box: dict = {"m": modem}
+
+    def get_modem() -> Optional[Sim7600]:
+        return modem_box.get("m")
+
+    def set_modem(m: Optional[Sim7600]) -> None:
+        old = modem_box.get("m")
+        modem_box["m"] = m
+        if m is not None and m is not old:
+            try:
+                m.on_sms(lambda n, t: signals.sms.emit(n, t))
+            except Exception:
+                pass
 
     def status(msg: str) -> None:
         shell.set_status_right(msg)
@@ -185,7 +200,7 @@ def build_app(bridge: Optional[EspBridge], modem: Optional[Sim7600]) -> PhoneShe
     shell.register_page("gallery", pages.make_gallery_page(back, status))
     lora_page = pages.make_lora_page(bridge, back, status)
     shell.register_page("lora", lora_page)
-    shell.register_page("gps", pages.make_gps_page(modem, back, status))
+    shell.register_page("gps", pages.make_gps_page(modem, back, status, get_modem=get_modem))
     shell.register_page("notes", pages.make_notes_page(back))
     shell.register_page("todos", pages.make_todos_page(back))
     shell.register_page("clock_face", pages.make_clock_page(back))
@@ -195,7 +210,12 @@ def build_app(bridge: Optional[EspBridge], modem: Optional[Sim7600]) -> PhoneShe
         "settings",
         pages.make_settings_hub(back, open_page, on_linux),
     )
-    shell.register_page("set_network", pages.make_network_page(modem, back, status))
+    shell.register_page(
+        "set_network",
+        pages.make_network_page(
+            modem, back, status, get_modem=get_modem, set_modem=set_modem
+        ),
+    )
     shell.register_page("set_about", pages.make_about_page(modem, back))
     shell.register_page("set_update", pages.make_update_page(back))
     shell.register_page("set_mouse", pages.make_mouse_page(back))
