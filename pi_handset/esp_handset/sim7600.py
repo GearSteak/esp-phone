@@ -70,6 +70,40 @@ class Sim7600:
                     return c
         return candidates[0] if candidates else None
 
+    @staticmethod
+    def diagnose() -> str:
+        """Human-readable modem USB presence (for Network / GPS UI)."""
+        lines: list[str] = []
+        prefer = "/dev/sim7600-at"
+        if os.path.exists(prefer):
+            try:
+                real = os.path.realpath(prefer)
+                lines.append(f"symlink OK: {prefer}")
+                lines.append(f" → {real}")
+                if real.endswith(("serial0", "ttyAMA0", "ttyS0")):
+                    lines.append("WARN: points at Pi UART — remove stale link")
+            except OSError:
+                lines.append(f"{prefer} exists")
+        else:
+            lines.append("no /dev/sim7600-at")
+        usbs = sorted(glob.glob("/dev/ttyUSB*"))
+        if usbs:
+            lines.append("ttyUSB: " + ", ".join(os.path.basename(u) for u in usbs))
+        else:
+            lines.append("no /dev/ttyUSB* at all")
+            lines.append("")
+            lines.append("Fix jumpers / USB:")
+            lines.append("• PWR jumper → 3V3 (not D6)")
+            lines.append("• USB cable Pi ↔ HAT USB")
+            lines.append("• Wait 20s for NET LED")
+            lines.append("• Flight jumper = off")
+        found = Sim7600.find_at_port()
+        if found:
+            lines.append(f"will use: {found}")
+        else:
+            lines.append("AT port: NOT FOUND")
+        return "\n".join(lines)
+
     def open(self) -> None:
         if serial is None:
             raise RuntimeError("pyserial not installed")

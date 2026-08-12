@@ -2119,24 +2119,40 @@ def make_help_page(on_back) -> QWidget:
 def make_network_page(modem, on_back, on_status) -> QWidget:
     body = QWidget()
     lay = QVBoxLayout(body)
-    lab = QLabel("Tap refresh for modem CSQ")
+    lab = QLabel("Tap refresh for modem")
     lab.setWordWrap(True)
+    lab.setStyleSheet("font-size:11px;")
     btn = QPushButton("Refresh modem STATUS")
+    btn.setMinimumHeight(30)
+    scan = QPushButton("Scan USB / jumpers")
+    scan.setMinimumHeight(30)
     lay.addWidget(lab)
     lay.addWidget(btn)
+    lay.addWidget(scan)
     lay.addStretch(1)
 
     def refresh():
         if not modem:
-            lab.setText("SIM7600 not connected\nUse Wi‑Fi for SIP testing.")
+            from esp_handset.sim7600 import Sim7600
+
+            lab.setText(
+                "SIM7600 not connected\n\n" + Sim7600.diagnose()
+            )
             return
         try:
             csq = modem.signal() or "CSQ ?"
             lab.setText(f"Port: {modem.port}\n{csq}")
             on_status(csq)
         except Exception as e:
-            lab.setText(str(e))
+            lab.setText(str(e).strip() or "modem error")
+
+    def do_scan():
+        from esp_handset.sim7600 import Sim7600
+
+        lab.setText(Sim7600.diagnose())
+        on_status("modem scan")
 
     btn.clicked.connect(refresh)
+    scan.clicked.connect(do_scan)
     refresh()
     return page_chrome("Network", body, on_back)
