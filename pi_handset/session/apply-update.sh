@@ -169,6 +169,7 @@ if [[ -d "$STAGE" && -f "$STAGE/.ready" ]]; then
     home-relaunch.sh:digivice-home-relaunch \
     apply-update.sh:digivice-apply-update \
     digivice-gb.sh:digivice-gb \
+    digivice-stop-gb.sh:digivice-stop-gb \
     full-update.sh:digivice-full-update
   do
     src="${pair%%:*}"

@@ -368,6 +368,13 @@ launch_phone() {
     log "not launching Digivice (recovery flag)"
     return 0
   fi
+  # Break GB handoff loops: never let digivice-gb/retroarch keep killing Digivice
+  pkill -9 -f '/usr/local/bin/digivice-gb' 2>/dev/null || true
+  pkill -9 -f 'digivice-gb.sh' 2>/dev/null || true
+  pkill -9 -f 'retroarch' 2>/dev/null || true
+  pkill -9 -f 'mgba-sdl' 2>/dev/null || true
+  pkill -9 -f 'mgba-qt' 2>/dev/null || true
+  rm -f /run/digivice-gb-rom 2>/dev/null || true
   # Digivice owns SPI — stop desktop mirror first; kill any prior phone UI
   # (two writers on ST7789 = static/snow on the panel)
   stop_desktop_spi_mirror
@@ -415,6 +422,13 @@ case "$cmd" in
       exit 0
     fi
     m="$(mode_get)"
+    # Stale gb mode from a crashed handoff — never boot into GB limbo
+    if [[ "$m" == "gb" ]]; then
+      log "autostart: clearing stale session_mode=gb → phone"
+      mode_set phone
+      m=phone
+      pkill -9 -f 'digivice-gb|retroarch|mgba-sdl|mgba-qt' 2>/dev/null || true
+    fi
     log "autostart mode=$m"
     if [[ "$m" != "phone" ]]; then
       show_desktop_chrome

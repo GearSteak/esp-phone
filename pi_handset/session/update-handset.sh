@@ -178,6 +178,7 @@ install_tree() {
       "update-handset.sh:digivice-update" \
       "apply-update.sh:digivice-apply-update" \
       "digivice-gb.sh:digivice-gb" \
+      "digivice-stop-gb.sh:digivice-stop-gb" \
       "ensure-gb-roms.sh:digivice-gb-roms-dir"
     do
       src="${pair%%:*}"
@@ -207,6 +208,7 @@ install_tree() {
       "home-relaunch.sh:digivice-home-relaunch" \
       "apply-update.sh:digivice-apply-update" \
       "digivice-gb.sh:digivice-gb" \
+      "digivice-stop-gb.sh:digivice-stop-gb" \
       "ensure-gb-roms.sh:digivice-gb-roms-dir" \
       "power.sh:digivice-power" \
       "full-update.sh:digivice-full-update"

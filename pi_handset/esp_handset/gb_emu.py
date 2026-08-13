@@ -1,13 +1,11 @@
-"""Game Boy / GBC ROM picker (receive via Tools → Transfer)."""
+"""Game Boy / GBC ROM picker (external emu disabled — SPI handoff unsafe)."""
 
 from __future__ import annotations
 
-import os
-import subprocess
 from pathlib import Path
 from typing import Callable, List, Optional
 
-from PyQt5.QtCore import Qt, QTimer
+from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (
     QLabel,
     QListWidget,
@@ -54,41 +52,19 @@ def _list_roms() -> List[Path]:
     return found
 
 
-def _find_launcher() -> str:
-    for p in (
-        "/usr/local/bin/digivice-gb",
-        "/opt/esp-handset/session/digivice-gb.sh",
-        str(Path(__file__).resolve().parents[1] / "session" / "digivice-gb.sh"),
-        str(Path.home() / "esp-phone" / "pi_handset" / "session" / "digivice-gb.sh"),
-    ):
-        if os.path.isfile(p):
-            return p
-    return "/usr/local/bin/digivice-gb"
-
-
-def _emu_hint() -> str:
-    for cmd in ("retroarch", "mgba-sdl", "mgba-qt", "mgba"):
-        if any(
-            os.path.isfile(os.path.join(d, cmd))
-            for d in os.environ.get("PATH", "/usr/bin:/bin").split(":")
-        ):
-            return f"Emulator: {cmd}"
-    return "Need: sudo apt install retroarch libretro-gambatte"
-
-
 def make_gb_page(
     on_back: Callable[[], None],
     *,
     on_receive: Optional[Callable[[], None]] = None,
 ) -> QWidget:
-    """Games → Game Boy: pick ROM; Receive opens Wi‑Fi Transfer (ROMs)."""
+    """Games → Game Boy: list/Transfer only until in-UI emu exists."""
     body = QWidget()
     lay = QVBoxLayout(body)
     lay.setContentsMargins(2, 2, 2, 2)
     lay.setSpacing(2)
     tip = QLabel(
-        "A=Confirm B=Back Start=Home\n"
-        "Select=Home+A · Exit=A+B+Home"
+        "External emu disabled — blanked SPI.\n"
+        "Receive ROMs via Transfer; Play later."
     )
     tip.setWordWrap(True)
     tip.setStyleSheet("color:#9ab;font-size:9px;")
@@ -101,9 +77,10 @@ def make_gb_page(
         "QListWidget::item { padding: 4px; min-height: 22px; }"
         "QListWidget::item:selected { background:#FFE600; color:#000; }"
     )
-    play = QPushButton("Play")
+    play = QPushButton("Play (disabled)")
     play.setFixedHeight(28)
     play.setStyleSheet("font-weight:800;")
+    play.setEnabled(False)
     recv = QPushButton("Receive ROMs (Wi‑Fi)")
     recv.setFixedHeight(26)
     refresh = QPushButton("Reload")
@@ -118,7 +95,7 @@ def make_gb_page(
     def refresh_list() -> None:
         lst.clear()
         roms = _list_roms()
-        status.setText(f"{_emu_hint()}\n{len(roms)} ROM(s) · Receive = Transfer")
+        status.setText(f"Play off (SPI) · Transfer OK\n{len(roms)} ROM(s)")
         if not roms:
             empty = QListWidgetItem("No ROMs yet\n→ Receive ROMs (Wi‑Fi)")
             empty.setFlags(Qt.NoItemFlags)
@@ -131,64 +108,10 @@ def make_gb_page(
         lst.setCurrentRow(0)
 
     def launch() -> None:
-        item = lst.currentItem()
-        if item is None:
-            status.setText("Pick a ROM first")
-            return
-        path = item.data(Qt.UserRole)
-        if not path or not Path(str(path)).is_file():
-            status.setText("Invalid ROM")
-            return
-        rom = str(path)
-        DATA.mkdir(parents=True, exist_ok=True)
-        try:
-            (DATA / "gb-rom").write_text(rom + "\n", encoding="utf-8")
-        except OSError:
-            pass
-        try:
-            Path("/run/digivice-gb-rom").write_text(rom + "\n", encoding="utf-8")
-        except OSError:
-            pass
-
-        launcher = _find_launcher()
-        status.setText("Starting Game Boy…")
-        env = os.environ.copy()
-        env.setdefault("DISPLAY", ":0")
-        log_path = DATA / "gb.log"
-        try:
-            logf = open(log_path, "a", encoding="utf-8")
-        except OSError:
-            logf = subprocess.DEVNULL
-        try:
-            subprocess.Popen(
-                ["bash", launcher, rom],
-                start_new_session=True,
-                env=env,
-                stdout=logf,
-                stderr=logf,
-                stdin=subprocess.DEVNULL,
-            )
-        except Exception as e:
-            if logf is not subprocess.DEVNULL:
-                try:
-                    logf.close()
-                except Exception:
-                    pass
-            status.setText(f"Launch failed: {e}")
-            return
-
-        def _quit() -> None:
-            try:
-                from PyQt5.QtWidgets import QApplication
-
-                app = QApplication.instance()
-                if app is not None:
-                    app.quit()
-            except Exception:
-                pass
-
-        # Give digivice-gb time to set mode=gb before we release SPI
-        QTimer.singleShot(900, _quit)
+        status.setText(
+            "Play disabled — SPI handoff broke the screen.\n"
+            "ROMs still list/Transfer OK."
+        )
 
     def do_receive() -> None:
         if on_receive is not None:
