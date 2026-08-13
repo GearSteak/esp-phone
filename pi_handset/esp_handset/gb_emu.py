@@ -34,6 +34,13 @@ def _list_roms() -> List[Path]:
     for d in ROM_DIRS:
         try:
             d.mkdir(parents=True, exist_ok=True)
+            readme = d / "README.txt"
+            if not readme.is_file():
+                readme.write_text(
+                    "Drop your .gb / .gbc ROMs here.\n"
+                    "Digivice → Games → Game Boy\n",
+                    encoding="utf-8",
+                )
         except OSError:
             pass
         if not d.is_dir():

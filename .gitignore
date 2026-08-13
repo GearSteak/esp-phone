@@ -11,3 +11,9 @@ include/Config.local.h
 *.pem
 sip.env
 .esp-handset/
+
+# Never commit Game Boy ROMs (personal copies stay local / on the Pi only)
+*.gb
+*.gbc
+*.sgb
+!pi_handset/roms/gb/README.txt

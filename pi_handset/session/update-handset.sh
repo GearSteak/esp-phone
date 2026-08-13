@@ -177,7 +177,8 @@ install_tree() {
       "gui-update.sh:digivice-gui-update" \
       "update-handset.sh:digivice-update" \
       "apply-update.sh:digivice-apply-update" \
-      "digivice-gb.sh:digivice-gb"
+      "digivice-gb.sh:digivice-gb" \
+      "ensure-gb-roms.sh:digivice-gb-roms-dir"
     do
       src="${pair%%:*}"
       dst="${pair##*:}"

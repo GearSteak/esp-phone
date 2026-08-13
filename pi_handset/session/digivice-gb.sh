@@ -17,6 +17,13 @@ LOG_DIR="${HOME:-/tmp}/.esp-handset"
 mkdir -p "$LOG_DIR" /etc/esp-handset "$HOME/.esp-handset/roms/gb" 2>/dev/null || true
 LOG="$LOG_DIR/gb.log"
 
+# Ensure drop-folder + README exist (idempotent)
+if [[ -x /usr/local/bin/digivice-gb-roms-dir ]]; then
+  /usr/local/bin/digivice-gb-roms-dir >/dev/null 2>&1 || true
+elif [[ -f "$PREFIX/session/ensure-gb-roms.sh" ]]; then
+  bash "$PREFIX/session/ensure-gb-roms.sh" >/dev/null 2>&1 || true
+fi
+
 log() { echo "[$(date '+%H:%M:%S')] $*" | tee -a "$LOG"; }
 
 write_mode() {

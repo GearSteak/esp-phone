@@ -216,6 +216,11 @@ if [[ -f "$ROOT/session/digivice-gb.sh" ]]; then
   install -m 755 "$ROOT/session/digivice-gb.sh" "$PREFIX/session/digivice-gb.sh"
   install -m 755 "$ROOT/session/digivice-gb.sh" /usr/local/bin/digivice-gb
 fi
+if [[ -f "$ROOT/session/ensure-gb-roms.sh" ]]; then
+  install -m 755 "$ROOT/session/ensure-gb-roms.sh" "$PREFIX/session/ensure-gb-roms.sh"
+  install -m 755 "$ROOT/session/ensure-gb-roms.sh" /usr/local/bin/digivice-gb-roms-dir
+  bash "$ROOT/session/ensure-gb-roms.sh" 2>&1 | tee -a "$LOG" || true
+fi
 if [[ -f "$ROOT/session/install-home-request.sh" ]]; then
   install -m 755 "$ROOT/session/install-home-request.sh" "$PREFIX/session/install-home-request.sh"
   bash "$ROOT/session/install-home-request.sh" 2>&1 | tee -a "$LOG" || true
