@@ -3244,6 +3244,8 @@ def make_network_page(
     get_modem=None,
     set_modem=None,
 ) -> QWidget:
+    from pathlib import Path
+
     body = QWidget()
     lay = QVBoxLayout(body)
     lab = QLabel("Tap refresh for modem")
