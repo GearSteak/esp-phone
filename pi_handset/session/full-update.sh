@@ -293,6 +293,19 @@ if [[ -f "$ROOT/session/digivice-modem-uart.sh" ]]; then
   install -m 755 "$ROOT/session/digivice-modem-uart.sh" "$PREFIX/session/digivice-modem-uart.sh"
   install -m 755 "$ROOT/session/digivice-modem-uart.sh" /usr/local/bin/digivice-modem-uart
 fi
+if [[ -f "$ROOT/session/digivice-modem-doctor.sh" ]]; then
+  install -m 755 "$ROOT/session/digivice-modem-doctor.sh" "$PREFIX/session/digivice-modem-doctor.sh"
+  install -m 755 "$ROOT/session/digivice-modem-doctor.sh" /usr/local/bin/digivice-modem-doctor
+  log "Running modem doctor…"
+  bash "$ROOT/session/digivice-modem-doctor.sh" 2>&1 | tee -a "$LOG" || true
+  # Copy report next to repo so it's easy to scp/paste
+  if [[ -f "${USER_HOME}/.esp-handset/modem-doctor.txt" ]]; then
+    cp -f "${USER_HOME}/.esp-handset/modem-doctor.txt" \
+      "$REPO/modem-doctor-LATEST.txt" 2>/dev/null || true
+    chown "$USER_NAME:$USER_NAME" "$REPO/modem-doctor-LATEST.txt" 2>/dev/null || true
+    log "modem report → $REPO/modem-doctor-LATEST.txt  (paste into Cursor)"
+  fi
+fi
 
 if [[ -d "$ROOT/display" ]]; then
   install -m 755 "$ROOT/display/install-spi-userspace.sh" /usr/local/bin/digivice-install-spi-userspace 2>/dev/null || true
@@ -330,6 +343,8 @@ $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-power
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-ensure-buttons
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-ensure-gb
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-stop-gb
+$USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-modem-uart
+$USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-modem-doctor
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-fix-cursor
 $USER_NAME ALL=(root) NOPASSWD: $PREFIX/session/full-update.sh
 $USER_NAME ALL=(root) NOPASSWD: $PREFIX/session/update-handset.sh

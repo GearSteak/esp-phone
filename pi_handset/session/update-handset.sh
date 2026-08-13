@@ -216,6 +216,7 @@ install_tree() {
       "digivice-stop-gb.sh:digivice-stop-gb" \
       "ensure-gb-wrappers.sh:digivice-ensure-gb" \
       "digivice-modem-uart.sh:digivice-modem-uart" \
+      "digivice-modem-doctor.sh:digivice-modem-doctor" \
       "ensure-gb-roms.sh:digivice-gb-roms-dir" \
       "power.sh:digivice-power" \
       "full-update.sh:digivice-full-update"

@@ -162,6 +162,10 @@ if [[ -f "$ROOT/session/digivice-modem-uart.sh" ]]; then
   install -m 755 "$ROOT/session/digivice-modem-uart.sh" "$PREFIX/session/digivice-modem-uart.sh"
   install -m 755 "$ROOT/session/digivice-modem-uart.sh" /usr/local/bin/digivice-modem-uart
 fi
+if [[ -f "$ROOT/session/digivice-modem-doctor.sh" ]]; then
+  install -m 755 "$ROOT/session/digivice-modem-doctor.sh" "$PREFIX/session/digivice-modem-doctor.sh"
+  install -m 755 "$ROOT/session/digivice-modem-doctor.sh" /usr/local/bin/digivice-modem-doctor
+fi
 
 if [[ ! -f /etc/esp-handset/sip.env ]]; then
   cat >/etc/esp-handset/sip.env <<'EOF'
