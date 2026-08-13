@@ -1,6 +1,6 @@
 # Digivice wiring sheet (Pi Zero 2 W)
 
-Physical GPIO: **2" LCD** + **7 hard buttons**.  
+Physical GPIO: **2" LCD** + **8 hard buttons** + optional **CardKB**.  
 **SIM7600** and **Heltec** are USB only.
 
 ## 1. Waveshare 2" LCD (SPI)
@@ -18,7 +18,7 @@ Physical GPIO: **2" LCD** + **7 hard buttons**.
 
 LCD **3.3V only**. Notes: [`WAVESHARE_2INCH_LCD.md`](WAVESHARE_2INCH_LCD.md).
 
-## 2. Seven hard buttons
+## 2. Hard buttons (7 or 8)
 
 Each button: **GPIO ↔ switch ↔ GND**. Full map: [`DIGI_BUTTONS.md`](DIGI_BUTTONS.md).
 
@@ -28,12 +28,25 @@ Each button: **GPIO ↔ switch ↔ GND**. Full map: [`DIGI_BUTTONS.md`](DIGI_BUT
 | **Down** | **31** | **6** | Move ↓ |
 | **Left** | **32** | **12** | Move ← |
 | **Right** | **33** | **13** | Move → |
-| **Confirm** | **36** | **16** | Select / OK |
-| **Back** | **35** | **19** | Cancel / back |
-| **Home** | **38** | **20** | Home screen |
+| **Confirm** | **36** | **16** | OK / A |
+| **Back** | **35** | **19** | Cancel / B |
+| **Home** | **38** | **20** | Home / Start |
+| **Select** | **40** | **21** | Tab / Select (game) |
 | Common GND | **34** or **39** | GND | Share with LCD GND |
 
-## 3. USB only
+## 3. CardKB (optional QWERTY)
+
+| CardKB | Pi pin |
+|--------|--------|
+| 5V | **2** |
+| GND | **6** |
+| SDA | **3** (BCM 2) |
+| SCL | **5** (BCM 3) |
+
+Enable: `sudo systemctl enable --now cardkb-inputd`  
+Details: [`CARDKB_PI.md`](CARDKB_PI.md).
+
+## 4. USB only
 
 | Device | Link | Path |
 |--------|------|------|
@@ -42,16 +55,11 @@ Each button: **GPIO ↔ switch ↔ GND**. Full map: [`DIGI_BUTTONS.md`](DIGI_BUT
 
 SIM7600: jumper **PWR–3V3**, UART path **USB**.
 
-## 4. Heltec optional
-
-| Extra | Wire |
-|-------|------|
-| SW-520D steps | Heltec **GPIO 7** + GND |
-
 ## Pin ownership
 
 | Resource | Owner |
 |----------|--------|
 | SPI0 + GPIO 25/27/18 | 2" LCD |
-| GPIO 5, 6, 12, 13, 16, 19, 20 | D-pad + Confirm/Back/Home |
+| GPIO 5, 6, 12, 13, 16, 19, 20, 21 | D-pad + Confirm/Back/Home/Select |
+| GPIO 2, 3 (I2C1) | CardKB |
 | USB | SIM7600 + Heltec |

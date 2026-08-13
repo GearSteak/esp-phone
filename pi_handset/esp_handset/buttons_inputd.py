@@ -1,17 +1,18 @@
 #!/usr/bin/env python3
-"""Digivice 7-button pad → UI keys (phone) or mouse (Linux desktop).
+"""Digivice button pad → UI keys (phone), mouse (desktop), or GB map.
 
-  UP / DOWN / LEFT / RIGHT / CONFIRM / BACK / HOME
-  BCM: 5 / 6 / 12 / 13 / 16 / 19 / 20  (override DIGI_BTN_*)
+  UP / DOWN / LEFT / RIGHT / CONFIRM / BACK / HOME / SELECT (optional 8th)
+  BCM: 5 / 6 / 12 / 13 / 16 / 19 / 20 / 21  (override DIGI_BTN_*)
 
 Mode file (phone | desktop | gb), checked every 0.4s:
   /etc/esp-handset/ui_mode
   ~/.esp-handset/session_mode  (every user home)
 
-Phone  — arrows / Enter / Esc / Home  (uinput + xdotool keys)
-Desktop — d-pad=mouse, Confirm=LMB, Back=RMB, Home=relaunch Digivice
-GB      — d-pad=move, Confirm=A(x), Back=B(z), Home=Start,
-          Home+Confirm=Select, Confirm+Back+Home=exit emu
+Phone  — arrows / Enter / Esc / Home / Tab(Select)
+Desktop — d-pad=mouse, Confirm=LMB, Back=RMB, Select=MMB, Home=relaunch
+GB      — d-pad=move, Confirm=A(x), Back=B(z), Home=Start, Select=Select
+          (Home+Confirm still = Select for 7-button cases)
+          Confirm+Back+Home=exit emu
 
 If Digivice (handset_app) is running, mode is always phone — a stale
 desktop mode file must not steal the pad into mouse mode.
@@ -38,6 +39,7 @@ DEFAULTS = {
     "CONFIRM": 16,
     "BACK": 19,
     "HOME": 20,
+    "SELECT": 21,  # 8th button — pin 40; leave unwired OK (pulled up)
 }
 
 XDOTOOL_KEYS = {
@@ -48,6 +50,7 @@ XDOTOOL_KEYS = {
     "CONFIRM": "Return",
     "BACK": "Escape",
     "HOME": "Home",
+    "SELECT": "Tab",
 }
 
 # Game Boy / GBC (RetroArch gambatte + mgba keyboard defaults we ship)
@@ -84,9 +87,12 @@ def log(msg: str) -> None:
 
 
 def pin_map() -> Dict[str, int]:
+    """Build GPIO map. DIGI_BTN_SELECT=off|0|none skips the 8th button."""
     out: Dict[str, int] = {}
     for name, default in DEFAULTS.items():
         env = os.environ.get(f"DIGI_BTN_{name}", "").strip()
+        if name == "SELECT" and env.lower() in ("off", "0", "none", "disable", "-1"):
+            continue
         out[name] = int(env) if env else default
     return out
 
@@ -641,6 +647,7 @@ def main() -> int:
         "CONFIRM": uinput.KEY_ENTER,
         "BACK": uinput.KEY_ESC,
         "HOME": uinput.KEY_HOME,
+        "SELECT": uinput.KEY_TAB,
     }
     gb_map = {
         "UP": uinput.KEY_UP,
@@ -769,6 +776,9 @@ def main() -> int:
                         elif name == "BACK":
                             device.emit(uinput.BTN_RIGHT, 1 if down else 0)
                             xinj.click(3, down)
+                        elif name == "SELECT":
+                            device.emit(uinput.BTN_MIDDLE, 1 if down else 0)
+                            xinj.click(2, down)
                         elif name == "HOME":
                             if down:
                                 try:
@@ -785,6 +795,17 @@ def main() -> int:
                     try:
                         if name in ("UP", "DOWN", "LEFT", "RIGHT"):
                             gb_emit(name, down)
+                        elif name == "SELECT":
+                            # Dedicated Select button (8th key)
+                            if down:
+                                if not gb_select[0]:
+                                    gb_emit("SELECT", True)
+                                    gb_select[0] = True
+                                    log("GB SELECT")
+                            else:
+                                if gb_select[0]:
+                                    gb_emit("SELECT", False)
+                                    gb_select[0] = False
                         elif name == "BACK":
                             if down:
                                 if not gb_b[0]:
@@ -800,7 +821,8 @@ def main() -> int:
                                     gb_emit("START", True)
                                     gb_start[0] = True
                             else:
-                                if gb_select[0]:
+                                if gb_select[0] and not held.get("SELECT"):
+                                    # combo Select from Home+Confirm path only
                                     gb_emit("SELECT", False)
                                     gb_select[0] = False
                                 if gb_start[0]:
@@ -815,7 +837,7 @@ def main() -> int:
                                     if not gb_select[0]:
                                         gb_emit("SELECT", True)
                                         gb_select[0] = True
-                                        log("GB SELECT")
+                                        log("GB SELECT (Home+Confirm)")
                                 else:
                                     if not gb_a[0]:
                                         gb_emit("A", True)
@@ -824,7 +846,7 @@ def main() -> int:
                                 if gb_a[0]:
                                     gb_emit("A", False)
                                     gb_a[0] = False
-                                if gb_select[0]:
+                                if gb_select[0] and not held.get("SELECT"):
                                     gb_emit("SELECT", False)
                                     gb_select[0] = False
                                     if held.get("HOME") and not gb_start[0]:
@@ -836,10 +858,12 @@ def main() -> int:
                         log(f"gb emit {name}: {e}")
                 else:
                     try:
-                        device.emit(phone_map[name], 1 if down else 0)
+                        if name in phone_map:
+                            device.emit(phone_map[name], 1 if down else 0)
                     except Exception as e:
                         log(f"uinput {name}: {e}")
-                    xinj.key(name, down)
+                    if name in XDOTOOL_KEYS:
+                        xinj.key(name, down)
                     if down:
                         log(f"PHONE {name}")
 

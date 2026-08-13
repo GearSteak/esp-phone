@@ -1,24 +1,25 @@
-# Digivice hard buttons (D-pad + Confirm / Back / Home)
+# Digivice hard buttons (D-pad + Confirm / Back / Home / Select)
 
-Seven tactile buttons instead of CardKB or a T9 pad. Each switch: one side on the listed GPIO, other to **GND**. Internal pull-ups — no VCC needed.
+Eight tactile buttons (Select is optional). Each switch: one side on the listed GPIO, other to **GND**. Internal pull-ups — no VCC needed.
 
 ## What each button does
 
-| Button | Digivice (phone) | Linux desktop |
-|--------|------------------|---------------|
-| **Up / Down / Left / Right** | Arrow keys | Mouse move |
-| **Confirm** | Enter | Left click |
-| **Back** | Esc | Right click |
-| **Home** | Home | Super (start menu) |
+| Button | Digivice (phone) | Linux desktop | Game Boy (when emu on) |
+|--------|------------------|---------------|-------------------------|
+| **Up / Down / Left / Right** | Arrow keys | Mouse move | D-pad |
+| **Confirm** | Enter | Left click | A |
+| **Back** | Esc | Right click | B |
+| **Home** | Home | Relaunch Digivice | Start |
+| **Select** (8th) | Tab | Middle click | Select |
 
 Mode is `phone` while Digivice runs and `desktop` after `handset-desktop`.
 Buttons read `/etc/esp-handset/ui_mode` and `~/.esp-handset/session_mode`.
 
-Typing is still OSK (on-screen) or future dial pad — these seven only navigate the UI.
+Typing: **CardKB** (I2C) or on-screen keyboard — see [`CARDKB_PI.md`](CARDKB_PI.md).
 
 ## Wiring (BCM → 40-pin)
 
-Avoids LCD SPI (**8, 10, 11, 18, 25, 27**).
+Avoids LCD SPI (**8, 10, 11, 18, 25, 27**) and CardKB I2C (**2, 3**).
 
 | Button | BCM GPIO | Board pin |
 |--------|----------|-----------|
@@ -29,38 +30,26 @@ Avoids LCD SPI (**8, 10, 11, 18, 25, 27**).
 | **Confirm** | **16** | **36** |
 | **Back** | **19** | **35** |
 | **Home** | **20** | **38** |
+| **Select** | **21** | **40** |
 | **GND** (common) | GND | **34** or **39** (near that pin group) |
 
-Suggested layout on the case (under the screen or side thumb):
+Suggested layout:
 
 ```
         [Up]
  [Left] [Confirm] [Right]
        [Down]
-  [Back]      [Home]
+  [Back]  [Select]  [Home]
 ```
-
-Or classic d-pad with Confirm in center and Back/Home as side keys.
 
 ## Software
 
-Service: **`digi-buttons-inputd`** — **enabled on boot**.  
-Injects keys via **uinput + xdotool** so Digivice (X11) actually receives them.
+Service: **`digi-buttons-inputd`** — **enabled on boot**.
 
 ```bash
-# Full fix + diagnose (run on the Pi)
 sudo digivice-ensure-buttons --doctor
-
-# Watch presses (must print PRESS … when you mash a wire to GND)
 journalctl -u digi-buttons-inputd -f
 ```
-
-| Doctor result | Meaning |
-|---------------|---------|
-| `PRESS UP` in journal | Wiring + daemon OK → GUI path |
-| No PRESS, levels stay 1 | Switch not pulling GPIO to GND (wrong pin / wiring) |
-| All levels 0 | Shorted / missing pull / wrong polarity |
-| Service failed | `python3-uinput` / GPIO package missing |
 
 Optional pin override (unit `Environment=`):
 
@@ -72,4 +61,6 @@ DIGI_BTN_RIGHT=13
 DIGI_BTN_CONFIRM=16
 DIGI_BTN_BACK=19
 DIGI_BTN_HOME=20
+DIGI_BTN_SELECT=21
+# DIGI_BTN_SELECT=off   # if you did not wire the 8th button
 ```
