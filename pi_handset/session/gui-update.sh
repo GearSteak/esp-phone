@@ -1,9 +1,7 @@
 #!/usr/bin/env bash
 # Digivice Settings → Update button.
-# 1) git pull + stage install to /opt/esp-handset.staging (live /opt untouched)
-# 2) UI exits and runs digivice-apply-update to swap + relaunch
-#
-# Never overwrites running Digivice code in /opt — that crashed the Pi.
+# git pull + stage install to /opt/esp-handset.staging (live /opt untouched).
+# Does NOT kill Digivice or swap /opt — the UI exits, then digivice-apply-update runs.
 #
 #   digivice-gui-update
 #
@@ -12,7 +10,6 @@ set -u
 
 PREFIX="${ESP_HANDSET_PREFIX:-/opt/esp-handset}"
 
-# Prefer running the copy from the git repo after we sync it (bootstrap).
 find_repo() {
   if [[ -n "${ESP_HANDSET_REPO:-}" && -d "${ESP_HANDSET_REPO}/pi_handset" ]]; then
     echo "$ESP_HANDSET_REPO"; return 0
@@ -57,42 +54,32 @@ run() {
   fi
 }
 
-echo "[gui-update] pull + STAGE install  $(date -Iseconds)"
-echo "[gui-update] live /opt left running until apply-after-exit"
+echo "[gui-update] pull + STAGE only  $(date -Iseconds)"
+echo "[gui-update] will NOT kill Digivice or swap /opt (UI does that after exit)"
 
 export ESP_HANDSET_SOFT_SERVICES=1
 export ESP_HANDSET_STAGE=1
 
-# If repo has a newer update-handset.sh, prefer it (self-heal after git pull below).
 REPO="$(find_repo || true)"
-UPDATER=""
-if [[ -n "${REPO:-}" && -f "$REPO/pi_handset/session/update-handset.sh" ]]; then
-  # Pull using repo script first if present — but we need fetch before that.
-  # Use installed digivice-update for pull+stage; it will read ESP_HANDSET_STAGE.
-  :
-fi
 
-if [[ -x /usr/local/bin/digivice-update ]]; then
+# Prefer the *repo* updater after a prior pull when present (self-heal).
+if [[ -n "${REPO:-}" && -f "$REPO/pi_handset/session/update-handset.sh" ]]; then
+  UPDATER=(bash "$REPO/pi_handset/session/update-handset.sh")
+elif [[ -x /usr/local/bin/digivice-update ]]; then
   UPDATER=(/usr/local/bin/digivice-update)
 elif [[ -f "$PREFIX/session/update-handset.sh" ]]; then
   UPDATER=(bash "$PREFIX/session/update-handset.sh")
-elif [[ -n "${REPO:-}" && -f "$REPO/pi_handset/session/update-handset.sh" ]]; then
-  UPDATER=(bash "$REPO/pi_handset/session/update-handset.sh")
 else
   echo "ERROR: digivice-update missing"
   echo "  sudo digivice-full-update"
   exit 1
 fi
 
-# Bootstrap: if repo exists, sync git using whatever updater we have, but
-# force STAGE so live tree is never overwritten mid-UI.
 run env ESP_HANDSET_SOFT_SERVICES=1 ESP_HANDSET_STAGE=1 "${UPDATER[@]}"
 rc=$?
 
-# After pull, re-run staging with the *repo* copy of update-handset if it now
-# exists and differs — ensures first update after this fix stages correctly.
-if [[ ${rc:-1} -eq 0 && -n "${REPO:-}" && -f "$REPO/pi_handset/session/update-handset.sh" ]]; then
-  # Install apply helper + new gui scripts into /usr/local immediately (safe)
+# Refresh apply helper into /usr/local (small scripts — safe while UI runs)
+if [[ -n "${REPO:-}" ]]; then
   if [[ -f "$REPO/pi_handset/session/apply-update.sh" ]]; then
     install -m 755 "$REPO/pi_handset/session/apply-update.sh" \
       /usr/local/bin/digivice-apply-update
@@ -103,55 +90,28 @@ if [[ ${rc:-1} -eq 0 && -n "${REPO:-}" && -f "$REPO/pi_handset/session/update-ha
     install -m 755 "$REPO/pi_handset/session/gui-update.sh" \
       /usr/local/bin/digivice-gui-update
   fi
-  if [[ -f "$REPO/pi_handset/session/home-relaunch.sh" ]]; then
-    install -m 755 "$REPO/pi_handset/session/home-relaunch.sh" \
-      /usr/local/bin/digivice-home-relaunch
-  fi
   if [[ -f "$REPO/pi_handset/session/update-handset.sh" ]]; then
     install -m 755 "$REPO/pi_handset/session/update-handset.sh" \
       /usr/local/bin/digivice-update
   fi
 fi
 
-if [[ ${rc:-1} -eq 0 ]]; then
-  if [[ ! -f "${PREFIX}.staging/.ready" ]]; then
-    # Old updater ignored STAGE — refuse to claim success if live was mutated
-    # mid-flight; still try to stage now from repo while UI is up.
-    echo "[gui-update] staging marker missing — staging from repo now"
-    if [[ -n "${REPO:-}" && -f "$REPO/pi_handset/session/update-handset.sh" ]]; then
-      run env ESP_HANDSET_SOFT_SERVICES=1 ESP_HANDSET_STAGE=1 \
-        bash "$REPO/pi_handset/session/update-handset.sh" --install-only
-      rc=$?
-    fi
+if [[ ${rc:-1} -eq 0 && ! -f "${PREFIX}.staging/.ready" ]]; then
+  echo "[gui-update] staging marker missing — install-only stage retry"
+  if [[ -n "${REPO:-}" && -f "$REPO/pi_handset/session/update-handset.sh" ]]; then
+    run env ESP_HANDSET_SOFT_SERVICES=1 ESP_HANDSET_STAGE=1 \
+      bash "$REPO/pi_handset/session/update-handset.sh" --install-only
+    rc=$?
   fi
 fi
 
 if [[ ${rc:-1} -eq 0 && -f "${PREFIX}.staging/.ready" ]]; then
-  echo "[gui-update] STAGED OK — applying after UI exit"
+  echo "[gui-update] STAGED OK — exit 0; Digivice will apply after it quits"
   echo "staged $(date -Iseconds)" >"${HOME:-/tmp}/.esp-handset/last_gui_update" 2>/dev/null || true
   for h in /home/*/.esp-handset; do
     [[ -d "$h" ]] && echo "staged $(date -Iseconds)" >"$h/last_gui_update" 2>/dev/null || true
   done
-  # Own the restart even if an older Digivice UI still uses the crashy
-  # pkill+handset-phone path — apply waits, swaps, then safe relaunch.
-  APPLY=""
-  for a in \
-    /usr/local/bin/digivice-apply-update \
-    "$PREFIX/session/apply-update.sh" \
-    "${REPO:-}/pi_handset/session/apply-update.sh"
-  do
-    if [[ -n "$a" && -f "$a" ]]; then
-      APPLY="$a"
-      break
-    fi
-  done
-  if [[ -n "$APPLY" ]]; then
-    nohup bash -c "
-      sleep 1.5
-      exec sudo -n bash $(printf %q "$APPLY")
-    " >>"${HOME:-/tmp}/.esp-handset/apply-update.log" 2>&1 &
-    echo "[gui-update] apply scheduled (pid $!)"
-  fi
+  # Intentionally do NOT schedule apply here — double-apply + pkill crashed Pi Zero.
   exit 0
 fi
 

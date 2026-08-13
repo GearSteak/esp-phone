@@ -2357,18 +2357,18 @@ def make_power_page(on_back: Callable[[], None]) -> QWidget:
 
 
 def make_update_page(on_back: Callable[[], None]) -> QWidget:
-    """One button: git pull → install to /opt → restart Digivice.
+    """Stage update to /opt/esp-handset.staging, then exit → apply → relaunch.
 
-    Software-only (no SPI/boot). Updater must not kill this UI mid-run;
-    we restart only after a verified success exit code.
+    Never overwrites live /opt while Digivice is running. Never KILLs itself.
     """
     from PyQt5.QtCore import QProcess, QProcessEnvironment, QTimer
 
     body = QWidget()
     lay = QVBoxLayout(body)
     tip = QLabel(
-        "Software only: pull → stage → restart.\n"
-        "Does not overwrite Digivice while it is running."
+        "Pull → stage (live Digivice untouched)\n"
+        "→ quit → swap → relaunch.\n"
+        "Stay on Wi‑Fi; can take 1–3 min."
     )
     tip.setWordWrap(True)
     tip.setStyleSheet("color:#9ab;font-size:10px;")
@@ -2401,10 +2401,12 @@ def make_update_page(on_back: Callable[[], None]) -> QWidget:
     )
     env.insert("PYTHONUNBUFFERED", "1")
     env.insert("ESP_HANDSET_SOFT_SERVICES", "1")
+    env.insert("ESP_HANDSET_STAGE", "1")
     proc.setProcessEnvironment(env)
 
     watchdog = QTimer(body)
     watchdog.setSingleShot(True)
+    applying = {"on": False}
 
     def _read_stamp() -> str:
         for p in (
@@ -2450,59 +2452,37 @@ def make_update_page(on_back: Callable[[], None]) -> QWidget:
         log.moveCursor(QTextCursor.End)
 
     def restart_digivice() -> None:
-        """Exit UI, then apply staged /opt swap + safe relaunch."""
+        """Spawn apply (waits for us), then quit cleanly — no pkill of self."""
+        if applying["on"]:
+            return
+        applying["on"] = True
         import shlex
-        import sys
 
-        status.setText("Applying update & restarting…")
-        log.append("\n--- exit → apply staged update ---\n")
-        env2 = os.environ.copy()
-        env2.setdefault("DISPLAY", ":0")
-        home = str(Path.home())
-        log_path = str(DATA / "apply-update.log")
+        status.setText("Quitting → apply staged update…")
+        log.append("\n--- scheduling apply, then clean quit ---\n")
         DATA.mkdir(parents=True, exist_ok=True)
-
-        apply = None
-        for p in (
-            "/usr/local/bin/digivice-apply-update",
-            "/opt/esp-handset/session/apply-update.sh",
-            str(Path(__file__).resolve().parents[1] / "session" / "apply-update.sh"),
-        ):
-            if os.path.isfile(p):
-                apply = p
-                break
-        # Prefer apply script from git repo (just pulled)
-        try:
-            rp = Path("/etc/esp-handset/repo.path")
-            if rp.is_file():
-                repo = rp.read_text(encoding="utf-8").strip()
-                cand = Path(repo) / "pi_handset" / "session" / "apply-update.sh"
-                if cand.is_file():
-                    apply = str(cand)
-        except OSError:
-            pass
-        for d in (Path.home() / "esp-phone",):
-            cand = d / "pi_handset" / "session" / "apply-update.sh"
-            if cand.is_file():
-                apply = str(cand)
-                break
+        log_path = str(DATA / "apply-update.log")
+        apply = "/usr/local/bin/digivice-apply-update"
+        if not os.path.isfile(apply):
+            for p in (
+                "/opt/esp-handset/session/apply-update.sh",
+                str(Path.home() / "esp-phone/pi_handset/session/apply-update.sh"),
+            ):
+                if os.path.isfile(p):
+                    apply = p
+                    break
 
         qlog = shlex.quote(log_path)
-        if apply:
-            qapply = shlex.quote(apply)
-            script = (
-                f"exec >>{qlog} 2>&1; "
-                "echo \"=== apply $(date -Iseconds) ===\"; "
-                "sleep 1.2; "
-                f"sudo -n bash {qapply} || bash {qapply}; "
-            )
-        else:
-            # Last resort: home relaunch only (no swap)
-            script = (
-                f"exec >>{qlog} 2>&1; "
-                "sleep 1.2; "
-                "digivice-home-relaunch || handset-phone || true; "
-            )
+        qapply = shlex.quote(apply)
+        # Start apply FIRST so it is waiting; then we quit. No KILL race.
+        script = (
+            f"exec >>{qlog} 2>&1; "
+            'echo "=== apply wait $(date -Iseconds) ==="; '
+            f"sudo -n {qapply} 2>/dev/null || sudo -n bash {qapply} 2>/dev/null "
+            f"|| bash {qapply}; "
+        )
+        env2 = os.environ.copy()
+        env2.setdefault("DISPLAY", ":0")
         try:
             subprocess.Popen(
                 ["bash", "-c", script],
@@ -2510,12 +2490,14 @@ def make_update_page(on_back: Callable[[], None]) -> QWidget:
                 env=env2,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
+                stdin=subprocess.DEVNULL,
             )
         except Exception as e:
             status.setText(f"Apply spawn failed: {e}")
+            applying["on"] = False
             update_btn.setEnabled(True)
             return
-        # Clean exit — do NOT pkill ourselves (that raced SPI / crashed Pi Zero)
+
         def _quit() -> None:
             try:
                 from PyQt5.QtWidgets import QApplication
@@ -2525,15 +2507,15 @@ def make_update_page(on_back: Callable[[], None]) -> QWidget:
                     app.quit()
             except Exception:
                 pass
-            sys.exit(0)
 
-        QTimer.singleShot(400, _quit)
+        # Give apply time to start waiting before we tear down Qt/SPI
+        QTimer.singleShot(800, _quit)
 
     def on_timeout() -> None:
         if proc.state() == QProcess.NotRunning:
             return
-        log.append("\n--- TIMEOUT (10 min) — killing updater ---\n")
-        proc.kill()
+        log.append("\n--- TIMEOUT (10 min) — stopping updater ---\n")
+        proc.terminate()
         update_btn.setEnabled(True)
         status.setText("Timed out — Digivice still running")
 
@@ -2542,9 +2524,9 @@ def make_update_page(on_back: Callable[[], None]) -> QWidget:
         append_out()
         refresh_meta()
         if code == 0:
-            status.setText("Staged. Restarting safely…")
-            log.append("\n--- OK — applying after exit ---\n")
-            QTimer.singleShot(500, restart_digivice)
+            status.setText("Staged OK — applying…")
+            log.append("\n--- OK — apply after quit ---\n")
+            QTimer.singleShot(300, restart_digivice)
         else:
             update_btn.setEnabled(True)
             status.setText(f"Failed (exit {code}) — UI left running")
@@ -2570,44 +2552,19 @@ def make_update_page(on_back: Callable[[], None]) -> QWidget:
     except Exception:
         pass
 
-    def _repo_gui_update() -> Optional[str]:
-        """Prefer freshly pulled repo script so Settings Update self-heals."""
-        candidates = []
-        try:
-            rp = Path("/etc/esp-handset/repo.path")
-            if rp.is_file():
-                candidates.append(
-                    Path(rp.read_text(encoding="utf-8").strip())
-                    / "pi_handset"
-                    / "session"
-                    / "gui-update.sh"
-                )
-        except OSError:
-            pass
-        candidates.append(Path.home() / "esp-phone" / "pi_handset" / "session" / "gui-update.sh")
-        candidates.append(
-            Path(__file__).resolve().parents[1] / "session" / "gui-update.sh"
-        )
-        for c in candidates:
-            if c.is_file():
-                return str(c)
-        return None
-
     def _gui_update_bin() -> list:
-        # 1) Repo copy (after user git pull below)
-        repo_script = _repo_gui_update()
-        if repo_script:
-            return ["sudo", "-n", "bash", repo_script]
+        # Only sudoers-allowlisted paths (not arbitrary repo bash — that fails sudo -n)
         for p in (
             "/usr/local/bin/digivice-gui-update",
             "/opt/esp-handset/session/gui-update.sh",
         ):
             if os.path.isfile(p):
+                if p.endswith(".sh"):
+                    return ["sudo", "-n", "bash", p]
                 return ["sudo", "-n", p]
         return ["sudo", "-n", "/usr/local/bin/digivice-gui-update"]
 
     def _preflight() -> Optional[str]:
-        """Return error string if update cannot run safely."""
         try:
             r = subprocess.run(
                 ["sudo", "-n", "true"],
@@ -2623,48 +2580,17 @@ def make_update_page(on_back: Callable[[], None]) -> QWidget:
                 )
         except Exception as e:
             return f"sudo check failed: {e}"
+        if not os.path.isfile("/usr/local/bin/digivice-gui-update") and not os.path.isfile(
+            "/opt/esp-handset/session/gui-update.sh"
+        ):
+            return (
+                "digivice-gui-update missing.\n"
+                "  sudo digivice-full-update"
+            )
         return None
 
-    def _user_git_pull() -> None:
-        """Pull into ~/esp-phone first so we can run the NEW gui-update.sh."""
-        repo = None
-        try:
-            rp = Path("/etc/esp-handset/repo.path")
-            if rp.is_file():
-                repo = rp.read_text(encoding="utf-8").strip()
-        except OSError:
-            repo = None
-        if not repo or not Path(repo, ".git").is_dir():
-            for d in (Path.home() / "esp-phone", Path.home() / "esp phone"):
-                if (d / ".git").is_dir():
-                    repo = str(d)
-                    break
-        if not repo:
-            log.append("(no local git repo for pre-pull)\n")
-            return
-        log.append(f"$ git -C {repo} pull\n")
-        try:
-            r = subprocess.run(
-                ["git", "-C", repo, "fetch", "--prune", "origin", "main"],
-                capture_output=True,
-                text=True,
-                timeout=120,
-                check=False,
-            )
-            log.append((r.stdout or "") + (r.stderr or ""))
-            r2 = subprocess.run(
-                ["git", "-C", repo, "reset", "--hard", "origin/main"],
-                capture_output=True,
-                text=True,
-                timeout=60,
-                check=False,
-            )
-            log.append((r2.stdout or "") + (r2.stderr or "") + "\n")
-        except Exception as e:
-            log.append(f"pre-pull: {e}\n")
-
     def do_update() -> None:
-        if proc.state() != QProcess.NotRunning:
+        if proc.state() != QProcess.NotRunning or applying["on"]:
             status.setText("Already running…")
             return
         err = _preflight()
@@ -2675,11 +2601,9 @@ def make_update_page(on_back: Callable[[], None]) -> QWidget:
             update_btn.setEnabled(True)
             return
         log.clear()
-        status.setText("Pulling GitHub scripts…")
         update_btn.setEnabled(False)
-        _user_git_pull()
         bin_cmd = _gui_update_bin()
-        status.setText("Staging install (live Digivice untouched)…")
+        status.setText("Staging (live Digivice untouched)…")
         log.append("$ " + " ".join(bin_cmd) + "\n\n")
         prog, *argv = bin_cmd
         proc.start(prog, argv)

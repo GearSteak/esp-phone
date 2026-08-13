@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
-# Apply a staged Digivice software update AFTER the UI has exited.
-# Swaps /opt/esp-handset.staging → /opt/esp-handset, then safe relaunch.
+# Apply staged Digivice update AFTER the UI has exited cleanly.
+# Swaps /opt/esp-handset.staging → /opt/esp-handset, then relaunches handset-phone.
 #
 #   digivice-apply-update
+#
+# Never KILL the UI by default (SPI teardown on Pi Zero 2 W hard-crashed the board).
 #
 set +e
 set -u
@@ -25,25 +27,53 @@ if command -v flock >/dev/null 2>&1; then
   fi
 fi
 
+resolve_gui_user() {
+  if [[ -n "${SUDO_USER:-}" && "${SUDO_USER}" != "root" ]]; then
+    echo "$SUDO_USER"; return 0
+  fi
+  if [[ -n "${DIGI_GUI_USER:-}" && "${DIGI_GUI_USER}" != "root" ]]; then
+    echo "$DIGI_GUI_USER"; return 0
+  fi
+  local p u
+  for p in /home/*/.Xauthority; do
+    [[ -f "$p" ]] || continue
+    u="$(stat -c '%U' "$p" 2>/dev/null || true)"
+    if [[ -n "$u" && "$u" != "root" ]]; then
+      echo "$u"; return 0
+    fi
+  done
+  for u in pi isaac; do
+    id "$u" >/dev/null 2>&1 && echo "$u" && return 0
+  done
+  echo "pi"
+}
+
 log "=== digivice-apply-update ==="
 
-# Wait for Digivice UI to exit (caller should quit first)
-for i in $(seq 1 40); do
+# Wait for Digivice to exit on its own (UI schedules us, then quits).
+for i in $(seq 1 60); do
   if ! pgrep -f "handset_app.py" >/dev/null 2>&1; then
+    log "UI gone (waited ${i}×0.25s)"
     break
   fi
   sleep 0.25
 done
+
+# Soft TERM only — never KILL (that raced SPI and crashed Pi Zero)
 if pgrep -f "handset_app.py" >/dev/null 2>&1; then
-  log "UI still up — TERM"
+  log "UI still up — sending TERM (no KILL)"
   pkill -TERM -f "handset_app.py" 2>/dev/null || true
-  sleep 1
+  for i in $(seq 1 20); do
+    pgrep -f "handset_app.py" >/dev/null 2>&1 || break
+    sleep 0.25
+  done
 fi
 if pgrep -f "handset_app.py" >/dev/null 2>&1; then
-  log "UI still up — KILL"
-  pkill -KILL -f "handset_app.py" 2>/dev/null || true
-  sleep 0.5
+  log "WARN: UI still running — continuing swap anyway (no KILL)"
 fi
+
+# Extra settle for SPI / framebuffer
+sleep 1.0
 
 install_live_from_repo() {
   local REPO ROOT
@@ -96,6 +126,20 @@ EOF
   return 0
 }
 
+if [[ "$(id -u)" -ne 0 ]]; then
+  log "Elevating for apply…"
+  exec sudo -n env \
+    HOME="${HOME}" \
+    SUDO_USER="${SUDO_USER:-$USER}" \
+    USER="${USER}" \
+    DISPLAY="${DISPLAY:-:0}" \
+    XAUTHORITY="${XAUTHORITY:-}" \
+    ESP_HANDSET_PREFIX="$PREFIX" \
+    ESP_HANDSET_REPO="${ESP_HANDSET_REPO:-}" \
+    PATH="/usr/local/bin:/usr/bin:/bin:$PATH" \
+    bash "$0" "$@"
+fi
+
 if [[ -d "$STAGE" && -f "$STAGE/.ready" ]]; then
   log "Swapping staged tree into $PREFIX"
   rm -rf "$BAK"
@@ -116,7 +160,6 @@ if [[ -d "$STAGE" && -f "$STAGE/.ready" ]]; then
     rm -rf "$STAGE"
   fi
   rm -f "$PREFIX/.ready" 2>/dev/null || true
-  # Refresh critical /usr/local wrappers from new tree
   if [[ -f "$PREFIX/session/handset-session.sh" ]]; then
     install -m 755 "$PREFIX/session/handset-session.sh" /usr/local/bin/handset-session
   fi
@@ -139,31 +182,16 @@ exec /usr/local/bin/handset-session phone
 EOF
   chmod +x /usr/local/bin/handset-phone
   log "Swap OK"
-elif [[ "$(id -u)" -eq 0 ]]; then
+else
   log "No staging dir — install from repo while UI is down"
   install_live_from_repo || {
     log "ERROR: nothing to apply"
     exit 1
   }
-else
-  # Elevate for install/swap
-  log "Elevating for apply…"
-  exec sudo -n env \
-    HOME="${HOME}" \
-    SUDO_USER="${SUDO_USER:-$USER}" \
-    USER="${USER}" \
-    DISPLAY="${DISPLAY:-:0}" \
-    XAUTHORITY="${XAUTHORITY:-}" \
-    ESP_HANDSET_PREFIX="$PREFIX" \
-    ESP_HANDSET_REPO="${ESP_HANDSET_REPO:-}" \
-    PATH="/usr/local/bin:/usr/bin:/bin:$PATH" \
-    bash "$0" "$@"
 fi
 
-# Sanity
 if [[ ! -f "$PREFIX/handset_app.py" && ! -f "$PREFIX/esp_handset/handset_app.py" ]]; then
   log "ERROR: handset_app missing after apply"
-  # Try restore bak
   if [[ -d "$BAK" ]]; then
     log "Restoring $BAK"
     rm -rf "$PREFIX"
@@ -175,15 +203,35 @@ fi
 echo "ok $(date -Iseconds)" >"$LOG_DIR/last_update" 2>/dev/null || true
 echo "ok $(date -Iseconds)" >/etc/esp-handset/last_update 2>/dev/null || true
 
-log "Relaunch Digivice…"
-export ESP_HANDSET_SKIP_LAYOUT=1
-export ESP_HANDSET_SKIP_PIN=1
-if [[ -x /usr/local/bin/digivice-home-relaunch ]]; then
-  exec /usr/local/bin/digivice-home-relaunch
-elif [[ -f "$PREFIX/session/home-relaunch.sh" ]]; then
-  exec bash "$PREFIX/session/home-relaunch.sh"
-elif [[ -x /usr/local/bin/handset-phone ]]; then
-  exec /usr/local/bin/handset-phone
-fi
-log "ERROR: no relaunch helper"
-exit 1
+# Relaunch like typing handset-phone in a terminal (NOT home-relaunch — that path crashed)
+USER_NAME="$(resolve_gui_user)"
+USER_HOME="$(getent passwd "$USER_NAME" | cut -d: -f6 || echo /home/"$USER_NAME")"
+AUTH="${XAUTHORITY:-$USER_HOME/.Xauthority}"
+[[ -f "$AUTH" ]] || AUTH="$USER_HOME/.Xauthority"
+DISP="${DISPLAY:-:0}"
+mkdir -p "$USER_HOME/.esp-handset" 2>/dev/null || true
+echo phone >"$USER_HOME/.esp-handset/session_mode" 2>/dev/null || true
+echo phone >/etc/esp-handset/ui_mode 2>/dev/null || true
+chown "$USER_NAME:$USER_NAME" "$USER_HOME/.esp-handset" \
+  "$USER_HOME/.esp-handset/session_mode" 2>/dev/null || true
+
+log "Relaunch: sudo -u $USER_NAME handset-phone  DISPLAY=$DISP"
+sleep 0.8
+# Detach fully so this script can exit
+nohup sudo -u "$USER_NAME" -H env \
+  DISPLAY="$DISP" \
+  XAUTHORITY="$AUTH" \
+  HOME="$USER_HOME" \
+  USER="$USER_NAME" \
+  LOGNAME="$USER_NAME" \
+  ESP_HANDSET_SKIP_LAYOUT=1 \
+  ESP_HANDSET_SKIP_PIN=1 \
+  PATH="/usr/local/bin:/usr/bin:/bin" \
+  bash -c 'nohup handset-phone >>"$HOME/.esp-handset/handset.log" 2>&1 </dev/null &' \
+  >/dev/null 2>&1 || \
+nohup env DISPLAY="$DISP" XAUTHORITY="$AUTH" HOME="$USER_HOME" \
+  ESP_HANDSET_SKIP_LAYOUT=1 \
+  handset-phone >>"$USER_HOME/.esp-handset/handset.log" 2>&1 </dev/null &
+
+log "Relaunch scheduled"
+exit 0

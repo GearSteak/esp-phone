@@ -170,35 +170,51 @@ install_tree() {
   install -m 755 "$ROOT/esp_handset/esp_keyd.py" "$DEST/esp_keyd.py"
   install -m 755 "$ROOT/session/handset-session.sh" "$DEST/session/handset-session.sh"
 
-  # Wrappers in /usr/local are fine to refresh while UI runs (not mmap'd code)
-  install -m 755 "$ROOT/session/handset-session.sh" /usr/local/bin/handset-session
-  for pair in \
-    "mirror-displays.sh:digivice-mirror-displays" \
-    "digivice-layout.sh:digivice-layout" \
-    "restore-desktop-displays.sh:digivice-restore-desktop" \
-    "unfuck-displays.sh:digivice-unfuck-displays" \
-    "spi-test.sh:digivice-spi-test" \
-    "spi-prove.sh:digivice-spi-prove" \
-    "spi-blank.sh:digivice-spi-blank" \
-    "desktop-spi-mirror.sh:digivice-desktop-mirror" \
-    "update-handset.sh:digivice-update" \
-    "ensure-buttons.sh:digivice-ensure-buttons" \
-    "fix-cursor.sh:digivice-fix-cursor" \
-    "restore-desktop-displays.sh:digivice-restore-desktop" \
-    "hdmi-hotplug.sh:digivice-hdmi-hotplug" \
-    "gui-update.sh:digivice-gui-update" \
-    "home-relaunch.sh:digivice-home-relaunch" \
-    "apply-update.sh:digivice-apply-update" \
-    "power.sh:digivice-power" \
-    "full-update.sh:digivice-full-update"
-  do
-    src="${pair%%:*}"
-    dst="${pair##*:}"
-    if [[ -f "$ROOT/session/$src" ]]; then
-      install -m 755 "$ROOT/session/$src" "$DEST/session/$src"
-      install -m 755 "$ROOT/session/$src" "/usr/local/bin/$dst"
-    fi
-  done
+  # Wrappers: during STAGE mode only refresh update helpers (avoid SD thrash
+  # while Digivice is still painting SPI). Full wrapper set is applied on swap.
+  if [[ "${ESP_HANDSET_STAGE:-0}" == "1" ]]; then
+    for pair in \
+      "gui-update.sh:digivice-gui-update" \
+      "update-handset.sh:digivice-update" \
+      "apply-update.sh:digivice-apply-update"
+    do
+      src="${pair%%:*}"
+      dst="${pair##*:}"
+      if [[ -f "$ROOT/session/$src" ]]; then
+        install -m 755 "$ROOT/session/$src" "$DEST/session/$src"
+        install -m 755 "$ROOT/session/$src" "/usr/local/bin/$dst"
+      fi
+    done
+  else
+    install -m 755 "$ROOT/session/handset-session.sh" /usr/local/bin/handset-session
+    for pair in \
+      "mirror-displays.sh:digivice-mirror-displays" \
+      "digivice-layout.sh:digivice-layout" \
+      "restore-desktop-displays.sh:digivice-restore-desktop" \
+      "unfuck-displays.sh:digivice-unfuck-displays" \
+      "spi-test.sh:digivice-spi-test" \
+      "spi-prove.sh:digivice-spi-prove" \
+      "spi-blank.sh:digivice-spi-blank" \
+      "desktop-spi-mirror.sh:digivice-desktop-mirror" \
+      "update-handset.sh:digivice-update" \
+      "ensure-buttons.sh:digivice-ensure-buttons" \
+      "fix-cursor.sh:digivice-fix-cursor" \
+      "restore-desktop-displays.sh:digivice-restore-desktop" \
+      "hdmi-hotplug.sh:digivice-hdmi-hotplug" \
+      "gui-update.sh:digivice-gui-update" \
+      "home-relaunch.sh:digivice-home-relaunch" \
+      "apply-update.sh:digivice-apply-update" \
+      "power.sh:digivice-power" \
+      "full-update.sh:digivice-full-update"
+    do
+      src="${pair%%:*}"
+      dst="${pair##*:}"
+      if [[ -f "$ROOT/session/$src" ]]; then
+        install -m 755 "$ROOT/session/$src" "$DEST/session/$src"
+        install -m 755 "$ROOT/session/$src" "/usr/local/bin/$dst"
+      fi
+    done
+  fi
 
   if [[ -d "$ROOT/display" ]]; then
     cp -a "$ROOT/display" "$DEST/"
