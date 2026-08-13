@@ -7,9 +7,9 @@ import os
 import subprocess
 from datetime import datetime
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Callable, Optional, Tuple
 
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, QSize
 from PyQt5.QtGui import QPixmap, QTextCursor
 from PyQt5.QtWidgets import (
     QFrame,
@@ -18,10 +18,12 @@ from PyQt5.QtWidgets import (
     QLabel,
     QLineEdit,
     QListWidget,
+    QListWidgetItem,
     QMessageBox,
     QPushButton,
     QScrollArea,
     QSizePolicy,
+    QStackedWidget,
     QTextEdit,
     QVBoxLayout,
     QWidget,
@@ -238,54 +240,484 @@ def make_phone_page(
     return page
 
 
-def make_sms_page(modem, on_back, on_status) -> QWidget:
-    body = QWidget()
-    lay = QVBoxLayout(body)
-    sms_list = QListWidget()
-    sms_to = QLineEdit()
-    sms_to.setPlaceholderText("To")
-    sms_body = QTextEdit()
-    sms_body.setPlaceholderText("Message")
-    sms_body.setMaximumHeight(56)
-    send = QPushButton("Send SMS")
-    lay.addWidget(sms_list, 1)
-    lay.addWidget(sms_to)
-    lay.addWidget(sms_body)
-    lay.addWidget(send)
+def _digits_tail(num: str, n: int = 10) -> str:
+    d = "".join(c for c in str(num or "") if c.isdigit())
+    return d[-n:] if d else ""
 
-    def refresh():
-        threads = _load_json(SMS_LOG, {})
-        sms_list.clear()
-        for num, msgs in threads.items():
-            last = msgs[-1] if msgs else ""
-            sms_list.addItem(f"{num}: {last}")
 
-    def do_send():
-        num = sms_to.text().strip()
-        text = sms_body.toPlainText().strip().replace("\n", " ")
-        if not num or not text:
+def _contact_display(number: str) -> Tuple[str, str]:
+    """Return (display_name, initial) for a phone number."""
+    num = str(number or "").strip()
+    raw = _load_json(CONTACTS, [])
+    if isinstance(raw, list):
+        tail = _digits_tail(num)
+        for c in raw:
+            if not isinstance(c, dict):
+                continue
+            cnum = str(c.get("number") or "").strip()
+            if not cnum:
+                continue
+            if cnum == num or (tail and _digits_tail(cnum) == tail):
+                name = str(c.get("name") or "").strip() or cnum
+                initial = name[:1].upper() if name else "?"
+                if not initial.isalnum():
+                    initial = "#"
+                return name, initial
+    # Fall back to number; initial from last digit or #
+    initial = num[-1:].upper() if num else "?"
+    if initial.isdigit():
+        pass
+    elif initial.isalpha():
+        pass
+    else:
+        initial = "#"
+    return num or "Unknown", initial
+
+
+def _avatar_color(key: str) -> str:
+    palette = (
+        "#2a6f97",
+        "#3d7a4a",
+        "#8a4a2a",
+        "#6a3d8a",
+        "#2a7a7a",
+        "#8a3d5c",
+        "#4a5a8a",
+        "#7a6a2a",
+    )
+    return palette[sum(ord(c) for c in (key or "?")) % len(palette)]
+
+
+def _normalize_sms_msg(raw) -> dict:
+    """Normalize legacy string messages and dict messages."""
+    if isinstance(raw, dict):
+        text = str(raw.get("text") or "")
+        direction = str(raw.get("dir") or "in").lower()
+        if direction not in ("in", "out"):
+            direction = "out" if text.startswith(">") else "in"
+        return {
+            "dir": direction,
+            "text": text[2:].lstrip() if text.startswith("> ") and direction == "out" else text,
+            "at": str(raw.get("at") or ""),
+            "read": bool(raw.get("read", direction == "out")),
+        }
+    s = str(raw or "")
+    if s.startswith("> "):
+        return {"dir": "out", "text": s[2:], "at": "", "read": True}
+    if s.startswith(">"):
+        return {"dir": "out", "text": s[1:].lstrip(), "at": "", "read": True}
+    return {"dir": "in", "text": s, "at": "", "read": True}
+
+
+def _load_sms_threads() -> dict:
+    raw = _load_json(SMS_LOG, {})
+    if not isinstance(raw, dict):
+        return {}
+    out: dict = {}
+    for num, msgs in raw.items():
+        if not isinstance(msgs, list):
+            continue
+        out[str(num)] = [_normalize_sms_msg(m) for m in msgs]
+    return out
+
+
+def _save_sms_threads(threads: dict) -> None:
+    _save_json(SMS_LOG, threads)
+
+
+def _msg_preview(msg: dict) -> str:
+    text = str(msg.get("text") or "").replace("\n", " ").strip()
+    if msg.get("dir") == "out":
+        text = f"You: {text}" if text else "You: "
+    return text
+
+
+def make_sms_page(
+    modem,
+    on_back,
+    on_status,
+    get_modem: Optional[Callable] = None,
+) -> QWidget:
+    """Conversation inbox + thread view (avatar, unread badge, one-line preview)."""
+    from esp_handset import digi_nav
+
+    root = QWidget()
+    stack = QStackedWidget(root)
+    outer = QVBoxLayout(root)
+    outer.setContentsMargins(0, 0, 0, 0)
+    outer.addWidget(stack)
+
+    # ----- Inbox -----
+    inbox = QWidget()
+    in_lay = QVBoxLayout(inbox)
+    in_lay.setContentsMargins(2, 2, 2, 2)
+    in_lay.setSpacing(4)
+
+    conv_list = QListWidget()
+    conv_list.setSpacing(2)
+    conv_list.setStyleSheet(
+        "QListWidget { background: transparent; border: none; outline: none; }"
+        "QListWidget::item { background: #152030; border-radius: 6px;"
+        "  margin: 1px 0; padding: 0; }"
+        "QListWidget::item:selected { background: #243448;"
+        "  border: 2px solid #FFE600; }"
+    )
+    in_lay.addWidget(conv_list, 1)
+
+    new_btn = QPushButton("＋ New message")
+    new_btn.setMinimumHeight(30)
+    new_btn.setStyleSheet("font-weight:700;")
+    in_lay.addWidget(new_btn)
+
+    # New-message form (number entry)
+    new_form = QWidget()
+    new_form.setVisible(False)
+    nf_lay = QVBoxLayout(new_form)
+    nf_lay.setContentsMargins(0, 0, 0, 0)
+    nf_lay.setSpacing(3)
+    new_to = QLineEdit()
+    new_to.setPlaceholderText("Phone number")
+    nf_row = QHBoxLayout()
+    new_open = QPushButton("Open")
+    new_open.setStyleSheet("font-weight:700;")
+    new_cancel = QPushButton("Cancel")
+    nf_row.addWidget(new_open, 1)
+    nf_row.addWidget(new_cancel, 1)
+    nf_lay.addWidget(new_to)
+    nf_lay.addLayout(nf_row)
+    in_lay.addWidget(new_form)
+
+    stack.addWidget(inbox)
+
+    # ----- Thread -----
+    thread = QWidget()
+    th_lay = QVBoxLayout(thread)
+    th_lay.setContentsMargins(2, 2, 2, 2)
+    th_lay.setSpacing(3)
+
+    thread_title = QLabel("Chat")
+    thread_title.setStyleSheet("font-size:12px; font-weight:700;")
+    thread_title.setWordWrap(True)
+    th_lay.addWidget(thread_title)
+
+    msg_list = QListWidget()
+    msg_list.setStyleSheet(
+        "QListWidget { background: transparent; border: none; outline: none; }"
+        "QListWidget::item { background: transparent; margin: 2px 0; padding: 0; }"
+        "QListWidget::item:selected { background: rgba(255,230,0,0.12);"
+        "  border: 1px solid #FFE600; border-radius: 4px; }"
+    )
+    th_lay.addWidget(msg_list, 1)
+
+    compose_row = QHBoxLayout()
+    compose_row.setSpacing(3)
+    compose = QLineEdit()
+    compose.setPlaceholderText("Type a message…")
+    compose.setMinimumHeight(30)
+    send_btn = QPushButton("Send")
+    send_btn.setMinimumHeight(30)
+    send_btn.setFixedWidth(52)
+    send_btn.setStyleSheet("font-weight:800;")
+    compose_row.addWidget(compose, 1)
+    compose_row.addWidget(send_btn)
+    th_lay.addLayout(compose_row)
+
+    stack.addWidget(thread)
+
+    state = {"peer": ""}
+
+    def _active_modem():
+        if get_modem:
+            try:
+                return get_modem()
+            except Exception:
+                pass
+        return modem
+
+    def _elide(text: str, width_px: int = 150) -> str:
+        t = (text or "").replace("\n", " ").strip()
+        if len(t) <= 36:
+            return t
+        # Digivice ~240px wide — hard cap keeps one line readable
+        return t[:33] + "…"
+
+    def _build_conv_row(number: str, msgs: list) -> QWidget:
+        name, initial = _contact_display(number)
+        last = msgs[-1] if msgs else {"text": "", "dir": "in"}
+        preview = _elide(_msg_preview(last))
+        unread = any(
+            m.get("dir") == "in" and not m.get("read", True) for m in msgs
+        )
+
+        row = QWidget()
+        row.setFocusPolicy(Qt.NoFocus)
+        h = QHBoxLayout(row)
+        h.setContentsMargins(4, 4, 4, 4)
+        h.setSpacing(6)
+
+        avatar = QLabel(initial)
+        avatar.setAlignment(Qt.AlignCenter)
+        avatar.setFixedSize(36, 36)
+        avatar.setFocusPolicy(Qt.NoFocus)
+        color = _avatar_color(name or number)
+        avatar.setStyleSheet(
+            f"background:{color}; color:#fff; border-radius:18px;"
+            "font-size:14px; font-weight:800;"
+        )
+        h.addWidget(avatar)
+
+        text_col = QVBoxLayout()
+        text_col.setSpacing(1)
+        text_col.setContentsMargins(0, 0, 0, 0)
+        name_row = QHBoxLayout()
+        name_row.setSpacing(4)
+        name_lab = QLabel(name)
+        name_lab.setStyleSheet("font-size:12px; font-weight:700; color:#e8eef5;")
+        name_lab.setFocusPolicy(Qt.NoFocus)
+        name_row.addWidget(name_lab, 1)
+        if unread:
+            badge = QLabel("●")
+            badge.setStyleSheet("color:#FFE600; font-size:14px; font-weight:800;")
+            badge.setFixedWidth(14)
+            badge.setFocusPolicy(Qt.NoFocus)
+            name_row.addWidget(badge)
+        text_col.addLayout(name_row)
+        prev_lab = QLabel(preview or "(no messages)")
+        prev_lab.setStyleSheet(
+            "font-size:10px; color:#9ab;"
+            if not unread
+            else "font-size:10px; color:#cde; font-weight:600;"
+        )
+        prev_lab.setFocusPolicy(Qt.NoFocus)
+        prev_lab.setWordWrap(False)
+        text_col.addWidget(prev_lab)
+        h.addLayout(text_col, 1)
+
+        for child in row.findChildren(QWidget):
+            child.setFocusPolicy(Qt.NoFocus)
+        row.setFocusPolicy(Qt.NoFocus)
+        return row
+
+    def _build_bubble(msg: dict) -> QWidget:
+        outgoing = msg.get("dir") == "out"
+        text = str(msg.get("text") or "")
+        wrap = QWidget()
+        wrap.setFocusPolicy(Qt.NoFocus)
+        h = QHBoxLayout(wrap)
+        h.setContentsMargins(2, 1, 2, 1)
+        h.setSpacing(0)
+        if outgoing:
+            h.addStretch(1)
+        bubble = QLabel(text)
+        bubble.setWordWrap(True)
+        bubble.setFocusPolicy(Qt.NoFocus)
+        bubble.setMaximumWidth(180)
+        if outgoing:
+            bubble.setStyleSheet(
+                "background:#1f6feb; color:#fff; border-radius:8px;"
+                "padding:6px 8px; font-size:11px;"
+            )
+            bubble.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        else:
+            bubble.setStyleSheet(
+                "background:#243040; color:#e8eef5; border-radius:8px;"
+                "padding:6px 8px; font-size:11px;"
+            )
+        h.addWidget(bubble)
+        if not outgoing:
+            h.addStretch(1)
+        return wrap
+
+    def show_inbox() -> None:
+        state["peer"] = ""
+        new_form.setVisible(False)
+        stack.setCurrentWidget(inbox)
+        refresh_inbox()
+        digi_nav.ensure_page_focus(chrome)
+
+    def refresh_inbox() -> None:
+        threads = _load_sms_threads()
+        # Sort by last message presence — newest activity first (stable by number)
+        items = list(threads.items())
+
+        def sort_key(pair):
+            num, msgs = pair
+            last_at = ""
+            if msgs:
+                last_at = str(msgs[-1].get("at") or "")
+            return (last_at, num)
+
+        items.sort(key=sort_key, reverse=True)
+        conv_list.clear()
+        if not items:
+            empty = QListWidgetItem("No conversations yet.\n＋ New message below.")
+            empty.setFlags(Qt.NoItemFlags)
+            conv_list.addItem(empty)
             return
-        if not modem:
-            QMessageBox.warning(body, "SMS", "SIM7600 not connected")
+        for num, msgs in items:
+            item = QListWidgetItem()
+            item.setData(Qt.UserRole, num)
+            item.setSizeHint(QSize(200, 48))
+            conv_list.addItem(item)
+            conv_list.setItemWidget(item, _build_conv_row(num, msgs))
+
+    def mark_read(number: str) -> None:
+        threads = _load_sms_threads()
+        msgs = threads.get(number)
+        if not msgs:
+            return
+        changed = False
+        for m in msgs:
+            if m.get("dir") == "in" and not m.get("read", True):
+                m["read"] = True
+                changed = True
+        if changed:
+            threads[number] = msgs
+            _save_sms_threads(threads)
+
+    def open_thread(number: str) -> None:
+        number = str(number or "").strip()
+        if not number:
+            return
+        state["peer"] = number
+        name, _ = _contact_display(number)
+        thread_title.setText(name if name != number else number)
+        if name != number:
+            thread_title.setText(f"{name}\n{number}")
+        mark_read(number)
+        refresh_thread()
+        stack.setCurrentWidget(thread)
+        compose.clear()
+        digi_nav.ensure_page_focus(chrome)
+        # Prefer landing on compose for typing
+        compose.setFocus(Qt.OtherFocusReason)
+
+    def refresh_thread() -> None:
+        peer = state["peer"]
+        msg_list.clear()
+        if not peer:
+            return
+        threads = _load_sms_threads()
+        msgs = threads.get(peer, [])
+        if not msgs:
+            item = QListWidgetItem("No messages yet — say hi.")
+            item.setFlags(Qt.NoItemFlags)
+            msg_list.addItem(item)
+            return
+        for m in msgs:
+            item = QListWidgetItem()
+            item.setSizeHint(QSize(200, 44))
+            msg_list.addItem(item)
+            bubble = _build_bubble(m)
+            # Size hint from bubble preferred height
+            bubble.adjustSize()
+            hint_h = max(36, bubble.sizeHint().height() + 4)
+            item.setSizeHint(QSize(200, hint_h))
+            msg_list.setItemWidget(item, bubble)
+        msg_list.scrollToBottom()
+
+    def open_selected() -> None:
+        item = conv_list.currentItem()
+        if item is None:
+            return
+        num = item.data(Qt.UserRole)
+        if num:
+            open_thread(str(num))
+
+    def start_new() -> None:
+        new_form.setVisible(True)
+        new_to.setFocus(Qt.OtherFocusReason)
+        digi_nav.clear_highlights(chrome)
+        digi_nav._highlight(new_to, True)
+
+    def cancel_new() -> None:
+        new_form.setVisible(False)
+        new_to.clear()
+        digi_nav.ensure_page_focus(chrome)
+
+    def open_new() -> None:
+        num = new_to.text().strip()
+        if not num:
+            on_status("Enter a number")
+            return
+        new_form.setVisible(False)
+        # Ensure thread exists
+        threads = _load_sms_threads()
+        threads.setdefault(num, [])
+        _save_sms_threads(threads)
+        open_thread(num)
+
+    def do_send() -> None:
+        peer = state["peer"]
+        text = compose.text().strip().replace("\n", " ")
+        if not peer or not text:
+            return
+        m = _active_modem()
+        if not m:
+            QMessageBox.warning(root, "SMS", "SIM7600 not connected")
             return
         try:
-            ok = modem.send_sms(num, text)
+            ok = m.send_sms(peer, text)
         except Exception as e:
-            QMessageBox.warning(body, "SMS", str(e))
+            QMessageBox.warning(root, "SMS", str(e))
             return
         if not ok:
-            QMessageBox.warning(body, "SMS", "Send failed")
+            QMessageBox.warning(root, "SMS", "Send failed")
             return
-        threads = _load_json(SMS_LOG, {})
-        threads.setdefault(num, []).append(f"> {text}")
-        _save_json(SMS_LOG, threads)
-        refresh()
-        on_status(f"SMS sent to {num}")
+        threads = _load_sms_threads()
+        threads.setdefault(peer, []).append(
+            {
+                "dir": "out",
+                "text": text,
+                "at": datetime.now().isoformat(),
+                "read": True,
+            }
+        )
+        _save_sms_threads(threads)
+        compose.clear()
+        refresh_thread()
+        on_status(f"SMS sent to {peer}")
 
-    send.clicked.connect(do_send)
-    refresh()
-    body.refresh_sms = refresh  # type: ignore[attr-defined]
-    return page_chrome("Messages", body, on_back)
+    def chrome_back() -> None:
+        if stack.currentWidget() is thread:
+            show_inbox()
+        elif new_form.isVisible():
+            cancel_new()
+        else:
+            on_back()
+
+    def on_hardware_back() -> bool:
+        if stack.currentWidget() is thread:
+            show_inbox()
+            return True
+        if new_form.isVisible():
+            cancel_new()
+            return True
+        return False
+
+    def refresh_sms() -> None:
+        if stack.currentWidget() is thread and state["peer"]:
+            # Live update open chat; mark new as read while viewing
+            mark_read(state["peer"])
+            refresh_thread()
+        refresh_inbox()
+
+    conv_list.itemActivated.connect(lambda _i: open_selected())
+    conv_list.itemClicked.connect(lambda _i: open_selected())
+    new_btn.clicked.connect(start_new)
+    new_open.clicked.connect(open_new)
+    new_cancel.clicked.connect(cancel_new)
+    send_btn.clicked.connect(do_send)
+    compose.returnPressed.connect(do_send)
+
+    chrome = page_chrome("Messages", root, chrome_back, scroll=False)
+    chrome.refresh_sms = refresh_sms  # type: ignore[attr-defined]
+    chrome.on_hardware_back = on_hardware_back  # type: ignore[attr-defined]
+    chrome.open_sms_thread = open_thread  # type: ignore[attr-defined]
+
+    refresh_inbox()
+    stack.setCurrentWidget(inbox)
+    return chrome
 
 
 def make_contacts_page(on_back, open_dial: Callable[[str], None]) -> QWidget:

@@ -34,7 +34,7 @@ CALLS_APPS = [
 ]
 
 SMS_APPS = [
-    AppEntry("messages", "Messages", "SMS", "✉"),
+    AppEntry("messages", "Messages", "Conversations", "✉"),
     AppEntry("lora", "LoRa", "Mesh / SOS", "⌁"),
     AppEntry("notifs", "Notifs", "", "⚑"),
 ]

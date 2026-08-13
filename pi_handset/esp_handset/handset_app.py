@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import os
 import sys
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
@@ -183,7 +184,7 @@ def build_app(bridge: Optional[EspBridge], modem: Optional[Sim7600]) -> PhoneShe
         "phone",
         pages.make_phone_page(back, status, on_call_log=lambda: shell.go("call_log")),
     )
-    sms_page = pages.make_sms_page(modem, back, status)
+    sms_page = pages.make_sms_page(modem, back, status, get_modem=get_modem)
     shell.register_page("messages", sms_page)
 
     from PyQt5.QtWidgets import QLineEdit, QPushButton, QVBoxLayout, QWidget
@@ -360,9 +361,16 @@ def build_app(bridge: Optional[EspBridge], modem: Optional[Sim7600]) -> PhoneShe
                 status(line[:40])
 
     def on_sms(num: str, text: str) -> None:
-        threads = pages._load_json(pages.SMS_LOG, {})
-        threads.setdefault(num, []).append(text)
-        pages._save_json(pages.SMS_LOG, threads)
+        threads = pages._load_sms_threads()
+        threads.setdefault(num, []).append(
+            {
+                "dir": "in",
+                "text": text,
+                "at": datetime.now().isoformat(),
+                "read": False,
+            }
+        )
+        pages._save_sms_threads(threads)
         refresh = getattr(sms_page, "refresh_sms", None)
         if callable(refresh):
             refresh()

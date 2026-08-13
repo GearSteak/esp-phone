@@ -284,6 +284,17 @@ class PhoneShell(QMainWindow):
 
     def back(self) -> None:
         self.hide_osk()
+        # App pages can consume Back (e.g. SMS thread → inbox)
+        page_key = self._nav[-1] if self._nav else "home"
+        page = self.pages.get(page_key)
+        if page is not None:
+            handler = getattr(page, "on_hardware_back", None)
+            if callable(handler):
+                try:
+                    if handler():
+                        return
+                except Exception:
+                    pass
         if len(self._nav) > 1:
             self._nav.pop()
             key = self._nav[-1]
