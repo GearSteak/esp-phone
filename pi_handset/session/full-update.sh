@@ -199,7 +199,26 @@ install -m 755 "$ROOT/esp_handset/t9_keypad_inputd.py" "$PREFIX/t9_keypad_inputd
 install -m 755 "$ROOT/session/handset-session.sh" "$PREFIX/session/handset-session.sh"
 install -m 755 "$ROOT/session/handset-session.sh" /usr/local/bin/handset-session
 install -m 755 "$ROOT/session/full-update.sh" "$PREFIX/session/full-update.sh"
-install -m 755 "$ROOT/session/full-update.sh" /usr/local/bin/digivice-full-update
+# Thin wrapper: always exec the script from the git repo after pull
+cat >/usr/local/bin/digivice-full-update <<EOF
+#!/bin/bash
+set +e
+REPO="$REPO"
+[[ -f /etc/esp-handset/repo.path ]] && REPO="\$(tr -d '[:space:]' </etc/esp-handset/repo.path)"
+for d in "\$REPO" "\${HOME}/esp-phone" /home/*/esp-phone "/home/*/esp phone" /opt/esp-phone "$PREFIX"; do
+  for hit in \$d; do
+    if [[ -f "\$hit/pi_handset/session/full-update.sh" ]]; then
+      exec bash "\$hit/pi_handset/session/full-update.sh" "\$@"
+    fi
+    if [[ -f "\$hit/session/full-update.sh" ]]; then
+      exec bash "\$hit/session/full-update.sh" "\$@"
+    fi
+  done
+done
+echo "digivice-full-update: full-update.sh not found" >&2
+exit 1
+EOF
+chmod 755 /usr/local/bin/digivice-full-update
 install -m 755 "$ROOT/session/gui-update.sh" "$PREFIX/session/gui-update.sh"
 install -m 755 "$ROOT/session/gui-update.sh" /usr/local/bin/digivice-gui-update
 install -m 755 "$ROOT/session/update-handset.sh" /usr/local/bin/digivice-update 2>/dev/null || true
@@ -220,6 +239,21 @@ if [[ -f "$ROOT/session/digivice-stop-gb.sh" ]]; then
   install -m 755 "$ROOT/session/digivice-stop-gb.sh" "$PREFIX/session/digivice-stop-gb.sh"
   install -m 755 "$ROOT/session/digivice-stop-gb.sh" /usr/local/bin/digivice-stop-gb
 fi
+if [[ -f "$ROOT/session/ensure-gb-wrappers.sh" ]]; then
+  install -m 755 "$ROOT/session/ensure-gb-wrappers.sh" "$PREFIX/session/ensure-gb-wrappers.sh"
+  install -m 755 "$ROOT/session/ensure-gb-wrappers.sh" /usr/local/bin/digivice-ensure-gb
+  # Always force wrappers into /usr/local/bin + clear GB/SPI mess
+  bash "$ROOT/session/ensure-gb-wrappers.sh" 2>&1 | tee -a "$LOG" || true
+elif [[ -f "$PREFIX/session/ensure-gb-wrappers.sh" ]]; then
+  bash "$PREFIX/session/ensure-gb-wrappers.sh" 2>&1 | tee -a "$LOG" || true
+fi
+# Belt-and-suspenders if ensure script missing on old trees
+if [[ ! -x /usr/local/bin/digivice-stop-gb ]]; then
+  log "WARN: writing emergency digivice-stop-gb"
+  if [[ -f "$ROOT/session/digivice-stop-gb.sh" ]]; then
+    install -m 755 "$ROOT/session/digivice-stop-gb.sh" /usr/local/bin/digivice-stop-gb
+  fi
+fi
 if [[ -f "$ROOT/session/ensure-gb-roms.sh" ]]; then
   install -m 755 "$ROOT/session/ensure-gb-roms.sh" "$PREFIX/session/ensure-gb-roms.sh"
   install -m 755 "$ROOT/session/ensure-gb-roms.sh" /usr/local/bin/digivice-gb-roms-dir
@@ -227,10 +261,13 @@ if [[ -f "$ROOT/session/ensure-gb-roms.sh" ]]; then
 fi
 # Kill switch: external GB emu blanked SPI — keep off until in-UI emu
 touch "$USER_HOME/.esp-handset/gb-disabled" 2>/dev/null || true
+touch /etc/esp-handset/gb-disabled 2>/dev/null || true
 chown "$USER_NAME:$USER_NAME" "$USER_HOME/.esp-handset/gb-disabled" 2>/dev/null || true
-pkill -9 -f 'digivice-gb|retroarch' 2>/dev/null || true
+pkill -9 -f 'digivice-gb|retroarch|mgba|desktop_spi_mirror' 2>/dev/null || true
+rm -f /tmp/digivice-st7789.lock /run/digivice-st7789.lock /run/digivice-gb-rom 2>/dev/null || true
 echo phone >"$USER_HOME/.esp-handset/session_mode" 2>/dev/null || true
 echo phone >/etc/esp-handset/ui_mode 2>/dev/null || true
+log "digivice-stop-gb → $(command -v digivice-stop-gb 2>/dev/null || echo MISSING)"
 if [[ -f "$ROOT/session/install-home-request.sh" ]]; then
   install -m 755 "$ROOT/session/install-home-request.sh" "$PREFIX/session/install-home-request.sh"
   bash "$ROOT/session/install-home-request.sh" 2>&1 | tee -a "$LOG" || true
@@ -276,7 +313,8 @@ export DISPLAY="${DISPLAY:-:0}"
 exec /usr/local/bin/handset-session force-desktop
 EOF
 chmod +x /usr/local/bin/handset-phone /usr/local/bin/handset-desktop /usr/local/bin/digivice-leave \
-  /usr/local/bin/digivice-full-update
+  /usr/local/bin/digivice-full-update /usr/local/bin/digivice-stop-gb /usr/local/bin/digivice-ensure-gb \
+  2>/dev/null || true
 
 # Sudoers for later GUI / terminal updates
 cat >/etc/sudoers.d/esp-handset-update <<EOF
@@ -286,16 +324,21 @@ $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-gui-update
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-apply-update
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-power
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-ensure-buttons
+$USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-ensure-gb
+$USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-stop-gb
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-fix-cursor
 $USER_NAME ALL=(root) NOPASSWD: $PREFIX/session/full-update.sh
 $USER_NAME ALL=(root) NOPASSWD: $PREFIX/session/update-handset.sh
 $USER_NAME ALL=(root) NOPASSWD: $PREFIX/session/gui-update.sh
 $USER_NAME ALL=(root) NOPASSWD: $PREFIX/session/power.sh
 $USER_NAME ALL=(root) NOPASSWD: $PREFIX/session/ensure-buttons.sh
+$USER_NAME ALL=(root) NOPASSWD: $PREFIX/session/ensure-gb-wrappers.sh
 $USER_NAME ALL=(root) NOPASSWD: /usr/bin/bash $PREFIX/session/gui-update.sh
 $USER_NAME ALL=(root) NOPASSWD: /bin/bash $PREFIX/session/gui-update.sh
 $USER_NAME ALL=(root) NOPASSWD: /usr/bin/bash $PREFIX/session/power.sh
 $USER_NAME ALL=(root) NOPASSWD: /bin/bash $PREFIX/session/power.sh
+$USER_NAME ALL=(root) NOPASSWD: /usr/bin/bash $PREFIX/session/ensure-gb-wrappers.sh
+$USER_NAME ALL=(root) NOPASSWD: /bin/bash $PREFIX/session/ensure-gb-wrappers.sh
 EOF
 chmod 440 /etc/sudoers.d/esp-handset-update
 

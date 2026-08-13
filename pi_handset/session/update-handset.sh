@@ -179,6 +179,7 @@ install_tree() {
       "apply-update.sh:digivice-apply-update" \
       "digivice-gb.sh:digivice-gb" \
       "digivice-stop-gb.sh:digivice-stop-gb" \
+      "ensure-gb-wrappers.sh:digivice-ensure-gb" \
       "ensure-gb-roms.sh:digivice-gb-roms-dir"
     do
       src="${pair%%:*}"
@@ -188,6 +189,10 @@ install_tree() {
         install -m 755 "$ROOT/session/$src" "/usr/local/bin/$dst"
       fi
     done
+    # Always ensure wrappers even when staging (so stop-gb exists before Digivice restarts)
+    if [[ -f "$ROOT/session/ensure-gb-wrappers.sh" ]]; then
+      bash "$ROOT/session/ensure-gb-wrappers.sh" --no-kill >>"$LOG" 2>&1 || true
+    fi
   else
     install -m 755 "$ROOT/session/handset-session.sh" /usr/local/bin/handset-session
     for pair in \
@@ -209,6 +214,7 @@ install_tree() {
       "apply-update.sh:digivice-apply-update" \
       "digivice-gb.sh:digivice-gb" \
       "digivice-stop-gb.sh:digivice-stop-gb" \
+      "ensure-gb-wrappers.sh:digivice-ensure-gb" \
       "ensure-gb-roms.sh:digivice-gb-roms-dir" \
       "power.sh:digivice-power" \
       "full-update.sh:digivice-full-update"
@@ -220,6 +226,9 @@ install_tree() {
         install -m 755 "$ROOT/session/$src" "/usr/local/bin/$dst"
       fi
     done
+    if [[ -f "$ROOT/session/ensure-gb-wrappers.sh" ]]; then
+      bash "$ROOT/session/ensure-gb-wrappers.sh" >>"$LOG" 2>&1 || true
+    fi
   fi
 
   if [[ -d "$ROOT/display" ]]; then

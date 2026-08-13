@@ -94,6 +94,9 @@ install -m 755 "$ROOT/session/digivice-gb.sh" "$PREFIX/session/digivice-gb.sh"
 install -m 755 "$ROOT/session/digivice-gb.sh" /usr/local/bin/digivice-gb
 install -m 755 "$ROOT/session/digivice-stop-gb.sh" "$PREFIX/session/digivice-stop-gb.sh"
 install -m 755 "$ROOT/session/digivice-stop-gb.sh" /usr/local/bin/digivice-stop-gb
+install -m 755 "$ROOT/session/ensure-gb-wrappers.sh" "$PREFIX/session/ensure-gb-wrappers.sh"
+install -m 755 "$ROOT/session/ensure-gb-wrappers.sh" /usr/local/bin/digivice-ensure-gb
+bash "$ROOT/session/ensure-gb-wrappers.sh" 2>/dev/null || true
 install -m 755 "$ROOT/session/ensure-gb-roms.sh" "$PREFIX/session/ensure-gb-roms.sh"
 install -m 755 "$ROOT/session/ensure-gb-roms.sh" /usr/local/bin/digivice-gb-roms-dir
 bash "$ROOT/session/ensure-gb-roms.sh" 2>/dev/null || true

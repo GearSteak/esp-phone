@@ -170,6 +170,7 @@ if [[ -d "$STAGE" && -f "$STAGE/.ready" ]]; then
     apply-update.sh:digivice-apply-update \
     digivice-gb.sh:digivice-gb \
     digivice-stop-gb.sh:digivice-stop-gb \
+    ensure-gb-wrappers.sh:digivice-ensure-gb \
     full-update.sh:digivice-full-update
   do
     src="${pair%%:*}"
@@ -178,6 +179,28 @@ if [[ -d "$STAGE" && -f "$STAGE/.ready" ]]; then
       install -m 755 "$PREFIX/session/$src" "/usr/local/bin/$dst"
     fi
   done
+  # Force stop-gb + SPI cleanup every apply (even if old staging missed the file)
+  if [[ -f "$PREFIX/session/ensure-gb-wrappers.sh" ]]; then
+    bash "$PREFIX/session/ensure-gb-wrappers.sh" >>"$LOG" 2>&1 || true
+  elif [[ -f /usr/local/bin/digivice-ensure-gb ]]; then
+    bash /usr/local/bin/digivice-ensure-gb >>"$LOG" 2>&1 || true
+  else
+    # Last resort: install stop-gb from any known path
+    for s in \
+      "$PREFIX/session/digivice-stop-gb.sh" \
+      /opt/esp-handset/session/digivice-stop-gb.sh \
+      /home/*/esp-phone/pi_handset/session/digivice-stop-gb.sh
+    do
+      # shellcheck disable=SC2086
+      for hit in $s; do
+        if [[ -f "$hit" ]]; then
+          install -m 755 "$hit" /usr/local/bin/digivice-stop-gb
+          break 2
+        fi
+      done
+    done
+  fi
+  log "digivice-stop-gb → $(command -v digivice-stop-gb 2>/dev/null || echo MISSING)"
   cat >/usr/local/bin/handset-phone <<'EOF'
 #!/bin/bash
 exec /usr/local/bin/handset-session phone
