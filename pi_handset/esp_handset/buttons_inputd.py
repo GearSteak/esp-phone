@@ -25,6 +25,7 @@ import glob
 import os
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -528,17 +529,31 @@ def is_pressed(level: int) -> bool:
     return level == 0
 
 
+def _pgrep_f(pat: str) -> bool:
+    try:
+        r = subprocess.run(
+            ["pgrep", "-f", pat],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+        return r.returncode == 0
+    except Exception:
+        return False
+
+
 def quit_gb_emulator() -> None:
-    """Confirm+Back+Home — stop GB emulator so digivice-gb can relaunch Digivice."""
+    """Confirm+Back+Home — stop GB emu; ensure Digivice comes back if launcher died."""
     log("GB exit combo → stop emulator")
-    for pat in (
+    pats = (
         "retroarch",
-        "mgba",
         "mgba-sdl",
         "mgba-qt",
+        "mgba",
         "vbam",
         "sameboy",
-    ):
+    )
+    for pat in pats:
         try:
             subprocess.run(
                 ["pkill", "-TERM", "-f", pat],
@@ -549,6 +564,62 @@ def quit_gb_emulator() -> None:
             )
         except Exception:
             pass
+
+    def _recover() -> None:
+        time.sleep(0.7)
+        for pat in pats:
+            try:
+                subprocess.run(
+                    ["pkill", "-KILL", "-f", pat],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    timeout=2,
+                    check=False,
+                )
+            except Exception:
+                pass
+        # digivice-gb should exec handset-phone; if it crashed, panel stays black
+        time.sleep(2.5)
+        if digivice_running():
+            return
+        if _pgrep_f("digivice-gb"):
+            # launcher still cleaning up — give it a bit more
+            time.sleep(3.0)
+            if digivice_running():
+                return
+        log("GB exit: Digivice not back — force relaunch + phone mode")
+        try:
+            write_mode_phone()
+        except Exception:
+            pass
+        try:
+            # Free SPI mirror so Digivice can open ST7789
+            subprocess.run(
+                ["pkill", "-TERM", "-f", "desktop_spi_mirror.py"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=2,
+                check=False,
+            )
+        except Exception:
+            pass
+        try:
+            for lock in (
+                "/tmp/digivice-st7789.lock",
+                "/run/digivice-st7789.lock",
+            ):
+                try:
+                    os.remove(lock)
+                except OSError:
+                    pass
+        except Exception:
+            pass
+        try:
+            relaunch_digivice()
+        except Exception as e:
+            log(f"GB force relaunch failed: {e}")
+
+    threading.Thread(target=_recover, daemon=True).start()
 
 
 def main() -> int:

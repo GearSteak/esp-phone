@@ -154,16 +154,26 @@ def make_gb_page(
         status.setText("Starting Game Boy…")
         env = os.environ.copy()
         env.setdefault("DISPLAY", ":0")
+        log_path = DATA / "gb.log"
+        try:
+            logf = open(log_path, "a", encoding="utf-8")
+        except OSError:
+            logf = subprocess.DEVNULL
         try:
             subprocess.Popen(
                 ["bash", launcher, rom],
                 start_new_session=True,
                 env=env,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
+                stdout=logf,
+                stderr=logf,
                 stdin=subprocess.DEVNULL,
             )
         except Exception as e:
+            if logf is not subprocess.DEVNULL:
+                try:
+                    logf.close()
+                except Exception:
+                    pass
             status.setText(f"Launch failed: {e}")
             return
 
@@ -177,7 +187,8 @@ def make_gb_page(
             except Exception:
                 pass
 
-        QTimer.singleShot(600, _quit)
+        # Give digivice-gb time to set mode=gb before we release SPI
+        QTimer.singleShot(900, _quit)
 
     def do_receive() -> None:
         if on_receive is not None:
