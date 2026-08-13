@@ -1,11 +1,10 @@
-"""Waveshare SIM7600G-H 4G HAT — AT over USB (SMS / GNSS).
+"""Waveshare SIM7600G-H 4G HAT — AT over USB *or* Pi GPIO UART.
 
-Modem uses USB to the Pi (cable or Zero pogo). Heltec is a separate USB CDC
-device. Optional stack under the Digivice LCD is mechanical only — see
-docs/SIM7600_STACK.md.
+USB (SimTech 1e0e → /dev/sim7600-at / ttyUSB*) or HAT on the 40-pin header
+using /dev/serial0 (GPIO 14/15). Mode: /etc/esp-handset/modem-backend
+  usb | uart | auto   (default auto = USB first, then UART)
 
-Leave HAT PWR jumper on 3V3 (not D6) so GPIO 6 stays free for LCD joy Up.
-Typical AT port: /dev/sim7600-at or ttyUSB2 (SimTech 1e0e).
+Leave HAT PWR jumper on 3V3 (not D6) so GPIO 6 stays free for Digivice Down.
 """
 
 from __future__ import annotations
@@ -15,7 +14,8 @@ import os
 import re
 import threading
 import time
-from typing import Callable, Optional
+from pathlib import Path
+from typing import Callable, List, Optional
 
 try:
     import serial
@@ -25,6 +25,37 @@ except ImportError:  # pragma: no cover
     list_ports = None
 
 SmsHandler = Callable[[str, str], None]
+
+_UART_PORTS = (
+    "/dev/serial0",
+    "/dev/ttyAMA0",
+    "/dev/ttyS0",
+)
+
+
+def modem_backend() -> str:
+    """usb | uart | auto"""
+    env = (os.environ.get("SIM7600_BACKEND") or "").strip().lower()
+    if env in ("usb", "uart", "auto", "gpio", "serial"):
+        if env in ("gpio", "serial"):
+            return "uart"
+        return env
+    for path in (
+        Path("/etc/esp-handset/modem-backend"),
+        Path.home() / ".esp-handset" / "modem-backend",
+    ):
+        try:
+            if path.is_file():
+                raw = path.read_text(encoding="utf-8").strip().lower().split()[0]
+                if raw in ("gpio", "serial"):
+                    return "uart"
+                if raw in ("usb", "uart", "auto"):
+                    return raw
+        except (OSError, IndexError):
+            continue
+    if Path("/etc/esp-handset/modem-uart").is_file():
+        return "uart"
+    return "auto"
 
 
 class Sim7600:
@@ -39,43 +70,89 @@ class Sim7600:
         self._rx_buf = ""
 
     @staticmethod
+    def _is_uart_path(path: str) -> bool:
+        real = path
+        try:
+            real = os.path.realpath(path)
+        except OSError:
+            pass
+        base = os.path.basename(real)
+        return base in ("serial0", "ttyAMA0", "ttyS0") or path in _UART_PORTS
+
+    @staticmethod
+    def uart_candidates() -> List[str]:
+        out: List[str] = []
+        for p in _UART_PORTS:
+            if os.path.exists(p) and p not in out:
+                out.append(p)
+        return out
+
+    @staticmethod
     def find_at_port(prefer: str = "/dev/sim7600-at") -> Optional[str]:
-        """Prefer USB AT (/dev/sim7600-at / SimTech ttyUSB*)."""
+        """Pick AT port: env → symlink → USB SimTech → GPIO UART."""
+        backend = modem_backend()
         env = os.environ.get("SIM7600_PORT", "").strip()
         if env and os.path.exists(env):
             return env
-        if prefer and os.path.exists(prefer):
-            # Skip stale UART symlink left from older installs
-            try:
-                real = os.path.realpath(prefer)
-                if real.endswith(("serial0", "ttyAMA0", "ttyS0")):
-                    pass  # fall through to USB scan
-                else:
+
+        def _usb_pick() -> Optional[str]:
+            if prefer and os.path.exists(prefer):
+                try:
+                    real = os.path.realpath(prefer)
+                    if not Sim7600._is_uart_path(prefer) and not Sim7600._is_uart_path(
+                        real
+                    ):
+                        return prefer
+                except OSError:
                     return prefer
-            except OSError:
-                return prefer
-        candidates: list[str] = []
-        if list_ports:
-            for p in list_ports.comports():
-                vid = p.vid or 0
-                desc = (p.description or "").lower()
-                # SimTech / Qualcomm modem interfaces — not CP2102 UART bridge
-                if vid in (0x1E0E, 0x05C6) or "simcom" in desc or "sim7600" in desc:
-                    candidates.append(p.device)
-        # Prefer typical AT interfaces (often ttyUSB2 on SimTech)
-        ranked: list[str] = []
-        for want in ("ttyUSB2", "ttyUSB3", "ttyUSB1", "ttyUSB4", "ttyUSB0", "ttyUSB5"):
+            candidates: list[str] = []
+            if list_ports:
+                for p in list_ports.comports():
+                    vid = p.vid or 0
+                    desc = (p.description or "").lower()
+                    if (
+                        vid in (0x1E0E, 0x05C6)
+                        or "simcom" in desc
+                        or "sim7600" in desc
+                    ):
+                        candidates.append(p.device)
+            ranked: list[str] = []
+            for want in (
+                "ttyUSB2",
+                "ttyUSB3",
+                "ttyUSB1",
+                "ttyUSB4",
+                "ttyUSB0",
+                "ttyUSB5",
+            ):
+                for c in candidates:
+                    if c.endswith(want) and c not in ranked:
+                        ranked.append(c)
             for c in candidates:
-                if c.endswith(want) and c not in ranked:
+                if c not in ranked:
                     ranked.append(c)
-        for c in candidates:
-            if c not in ranked:
-                ranked.append(c)
-        if ranked:
-            return ranked[0]
-        # Last resort: any ttyUSB (may be wrong jack — probe later)
-        usbs = sorted(glob.glob("/dev/ttyUSB*"))
-        return usbs[2] if len(usbs) > 2 else (usbs[0] if usbs else None)
+            if ranked:
+                return ranked[0]
+            usbs = sorted(glob.glob("/dev/ttyUSB*"))
+            return usbs[2] if len(usbs) > 2 else (usbs[0] if usbs else None)
+
+        def _uart_pick() -> Optional[str]:
+            if prefer and os.path.exists(prefer) and Sim7600._is_uart_path(prefer):
+                return prefer
+            if prefer and os.path.exists(prefer):
+                try:
+                    if Sim7600._is_uart_path(os.path.realpath(prefer)):
+                        return prefer
+                except OSError:
+                    pass
+            uarts = Sim7600.uart_candidates()
+            return uarts[0] if uarts else None
+
+        if backend == "uart":
+            return _uart_pick() or _usb_pick()
+        if backend == "usb":
+            return _usb_pick()
+        return _usb_pick() or _uart_pick()
 
     @staticmethod
     def list_usb_serial() -> list[str]:
@@ -98,45 +175,50 @@ class Sim7600:
                     tag = " CP2102-UART-jack?"
                 elif vid == 0x05C6:
                     tag = " Qualcomm"
-                lines.append(f"{os.path.basename(path)} {vid:04x}:{pid:04x}{tag} {desc}")
+                lines.append(
+                    f"{os.path.basename(path)} {vid:04x}:{pid:04x}{tag} {desc}"
+                )
             else:
                 lines.append(os.path.basename(path))
         return lines
 
     @staticmethod
     def diagnose() -> str:
-        """Human-readable modem USB presence (for Network / GPS UI)."""
+        """Human-readable modem presence (USB and/or GPIO UART)."""
         lines: list[str] = []
+        backend = modem_backend()
+        lines.append(f"backend: {backend}")
         prefer = "/dev/sim7600-at"
         if os.path.exists(prefer):
             try:
                 real = os.path.realpath(prefer)
                 lines.append(f"symlink: {prefer}")
                 lines.append(f" → {real}")
-                if real.endswith(("serial0", "ttyAMA0", "ttyS0")):
-                    lines.append("WARN: points at Pi UART — remove it")
+                if Sim7600._is_uart_path(real):
+                    lines.append("(GPIO UART OK)")
             except OSError:
                 lines.append(f"{prefer} exists")
         else:
             lines.append("no /dev/sim7600-at yet")
+        uarts = Sim7600.uart_candidates()
+        if uarts:
+            lines.append("GPIO UART:")
+            for u in uarts:
+                lines.append(f"  {u}")
+        else:
+            lines.append("no /dev/serial0 (enable UART?)")
         usb_lines = Sim7600.list_usb_serial()
         if usb_lines:
             lines.append("USB serial:")
             lines.extend("  " + x for x in usb_lines)
-            if any("CP2102" in x for x in usb_lines) and not any(
-                "SIM7600-modem" in x or "1e0e" in x.lower() for x in usb_lines
-            ):
-                lines.append("")
-                lines.append("Wrong USB jack?")
-                lines.append("Use HAT 'USB' (modem),")
-                lines.append("not 'USB TO UART'.")
         else:
             lines.append("no /dev/ttyUSB*")
+        if backend in ("uart", "auto") and not uarts and not usb_lines:
             lines.append("")
-            lines.append("Modem not enumerating:")
-            lines.append("• PWR→3V3, wait 20s")
-            lines.append("• Data USB cable (not charge-only)")
-            lines.append("• Try other Pi USB port")
+            lines.append("GPIO UART tips:")
+            lines.append("• PWR→3V3 on HAT")
+            lines.append("• enable_uart=1 / reboot")
+            lines.append("• echo uart | sudo tee /etc/esp-handset/modem-backend")
         found = Sim7600.find_at_port()
         if found:
             lines.append(f"pick: {found}")
@@ -179,19 +261,37 @@ class Sim7600:
 
     @classmethod
     def find_live_at_port(cls, baud: int = 115200) -> Optional[str]:
-        """Scan ttyUSB* and return the first that answers AT."""
-        prefer = cls.find_at_port()
+        """Scan USB + GPIO UART; return first that answers AT."""
+        backend = modem_backend()
         ordered: list[str] = []
+        prefer = cls.find_at_port()
         if prefer:
             ordered.append(prefer)
-        if list_ports:
-            for p in list_ports.comports():
-                vid = p.vid or 0
-                if vid in (0x1E0E, 0x05C6) and p.device not in ordered:
-                    ordered.append(p.device)
-        for path in sorted(glob.glob("/dev/ttyUSB*")):
-            if path not in ordered:
-                ordered.append(path)
+
+        def add_usb() -> None:
+            if list_ports:
+                for p in list_ports.comports():
+                    vid = p.vid or 0
+                    if vid in (0x1E0E, 0x05C6) and p.device not in ordered:
+                        ordered.append(p.device)
+            for path in sorted(glob.glob("/dev/ttyUSB*")):
+                if path not in ordered:
+                    ordered.append(path)
+
+        def add_uart() -> None:
+            for path in cls.uart_candidates():
+                if path not in ordered:
+                    ordered.append(path)
+
+        if backend == "uart":
+            add_uart()
+            add_usb()
+        elif backend == "usb":
+            add_usb()
+        else:
+            add_usb()
+            add_uart()
+
         for port in ordered:
             if cls._probe_at(port, baud=baud):
                 return port
@@ -201,41 +301,30 @@ class Sim7600:
         if serial is None:
             raise RuntimeError("pyserial not installed")
         last_err: Optional[Exception] = None
-        for attempt in range(max(1, retries)):
-            port = self.port or self.find_live_at_port(baud=self.baud) or self.find_at_port()
+        for _attempt in range(max(1, retries)):
+            port = (
+                self.port
+                or self.find_live_at_port(baud=self.baud)
+                or self.find_at_port()
+            )
             if not port:
                 last_err = RuntimeError(
                     "No SIM7600 AT port yet.\n"
-                    "Wait for boot, check USB jack\n"
-                    "(modem USB, not UART)."
+                    "GPIO: serial0 + PWR→3V3\n"
+                    "or USB modem jack."
                 )
                 time.sleep(retry_s)
                 continue
             try:
                 self.port = port
                 self._ser = serial.Serial(port, self.baud, timeout=0.2)
-                # Confirm AT on the opened handle
                 r = self._at("AT", wait=1.5)
                 if "OK" not in r:
                     self._ser.close()
                     self._ser = None
-                    # Maybe wrong interface — probe others
-                    live = self.find_live_at_port(baud=self.baud)
-                    if live and live != port:
-                        self.port = live
-                        self._ser = serial.Serial(live, self.baud, timeout=0.2)
-                        r = self._at("AT", wait=1.5)
-                    if not self._ser or "OK" not in (r or ""):
-                        raise RuntimeError(
-                            f"Opened {port} but AT failed.\n"
-                            "Try Network → Reconnect."
-                        )
-                self._at("ATE0")
-                self._at("AT+CMGF=1")  # text mode
-                self._at("AT+CNMI=2,1,0,0,0")
-                self._stop.clear()
-                self._thread = threading.Thread(target=self._reader, daemon=True)
-                self._thread.start()
+                    last_err = RuntimeError(f"No AT OK on {port}")
+                    time.sleep(retry_s)
+                    continue
                 return
             except Exception as e:
                 last_err = e
@@ -313,8 +402,7 @@ class Sim7600:
     def gps_on(self) -> bool:
         """Power on GNSS (SIM7600: CGPS; some fw also accept CGNSSPWR)."""
         if not self._ser:
-            raise RuntimeError("SIM7600 not open — check USB /dev/ttyUSB*")
-        # Prefer classic SIM7600 standalone GPS; try a few variants
+            raise RuntimeError("SIM7600 not open — check UART/USB")
         for cmd, wait in (
             ("AT+CGPS=1", 8.0),
             ("AT+CGPS=1,1", 8.0),
@@ -323,14 +411,13 @@ class Sim7600:
             r = self._at(cmd, wait=wait)
             if "OK" in r or "READY" in r.upper():
                 return True
-        # Already on often returns ERROR — treat as ok if INFO responds
         info = self._at("AT+CGPSINFO", wait=3.0)
         if "+CGPSINFO:" in info:
             return True
         raise RuntimeError(
             "GNSS failed to start.\n"
             "Check GNSS antenna (IPEX),\n"
-            "modem USB, and AT port."
+            "modem link, and AT port."
         )
 
     def gps_off(self) -> bool:
@@ -389,7 +476,6 @@ class Sim7600:
         out["raw"] = raw
         payload = raw.split(":", 1)[-1].strip()
         parts = [p.strip() for p in payload.split(",")]
-        # Empty fix: +CGPSINFO:,,,,,,,,
         if not parts or not parts[0]:
             out["searching"] = True
             out["summary"] = "Searching for satellites"

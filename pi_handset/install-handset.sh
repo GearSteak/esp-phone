@@ -146,7 +146,7 @@ cat >/etc/udev/rules.d/99-esp-handset.rules <<'EOF'
 # Espressif USB CDC — Heltec LoRa / notify bridge
 SUBSYSTEM=="tty", ATTRS{idVendor}=="303a", SYMLINK+="esp-bridge", MODE="0666"
 SUBSYSTEM=="tty", ATTRS{idVendor}=="10c4", ATTRS{idProduct}=="ea60", SYMLINK+="esp-bridge", MODE="0666"
-# SimTech / SIMCom SIM7600 — USB AT
+# SimTech / SIMCom SIM7600 — USB AT (GPIO UART also via digivice-modem-uart)
 SUBSYSTEM=="tty", ATTRS{idVendor}=="1e0e", ATTRS{bInterfaceNumber}=="02", SYMLINK+="sim7600-at", MODE="0666"
 SUBSYSTEM=="tty", ATTRS{idVendor}=="1e0e", MODE="0666"
 EOF
@@ -157,11 +157,10 @@ usermod -aG dialout,i2c "$USER_NAME" 2>/dev/null || usermod -aG dialout "$USER_N
 systemctl disable esp-handset-sim7600-link.service 2>/dev/null || true
 rm -f /etc/systemd/system/esp-handset-sim7600-link.service \
   /usr/local/bin/esp-handset-sim7600-link
-if [[ -L /dev/sim7600-at ]]; then
-  real="$(readlink -f /dev/sim7600-at 2>/dev/null || true)"
-  case "$real" in
-    *serial0*|*ttyAMA0*|*ttyS0*) rm -f /dev/sim7600-at ;;
-  esac
+# Keep UART /dev/sim7600-at if present (GPIO HAT mode) — do not delete
+if [[ -f "$ROOT/session/digivice-modem-uart.sh" ]]; then
+  install -m 755 "$ROOT/session/digivice-modem-uart.sh" "$PREFIX/session/digivice-modem-uart.sh"
+  install -m 755 "$ROOT/session/digivice-modem-uart.sh" /usr/local/bin/digivice-modem-uart
 fi
 
 if [[ ! -f /etc/esp-handset/sip.env ]]; then

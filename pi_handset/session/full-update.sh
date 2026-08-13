@@ -289,6 +289,10 @@ install -m 755 "$ROOT/session/hdmi-hotplug.sh" "$PREFIX/session/hdmi-hotplug.sh"
 install -m 755 "$ROOT/session/hdmi-hotplug.sh" /usr/local/bin/digivice-hdmi-hotplug 2>/dev/null || true
 install -m 755 "$ROOT/session/power.sh" "$PREFIX/session/power.sh" 2>/dev/null || true
 install -m 755 "$ROOT/session/power.sh" /usr/local/bin/digivice-power 2>/dev/null || true
+if [[ -f "$ROOT/session/digivice-modem-uart.sh" ]]; then
+  install -m 755 "$ROOT/session/digivice-modem-uart.sh" "$PREFIX/session/digivice-modem-uart.sh"
+  install -m 755 "$ROOT/session/digivice-modem-uart.sh" /usr/local/bin/digivice-modem-uart
+fi
 
 if [[ -d "$ROOT/display" ]]; then
   install -m 755 "$ROOT/display/install-spi-userspace.sh" /usr/local/bin/digivice-install-spi-userspace 2>/dev/null || true

@@ -3251,15 +3251,18 @@ def make_network_page(
     lab.setStyleSheet("font-size:11px;")
     btn = QPushButton("Refresh status")
     btn.setMinimumHeight(28)
-    scan = QPushButton("Scan USB ports")
+    scan = QPushButton("Scan ports")
     scan.setMinimumHeight(28)
     recon = QPushButton("Reconnect modem")
     recon.setMinimumHeight(30)
     recon.setStyleSheet("font-weight:700;")
+    uart_btn = QPushButton("Use GPIO UART")
+    uart_btn.setMinimumHeight(28)
     lay.addWidget(lab)
     lay.addWidget(btn)
     lay.addWidget(scan)
     lay.addWidget(recon)
+    lay.addWidget(uart_btn)
     lay.addStretch(1)
 
     def _cur():
@@ -3287,10 +3290,38 @@ def make_network_page(
         lab.setText(Sim7600.diagnose())
         on_status("modem scan")
 
+    def do_uart_mode():
+        import subprocess
+
+        lab.setText("Setting GPIO UART mode…")
+        try:
+            subprocess.run(
+                ["sudo", "-n", "digivice-modem-uart"],
+                timeout=15,
+                check=False,
+                capture_output=True,
+            )
+        except Exception:
+            try:
+                Path("/etc/esp-handset").mkdir(parents=True, exist_ok=True)
+            except Exception:
+                pass
+            try:
+                Path("/etc/esp-handset/modem-backend").write_text(
+                    "uart\n", encoding="utf-8"
+                )
+            except OSError:
+                lab.setText(
+                    "Need: sudo digivice-modem-uart\n"
+                    "or: echo uart | sudo tee /etc/esp-handset/modem-backend"
+                )
+                return
+        do_reconnect()
+
     def do_reconnect():
         from esp_handset.sim7600 import Sim7600
 
-        lab.setText("Connecting…\nprobing ttyUSB for AT")
+        lab.setText("Connecting…\nUSB + GPIO UART")
         old = _cur()
         try:
             if old is not None:
@@ -3311,8 +3342,11 @@ def make_network_page(
             lab.setText(msg + "\n\n" + Sim7600.diagnose())
             on_status("modem fail")
 
+    from pathlib import Path
+
     btn.clicked.connect(refresh)
     scan.clicked.connect(do_scan)
     recon.clicked.connect(do_reconnect)
+    uart_btn.clicked.connect(do_uart_mode)
     refresh()
     return page_chrome("Network", body, on_back)
