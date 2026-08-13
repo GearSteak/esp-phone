@@ -207,6 +207,7 @@ install_tree() {
       "home-relaunch.sh:digivice-home-relaunch" \
       "apply-update.sh:digivice-apply-update" \
       "digivice-gb.sh:digivice-gb" \
+      "ensure-gb-roms.sh:digivice-gb-roms-dir" \
       "power.sh:digivice-power" \
       "full-update.sh:digivice-full-update"
     do

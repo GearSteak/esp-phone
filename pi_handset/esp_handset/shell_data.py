@@ -45,6 +45,7 @@ CLOCK_APPS = [
 ]
 
 TOOLS_APPS = [
+    AppEntry("wifi_transfer", "Transfer", "Send & get · Wi‑Fi", "⇅"),
     AppEntry("calc", "Calculator", "", "+"),
     AppEntry("ai", "AI", "Ollama · DeepSeek", "✦"),
     AppEntry("convert", "Converter", "", "⇄"),

@@ -82,6 +82,7 @@ from esp_handset import pages  # noqa: E402
 from esp_handset import features  # noqa: E402
 from esp_handset import games_ui  # noqa: E402
 from esp_handset import gb_emu  # noqa: E402
+from esp_handset import wifi_transfer  # noqa: E402
 from esp_handset import ollama_chat  # noqa: E402
 from esp_handset import store  # noqa: E402
 from esp_handset import display_geom as geom  # noqa: E402
@@ -346,7 +347,17 @@ def build_app(bridge: Optional[EspBridge], modem: Optional[Sim7600]) -> PhoneShe
             back,
         ),
     )
-    shell.register_page("gb", gb_emu.make_gb_page(back))
+    transfer_page = wifi_transfer.make_wifi_transfer_page(back)
+    shell.register_page("wifi_transfer", transfer_page)
+
+    def open_rom_transfer() -> None:
+        page = shell.pages.get("wifi_transfer")
+        setter = getattr(page, "set_transfer_dest", None)
+        if callable(setter):
+            setter("roms")
+        shell.go("wifi_transfer")
+
+    shell.register_page("gb", gb_emu.make_gb_page(back, on_receive=open_rom_transfer))
     shell.register_page("snake", games_ui.make_snake(back))
     shell.register_page("pong", games_ui.make_pong(back))
     shell.register_page("tetris", games_ui.make_tetris(back))
