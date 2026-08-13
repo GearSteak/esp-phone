@@ -12,16 +12,20 @@ https://www.waveshare.com/wiki/2inch_LCD_Module
 
 ## Wiring to Raspberry Pi
 
+Same pins whether you use the **8‑wire harness** or seat the module on a **GPIO / passthrough** stack (LCD still hits these BCM numbers):
+
 | LCD | BCM | Board pin |
 |-----|-----|-----------|
 | VCC | 3.3V | 1 or 17 |
-| GND | GND | 6 etc. |
+| GND | GND | 6 / 9 etc. |
 | DIN | MOSI **10** | 19 |
 | CLK | SCLK **11** | 23 |
 | CS | CE0 **8** | 24 |
 | DC | **25** | 22 |
 | RST | **27** | 13 |
 | BL | **18** | 12 |
+
+On a passthrough header: LCD owns those pins; buttons + CardKB use the free pins on top — full map [`DIGIVICE_WIRING.md`](DIGIVICE_WIRING.md).
 
 Installer enables `mipi-dbi-spi` + `panel.bin` (`waveshare2inch`). After reboot the panel is primary DRM output (`vc4-kms-v3d,nohdmi`).
 
