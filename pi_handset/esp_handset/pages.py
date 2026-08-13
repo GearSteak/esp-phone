@@ -860,80 +860,71 @@ def make_contacts_page(
     open_lora: Optional[Callable[[str], None]] = None,
     open_email: Optional[Callable[[str], None]] = None,
 ) -> QWidget:
-    """Contact book: photo + phone / LoRa / email; Call · SMS · LoRa · Email."""
-    from PyQt5.QtWidgets import QFileDialog
-
+    """Flat Digivice contacts: list ↔ edit. Photos from Camera roll (no Linux dialogs)."""
+    from PyQt5.QtGui import QIcon
     from esp_handset import digi_nav
 
     root = QWidget()
     stack = QStackedWidget(root)
     outer = QVBoxLayout(root)
     outer.setContentsMargins(0, 0, 0, 0)
+    outer.setSpacing(0)
     outer.addWidget(stack)
 
-    # ----- List -----
+    # ===== LIST =====
     list_page = QWidget()
-    list_lay = QVBoxLayout(list_page)
-    list_lay.setContentsMargins(2, 2, 2, 2)
-    list_lay.setSpacing(4)
-
+    ll = QVBoxLayout(list_page)
+    ll.setContentsMargins(2, 2, 2, 2)
+    ll.setSpacing(3)
+    tip = QLabel("Confirm = edit · ＋ Add")
+    tip.setStyleSheet("color:#9ab;font-size:9px;")
+    tip.setWordWrap(True)
     conv_list = QListWidget()
     conv_list.setSpacing(2)
     conv_list.setStyleSheet(
         "QListWidget { background: transparent; border: none; outline: none; }"
-        "QListWidget::item { background: #152030; border-radius: 6px;"
-        "  margin: 1px 0; padding: 0; }"
-        "QListWidget::item:selected { background: #243448;"
-        "  border: 2px solid #FFE600; }"
+        "QListWidget::item { background: #152030; border-radius: 6px; margin: 1px 0; }"
+        "QListWidget::item:selected { background: #243448; border: 2px solid #FFE600; }"
     )
-    list_lay.addWidget(conv_list, 1)
-    add_btn = QPushButton("＋ Add contact")
+    add_btn = QPushButton("＋ Add")
     add_btn.setMinimumHeight(30)
     add_btn.setStyleSheet("font-weight:700;")
-    list_lay.addWidget(add_btn)
+    ll.addWidget(tip)
+    ll.addWidget(conv_list, 1)
+    ll.addWidget(add_btn)
     stack.addWidget(list_page)
 
-    # ----- Detail -----
-    detail = QWidget()
-    d_lay = QVBoxLayout(detail)
-    d_lay.setContentsMargins(2, 2, 2, 2)
-    d_lay.setSpacing(4)
-    d_avatar_host = QHBoxLayout()
-    d_avatar_slot = QVBoxLayout()
-    d_avatar_host.addStretch(1)
-    d_avatar_host.addLayout(d_avatar_slot)
-    d_avatar_host.addStretch(1)
-    d_lay.addLayout(d_avatar_host)
-    d_name = QLabel("Contact")
-    d_name.setAlignment(Qt.AlignCenter)
-    d_name.setStyleSheet("font-size:14px; font-weight:800;")
-    d_name.setWordWrap(True)
-    d_lay.addWidget(d_name)
-    d_info = QLabel("")
-    d_info.setAlignment(Qt.AlignCenter)
-    d_info.setStyleSheet("font-size:10px; color:#9ab;")
-    d_info.setWordWrap(True)
-    d_lay.addWidget(d_info)
-    act = QVBoxLayout()
-    act.setSpacing(3)
+    # ===== EDIT (add + edit — one screen) =====
+    edit_page = QWidget()
+    el = QVBoxLayout(edit_page)
+    el.setContentsMargins(2, 2, 2, 2)
+    el.setSpacing(3)
+
+    preview = QLabel("?")
+    preview.setAlignment(Qt.AlignCenter)
+    preview.setFixedHeight(48)
+    preview.setStyleSheet("font-size:18px; font-weight:800; background:#1a2230;")
+
+    form_status = QLabel("")
+    form_status.setWordWrap(True)
+    form_status.setStyleSheet("color:#ffcc66;font-size:10px;")
+    form_status.hide()
+
+    # Quick actions (edit only)
+    act_row = QHBoxLayout()
+    act_row.setSpacing(2)
     btn_call = QPushButton("Call")
     btn_sms = QPushButton("SMS")
     btn_lora = QPushButton("LoRa")
-    btn_email = QPushButton("Email")
-    btn_edit = QPushButton("Edit")
-    for b in (btn_call, btn_sms, btn_lora, btn_email, btn_edit):
-        b.setMinimumHeight(30)
-        b.setStyleSheet("font-weight:700;")
-        act.addWidget(b)
-    d_lay.addLayout(act)
-    d_lay.addStretch(1)
-    stack.addWidget(detail)
+    btn_mail = QPushButton("@")
+    for b in (btn_call, btn_sms, btn_lora, btn_mail):
+        b.setMinimumHeight(26)
+        b.setStyleSheet("font-size:10px; font-weight:700; padding:2px;")
+        act_row.addWidget(b, 1)
+    act_wrap = QWidget()
+    act_wrap.setLayout(act_row)
+    act_wrap.setVisible(False)
 
-    # ----- Edit / Add form -----
-    form = QWidget()
-    f_lay = QVBoxLayout(form)
-    f_lay.setContentsMargins(2, 2, 2, 2)
-    f_lay.setSpacing(3)
     name_ed = QLineEdit()
     name_ed.setPlaceholderText("Name")
     phone_ed = QLineEdit()
@@ -942,30 +933,43 @@ def make_contacts_page(
     lora_ed.setPlaceholderText("LoRa ID")
     email_ed = QLineEdit()
     email_ed.setPlaceholderText("Email")
-    photo_lab = QLabel("No photo")
-    photo_lab.setStyleSheet("font-size:10px; color:#9ab;")
-    photo_lab.setWordWrap(True)
-    photo_row = QHBoxLayout()
-    pick_photo = QPushButton("Photo")
-    clear_photo = QPushButton("Clear")
-    photo_row.addWidget(pick_photo, 1)
-    photo_row.addWidget(clear_photo, 1)
-    save_btn = QPushButton("Save")
-    save_btn.setStyleSheet("font-weight:800;")
-    save_btn.setMinimumHeight(30)
-    cancel_btn = QPushButton("Cancel")
-    cancel_btn.setMinimumHeight(28)
-    for w in (name_ed, phone_ed, lora_ed, email_ed):
-        f_lay.addWidget(w)
-    f_lay.addWidget(photo_lab)
-    f_lay.addLayout(photo_row)
-    f_lay.addWidget(save_btn)
-    f_lay.addWidget(cancel_btn)
-    f_lay.addStretch(1)
-    stack.addWidget(form)
 
-    state = {"index": -1, "image": "", "mode": "add"}  # mode add|edit
-    avatar_widget: list = [None]
+    photo_hint = QLabel("Photo — Confirm a Camera shot:")
+    photo_hint.setStyleSheet("color:#9ab;font-size:9px;")
+    photo_list = QListWidget()
+    photo_list.setMaximumHeight(88)
+    photo_list.setIconSize(QSize(40, 30))
+    photo_list.setStyleSheet(
+        "QListWidget { background:#121820; border:1px solid #345; }"
+        "QListWidget::item:selected { background:#FFE600; color:#000; }"
+    )
+    photo_row = QHBoxLayout()
+    photo_row.setSpacing(2)
+    clear_photo = QPushButton("No photo")
+    clear_photo.setMinimumHeight(26)
+    refresh_photos = QPushButton("Reload")
+    refresh_photos.setMinimumHeight(26)
+    photo_row.addWidget(clear_photo, 1)
+    photo_row.addWidget(refresh_photos, 1)
+
+    save_btn = QPushButton("Save")
+    save_btn.setMinimumHeight(32)
+    save_btn.setStyleSheet("font-weight:800;")
+
+    el.addWidget(preview)
+    el.addWidget(form_status)
+    el.addWidget(act_wrap)
+    el.addWidget(name_ed)
+    el.addWidget(phone_ed)
+    el.addWidget(lora_ed)
+    el.addWidget(email_ed)
+    el.addWidget(photo_hint)
+    el.addWidget(photo_list)
+    el.addLayout(photo_row)
+    el.addWidget(save_btn)
+    stack.addWidget(edit_page)
+
+    state = {"index": -1, "image": "", "mode": "add", "photo_paths": []}
 
     def _channels_line(c: dict) -> str:
         bits = []
@@ -975,15 +979,45 @@ def make_contacts_page(
             bits.append(f"LoRa {c['lora']}")
         if c.get("email"):
             bits.append(str(c["email"]))
-        return " · ".join(bits) if bits else "No channels"
+        return " · ".join(bits) if bits else "No phone / LoRa / email"
 
-    def _clear_avatar_slot() -> None:
-        while d_avatar_slot.count():
-            item = d_avatar_slot.takeAt(0)
-            w = item.widget()
-            if w is not None:
-                w.deleteLater()
-        avatar_widget[0] = None
+    def _set_status(msg: str) -> None:
+        if msg:
+            form_status.setText(msg)
+            form_status.show()
+        else:
+            form_status.hide()
+            form_status.clear()
+
+    def _refresh_preview() -> None:
+        name = name_ed.text().strip() or "?"
+        initial = name[:1].upper()
+        if not initial.isalnum():
+            initial = "#"
+        photo = None
+        if state["image"]:
+            p = CONTACT_PHOTOS / state["image"]
+            if not p.is_file():
+                p = Path(state["image"])
+            if p.is_file():
+                photo = str(p)
+        # Replace preview contents
+        pix = None
+        if photo:
+            pix = QPixmap(photo)
+        if pix is not None and not pix.isNull():
+            preview.setPixmap(
+                pix.scaled(48, 48, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
+            )
+            preview.setText("")
+            preview.setStyleSheet("background:#1a2230;")
+        else:
+            preview.setPixmap(QPixmap())
+            preview.setText(initial)
+            preview.setStyleSheet(
+                f"font-size:18px; font-weight:800; color:#fff;"
+                f"background:{_avatar_color(name)};"
+            )
 
     def show_list() -> None:
         stack.setCurrentWidget(list_page)
@@ -992,10 +1026,10 @@ def make_contacts_page(
 
     def refresh_list() -> None:
         contacts = _load_contacts()
-        _save_contacts(contacts)  # normalize + sort on disk
+        _save_contacts(contacts)
         conv_list.clear()
         if not contacts:
-            empty = QListWidgetItem("No contacts yet.\n＋ Add below.")
+            empty = QListWidgetItem("No contacts.\n＋ Add below.")
             empty.setFlags(Qt.NoItemFlags)
             conv_list.addItem(empty)
             return
@@ -1005,54 +1039,58 @@ def make_contacts_page(
             if not initial.isalnum():
                 initial = "#"
             photo = _contact_photo_file(c)
-            preview = _elide_one_line(_channels_line(c), 32)
             item = QListWidgetItem()
             item.setData(Qt.UserRole, i)
-            item.setSizeHint(QSize(200, 48))
+            item.setSizeHint(QSize(200, 46))
             conv_list.addItem(item)
             conv_list.setItemWidget(
                 item,
                 _chat_conv_row(
                     name,
-                    preview,
+                    _elide_one_line(_channels_line(c), 30),
                     initial=initial,
                     photo=str(photo) if photo else None,
                     unread=False,
                 ),
             )
 
-    def open_detail(index: int) -> None:
-        contacts = _load_contacts()
-        if index < 0 or index >= len(contacts):
+    def load_gallery_photos() -> None:
+        photo_list.clear()
+        state["photo_paths"] = []
+        try:
+            paths = list(pi_camera.list_photos(limit=40))
+        except Exception:
+            paths = []
+        if not paths and PHOTOS.is_dir():
+            paths = sorted(
+                [
+                    p
+                    for p in PHOTOS.iterdir()
+                    if p.suffix.lower() in (".jpg", ".jpeg", ".png", ".webp", ".bmp")
+                ],
+                key=lambda p: p.stat().st_mtime,
+                reverse=True,
+            )[:40]
+        if not paths:
+            item = QListWidgetItem("No Camera photos yet")
+            item.setFlags(Qt.NoItemFlags)
+            photo_list.addItem(item)
             return
-        state["index"] = index
-        c = contacts[index]
-        name = str(c.get("name") or "Unknown")
-        initial = name[:1].upper() if name else "?"
-        if not initial.isalnum():
-            initial = "#"
-        photo = _contact_photo_file(c)
-        _clear_avatar_slot()
-        av = _make_avatar_label(name, initial, str(photo) if photo else None, 56)
-        d_avatar_slot.addWidget(av)
-        avatar_widget[0] = av
-        d_name.setText(name)
-        d_info.setText(_channels_line(c))
-        btn_call.setEnabled(bool(c.get("phone")))
-        btn_sms.setEnabled(bool(c.get("phone")) and open_sms is not None)
-        btn_lora.setEnabled(bool(c.get("lora")) and open_lora is not None)
-        btn_email.setEnabled(bool(c.get("email")) and open_email is not None)
-        stack.setCurrentWidget(detail)
-        digi_nav.ensure_page_focus(chrome)
-
-    def open_selected() -> None:
-        item = conv_list.currentItem()
-        if item is None:
-            return
-        idx = item.data(Qt.UserRole)
-        if idx is None:
-            return
-        open_detail(int(idx))
+        for p in paths:
+            state["photo_paths"].append(p)
+            it = QListWidgetItem(p.name)
+            it.setData(Qt.UserRole, str(p))
+            try:
+                pix = QPixmap(str(p))
+                if not pix.isNull():
+                    it.setIcon(
+                        QIcon(
+                            pix.scaled(40, 30, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                        )
+                    )
+            except Exception:
+                pass
+            photo_list.addItem(it)
 
     def fill_form(c: Optional[dict]) -> None:
         c = c or {}
@@ -1061,49 +1099,68 @@ def make_contacts_page(
         lora_ed.setText(str(c.get("lora") or ""))
         email_ed.setText(str(c.get("email") or ""))
         state["image"] = str(c.get("image") or "")
-        if state["image"]:
-            photo_lab.setText(f"Photo: {Path(state['image']).name}")
-        else:
-            photo_lab.setText("No photo")
+        _set_status("")
+        load_gallery_photos()
+        _refresh_preview()
+        editing = state["mode"] == "edit"
+        act_wrap.setVisible(editing)
+        if editing:
+            btn_call.setEnabled(bool(c.get("phone")))
+            btn_sms.setEnabled(bool(c.get("phone")) and open_sms is not None)
+            btn_lora.setEnabled(bool(c.get("lora")) and open_lora is not None)
+            btn_mail.setEnabled(bool(c.get("email")) and open_email is not None)
+        # Highlight currently selected gallery item if matches
+        cur = state["image"]
+        if cur:
+            for i in range(photo_list.count()):
+                it = photo_list.item(i)
+                if it and Path(str(it.data(Qt.UserRole) or "")).name == Path(cur).name:
+                    photo_list.setCurrentRow(i)
+                    break
 
-    def show_add() -> None:
-        state["mode"] = "add"
-        state["index"] = -1
-        fill_form(None)
-        stack.setCurrentWidget(form)
-        name_ed.setFocus(Qt.OtherFocusReason)
-        digi_nav.ensure_page_focus(chrome)
-
-    def show_edit() -> None:
+    def open_editor(index: int = -1) -> None:
         contacts = _load_contacts()
-        idx = state["index"]
-        if idx < 0 or idx >= len(contacts):
-            return
-        state["mode"] = "edit"
-        fill_form(contacts[idx])
-        stack.setCurrentWidget(form)
+        if index >= 0 and index < len(contacts):
+            state["mode"] = "edit"
+            state["index"] = index
+            fill_form(contacts[index])
+        else:
+            state["mode"] = "add"
+            state["index"] = -1
+            fill_form(None)
+        stack.setCurrentWidget(edit_page)
         digi_nav.ensure_page_focus(chrome)
+        name_ed.setFocus(Qt.OtherFocusReason)
 
-    def do_pick_photo() -> None:
-        start = str(PHOTOS if PHOTOS.is_dir() else Path.home() / "Pictures")
-        fn, _ = QFileDialog.getOpenFileName(
-            form,
-            "Contact photo",
-            start,
-            "Images (*.jpg *.jpeg *.png *.webp *.bmp)",
-        )
-        if not fn:
+    def open_selected() -> None:
+        item = conv_list.currentItem()
+        if item is None:
+            return
+        idx = item.data(Qt.UserRole)
+        if idx is None:
+            return
+        open_editor(int(idx))
+
+    def on_photo_chosen() -> None:
+        item = photo_list.currentItem()
+        if item is None or not item.flags() & Qt.ItemIsEnabled:
+            return
+        path = item.data(Qt.UserRole)
+        if not path:
             return
         try:
-            rel = _import_contact_photo(Path(fn), name_ed.text().strip() or "contact")
+            rel = _import_contact_photo(Path(str(path)), name_ed.text().strip() or "contact")
             state["image"] = rel
-            photo_lab.setText(f"Photo: {rel}")
+            _set_status(f"Photo: {rel}")
+            _refresh_preview()
         except Exception as e:
-            QMessageBox.warning(form, "Photo", str(e))
+            _set_status(f"Photo failed: {e}")
 
     def do_clear_photo() -> None:
         state["image"] = ""
-        photo_lab.setText("No photo")
+        photo_list.clearSelection()
+        _set_status("Photo cleared")
+        _refresh_preview()
 
     def do_save() -> None:
         c = _normalize_contact(
@@ -1116,9 +1173,7 @@ def make_contacts_page(
             }
         )
         if not _contact_identity_ok(c):
-            QMessageBox.warning(
-                form, "Contacts", "Need at least phone, LoRa ID, or email."
-            )
+            _set_status("Need phone, LoRa ID, or email.")
             return
         contacts = _load_contacts()
         if state["mode"] == "edit" and 0 <= state["index"] < len(contacts):
@@ -1128,67 +1183,58 @@ def make_contacts_page(
         _save_contacts(contacts)
         show_list()
 
-    def do_call() -> None:
+    def current_contact() -> Optional[dict]:
         contacts = _load_contacts()
         idx = state["index"]
-        if 0 <= idx < len(contacts) and contacts[idx].get("phone"):
-            open_dial(str(contacts[idx]["phone"]))
+        if 0 <= idx < len(contacts):
+            return contacts[idx]
+        return None
+
+    def do_call() -> None:
+        c = current_contact()
+        if c and c.get("phone"):
+            open_dial(str(c["phone"]))
 
     def do_sms() -> None:
-        contacts = _load_contacts()
-        idx = state["index"]
-        if open_sms and 0 <= idx < len(contacts) and contacts[idx].get("phone"):
-            open_sms(str(contacts[idx]["phone"]))
+        c = current_contact()
+        if open_sms and c and c.get("phone"):
+            open_sms(str(c["phone"]))
 
     def do_lora() -> None:
-        contacts = _load_contacts()
-        idx = state["index"]
-        if open_lora and 0 <= idx < len(contacts) and contacts[idx].get("lora"):
-            open_lora(str(contacts[idx]["lora"]))
+        c = current_contact()
+        if open_lora and c and c.get("lora"):
+            open_lora(str(c["lora"]))
 
     def do_email() -> None:
-        contacts = _load_contacts()
-        idx = state["index"]
-        if open_email and 0 <= idx < len(contacts) and contacts[idx].get("email"):
-            open_email(str(contacts[idx]["email"]))
+        c = current_contact()
+        if open_email and c and c.get("email"):
+            open_email(str(c["email"]))
 
     def chrome_back() -> None:
-        cur = stack.currentWidget()
-        if cur is form:
-            if state["mode"] == "edit" and state["index"] >= 0:
-                open_detail(state["index"])
-            else:
-                show_list()
-        elif cur is detail:
+        if stack.currentWidget() is edit_page:
             show_list()
         else:
             on_back()
 
     def on_hardware_back() -> bool:
-        cur = stack.currentWidget()
-        if cur is form:
-            if state["mode"] == "edit" and state["index"] >= 0:
-                open_detail(state["index"])
-            else:
-                show_list()
-            return True
-        if cur is detail:
+        if stack.currentWidget() is edit_page:
             show_list()
             return True
         return False
 
+    name_ed.textChanged.connect(lambda _t: _refresh_preview())
     conv_list.itemActivated.connect(lambda _i: open_selected())
     conv_list.itemClicked.connect(lambda _i: open_selected())
-    add_btn.clicked.connect(show_add)
+    add_btn.clicked.connect(lambda: open_editor(-1))
+    photo_list.itemActivated.connect(lambda _i: on_photo_chosen())
+    photo_list.itemClicked.connect(lambda _i: on_photo_chosen())
+    clear_photo.clicked.connect(do_clear_photo)
+    refresh_photos.clicked.connect(load_gallery_photos)
+    save_btn.clicked.connect(do_save)
     btn_call.clicked.connect(do_call)
     btn_sms.clicked.connect(do_sms)
     btn_lora.clicked.connect(do_lora)
-    btn_email.clicked.connect(do_email)
-    btn_edit.clicked.connect(show_edit)
-    pick_photo.clicked.connect(do_pick_photo)
-    clear_photo.clicked.connect(do_clear_photo)
-    save_btn.clicked.connect(do_save)
-    cancel_btn.clicked.connect(chrome_back)
+    btn_mail.clicked.connect(do_email)
 
     chrome = page_chrome("Contacts", root, chrome_back, scroll=False)
     chrome.on_hardware_back = on_hardware_back  # type: ignore[attr-defined]
