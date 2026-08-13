@@ -81,6 +81,7 @@ from esp_handset import apps as handset_apps  # noqa: E402
 from esp_handset import pages  # noqa: E402
 from esp_handset import features  # noqa: E402
 from esp_handset import games_ui  # noqa: E402
+from esp_handset import gb_emu  # noqa: E402
 from esp_handset import ollama_chat  # noqa: E402
 from esp_handset import store  # noqa: E402
 from esp_handset import display_geom as geom  # noqa: E402
@@ -345,6 +346,7 @@ def build_app(bridge: Optional[EspBridge], modem: Optional[Sim7600]) -> PhoneShe
             back,
         ),
     )
+    shell.register_page("gb", gb_emu.make_gb_page(back))
     shell.register_page("snake", games_ui.make_snake(back))
     shell.register_page("pong", games_ui.make_pong(back))
     shell.register_page("tetris", games_ui.make_tetris(back))

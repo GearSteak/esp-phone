@@ -22,7 +22,7 @@ HOME_APPS: List[AppEntry] = [
     AppEntry("calendar", "Calendar", "Events", "▦"),
     AppEntry("browser", "Browser", "Light web", "⎋"),
     AppEntry("media", "Media", "Cam · notes · GPS", "▶"),
-    AppEntry("games", "Games", "Built-ins", "♠"),
+    AppEntry("games", "Games", "GB · built-ins", "♠"),
     AppEntry("tools", "Tools", "Calc · steps", "⚒"),
     AppEntry("settings", "Settings", "Device · Linux", "⚙"),
     AppEntry("email", "Email", "Inbox", "@"),
@@ -82,6 +82,7 @@ MEDIA_APPS = [
 ]
 
 GAMES_APPS = [
+    AppEntry("gb", "Game Boy", "GB / GBC ROMs", "♠"),
     AppEntry("snake", "Snake", "", "◆"),
     AppEntry("pong", "Pong", "", "○"),
     AppEntry("tetris", "Tetris", "", "▣"),

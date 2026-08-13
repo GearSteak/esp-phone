@@ -4,12 +4,14 @@
   UP / DOWN / LEFT / RIGHT / CONFIRM / BACK / HOME
   BCM: 5 / 6 / 12 / 13 / 16 / 19 / 20  (override DIGI_BTN_*)
 
-Mode file (phone | desktop), checked every 0.4s:
+Mode file (phone | desktop | gb), checked every 0.4s:
   /etc/esp-handset/ui_mode
   ~/.esp-handset/session_mode  (every user home)
 
 Phone  — arrows / Enter / Esc / Home  (uinput + xdotool keys)
 Desktop — d-pad=mouse, Confirm=LMB, Back=RMB, Home=relaunch Digivice
+GB      — d-pad=move, Confirm=A(x), Back=B(z), Home=Start,
+          Home+Confirm=Select, Confirm+Back+Home=exit emu
 
 If Digivice (handset_app) is running, mode is always phone — a stale
 desktop mode file must not steal the pad into mouse mode.
@@ -45,6 +47,18 @@ XDOTOOL_KEYS = {
     "CONFIRM": "Return",
     "BACK": "Escape",
     "HOME": "Home",
+}
+
+# Game Boy / GBC (RetroArch gambatte + mgba keyboard defaults we ship)
+GB_XDOTOOL = {
+    "UP": "Up",
+    "DOWN": "Down",
+    "LEFT": "Left",
+    "RIGHT": "Right",
+    "A": "x",
+    "B": "z",
+    "START": "Return",
+    "SELECT": "Shift_R",
 }
 
 DEBOUNCE_S = float(os.environ.get("DIGI_BTN_DEBOUNCE", "0.025"))
@@ -135,7 +149,7 @@ def digivice_running() -> bool:
 
 
 def read_mode() -> str:
-    # Digivice UI up → always phone keys (ignore stale desktop mode file)
+    # Digivice UI up → always phone keys (ignore stale desktop/gb mode file)
     if digivice_running():
         return "phone"
     for p in mode_file_candidates():
@@ -143,7 +157,7 @@ def read_mode() -> str:
             if not p.is_file():
                 continue
             m = p.read_text(encoding="utf-8").strip().lower()
-            if m in ("phone", "desktop"):
+            if m in ("phone", "desktop", "gb"):
                 return m
         except OSError:
             continue
@@ -412,6 +426,17 @@ class XInject:
             return
         self._run(["keydown" if down else "keyup", k])
 
+    def key_named(self, xkey: str, down: bool) -> None:
+        """Emit an arbitrary xdotool key name (for GB mode)."""
+        if not xkey:
+            return
+        self._run(["keydown" if down else "keyup", xkey])
+
+    def tap_named(self, xkey: str) -> None:
+        if not xkey:
+            return
+        self._run(["key", "--clearmodifiers", xkey])
+
     def click(self, button: int, down: bool) -> None:
         # 1=left 2=middle 3=right
         self._run(["mousedown" if down else "mouseup", str(button)])
@@ -503,6 +528,29 @@ def is_pressed(level: int) -> bool:
     return level == 0
 
 
+def quit_gb_emulator() -> None:
+    """Confirm+Back+Home — stop GB emulator so digivice-gb can relaunch Digivice."""
+    log("GB exit combo → stop emulator")
+    for pat in (
+        "retroarch",
+        "mgba",
+        "mgba-sdl",
+        "mgba-qt",
+        "vbam",
+        "sameboy",
+    ):
+        try:
+            subprocess.run(
+                ["pkill", "-TERM", "-f", pat],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=2,
+                check=False,
+            )
+        except Exception:
+            pass
+
+
 def main() -> int:
     try:
         import uinput
@@ -523,13 +571,29 @@ def main() -> int:
         "BACK": uinput.KEY_ESC,
         "HOME": uinput.KEY_HOME,
     }
-    events = list(phone_map.values()) + [
-        uinput.BTN_LEFT,
-        uinput.BTN_RIGHT,
-        uinput.BTN_MIDDLE,
-        uinput.REL_X,
-        uinput.REL_Y,
-    ]
+    gb_map = {
+        "UP": uinput.KEY_UP,
+        "DOWN": uinput.KEY_DOWN,
+        "LEFT": uinput.KEY_LEFT,
+        "RIGHT": uinput.KEY_RIGHT,
+        "A": uinput.KEY_X,
+        "B": uinput.KEY_Z,
+        "START": uinput.KEY_ENTER,
+        "SELECT": uinput.KEY_RIGHTSHIFT,
+    }
+    events = list(
+        dict.fromkeys(
+            list(phone_map.values())
+            + list(gb_map.values())
+            + [
+                uinput.BTN_LEFT,
+                uinput.BTN_RIGHT,
+                uinput.BTN_MIDDLE,
+                uinput.REL_X,
+                uinput.REL_Y,
+            ]
+        )
+    )
     load_uinput_mod()
     try:
         device = uinput.Device(
@@ -551,7 +615,8 @@ def main() -> int:
         + " ".join(f"{n}=BCM{p}" for n, p in pins.items())
     )
     log(
-        "  phone: keys · desktop: d-pad=mouse Confirm=LMB Back=RMB Home=Digivice"
+        "  phone: keys · desktop: mouse · gb: A/B/Start/Select · "
+        "exit GB = Confirm+Back+Home"
     )
 
     levels = {n: gpio.read(p) for n, p in pins.items()}
@@ -562,6 +627,32 @@ def main() -> int:
     last_mode_check = 0.0
     last_mode = mode
     last_step = mouse_step
+    gb_exit_since = [None]
+    gb_a = [False]
+    gb_b = [False]
+    gb_start = [False]
+    gb_select = [False]
+    gb_exit_armed = [True]
+
+    def gb_emit(logical: str, down: bool) -> None:
+        code = gb_map.get(logical)
+        if code is not None:
+            try:
+                device.emit(code, 1 if down else 0)
+            except Exception as e:
+                log(f"gb uinput {logical}: {e}")
+        xinj.key_named(GB_XDOTOOL.get(logical, ""), down)
+
+    def gb_release_all() -> None:
+        for logical, flag in (
+            ("A", gb_a),
+            ("B", gb_b),
+            ("START", gb_start),
+            ("SELECT", gb_select),
+        ):
+            if flag[0]:
+                gb_emit(logical, False)
+                flag[0] = False
 
     try:
         while True:
@@ -572,6 +663,10 @@ def main() -> int:
                 last_mode_check = now
                 if mode != last_mode:
                     log(f"mode → {mode}")
+                    if last_mode == "gb" and mode != "gb":
+                        gb_release_all()
+                        gb_exit_since[0] = None
+                        gb_exit_armed[0] = True
                     last_mode = mode
                 if mouse_step != last_step:
                     log(f"mouse_step → {mouse_step}")
@@ -604,19 +699,70 @@ def main() -> int:
                             device.emit(uinput.BTN_RIGHT, 1 if down else 0)
                             xinj.click(3, down)
                         elif name == "HOME":
-                            # Never Super/start-menu — Home always returns to Digivice
                             if down:
                                 try:
                                     relaunch_digivice()
                                 except Exception as e:
                                     log(f"HOME relaunch crash-guard: {e}")
-                        # d-pad: continuous motion while held (below)
                         if down and name in ("UP", "DOWN", "LEFT", "RIGHT"):
                             log(f"DESKTOP hold {name}")
                         elif down and name != "HOME":
                             log(f"DESKTOP {name} down")
                     except Exception as e:
                         log(f"desktop emit {name}: {e}")
+                elif mode == "gb":
+                    try:
+                        if name in ("UP", "DOWN", "LEFT", "RIGHT"):
+                            gb_emit(name, down)
+                        elif name == "BACK":
+                            if down:
+                                if not gb_b[0]:
+                                    gb_emit("B", True)
+                                    gb_b[0] = True
+                            else:
+                                if gb_b[0]:
+                                    gb_emit("B", False)
+                                    gb_b[0] = False
+                        elif name == "HOME":
+                            if down:
+                                if not gb_start[0]:
+                                    gb_emit("START", True)
+                                    gb_start[0] = True
+                            else:
+                                if gb_select[0]:
+                                    gb_emit("SELECT", False)
+                                    gb_select[0] = False
+                                if gb_start[0]:
+                                    gb_emit("START", False)
+                                    gb_start[0] = False
+                        elif name == "CONFIRM":
+                            if down:
+                                if held.get("HOME"):
+                                    if gb_start[0]:
+                                        gb_emit("START", False)
+                                        gb_start[0] = False
+                                    if not gb_select[0]:
+                                        gb_emit("SELECT", True)
+                                        gb_select[0] = True
+                                        log("GB SELECT")
+                                else:
+                                    if not gb_a[0]:
+                                        gb_emit("A", True)
+                                        gb_a[0] = True
+                            else:
+                                if gb_a[0]:
+                                    gb_emit("A", False)
+                                    gb_a[0] = False
+                                if gb_select[0]:
+                                    gb_emit("SELECT", False)
+                                    gb_select[0] = False
+                                    if held.get("HOME") and not gb_start[0]:
+                                        gb_emit("START", True)
+                                        gb_start[0] = True
+                        if down:
+                            log(f"GB {name}")
+                    except Exception as e:
+                        log(f"gb emit {name}: {e}")
                 else:
                     try:
                         device.emit(phone_map[name], 1 if down else 0)
@@ -644,10 +790,26 @@ def main() -> int:
                         log(f"rel: {e}")
                     xinj.move(dx, dy)
 
+            if mode == "gb":
+                if held.get("CONFIRM") and held.get("BACK") and held.get("HOME"):
+                    if gb_exit_since[0] is None:
+                        gb_exit_since[0] = now
+                    elif gb_exit_armed[0] and now - gb_exit_since[0] >= 0.45:
+                        gb_release_all()
+                        quit_gb_emulator()
+                        gb_exit_armed[0] = False
+                else:
+                    gb_exit_since[0] = None
+                    gb_exit_armed[0] = True
+
             time.sleep(SCAN_S)
     except KeyboardInterrupt:
         pass
     finally:
+        try:
+            gb_release_all()
+        except Exception:
+            pass
         gpio.cleanup()
         try:
             device.destroy()

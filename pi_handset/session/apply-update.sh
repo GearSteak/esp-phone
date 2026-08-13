@@ -168,6 +168,7 @@ if [[ -d "$STAGE" && -f "$STAGE/.ready" ]]; then
     update-handset.sh:digivice-update \
     home-relaunch.sh:digivice-home-relaunch \
     apply-update.sh:digivice-apply-update \
+    digivice-gb.sh:digivice-gb \
     full-update.sh:digivice-full-update
   do
     src="${pair%%:*}"

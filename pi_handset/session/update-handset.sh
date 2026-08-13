@@ -176,7 +176,8 @@ install_tree() {
     for pair in \
       "gui-update.sh:digivice-gui-update" \
       "update-handset.sh:digivice-update" \
-      "apply-update.sh:digivice-apply-update"
+      "apply-update.sh:digivice-apply-update" \
+      "digivice-gb.sh:digivice-gb"
     do
       src="${pair%%:*}"
       dst="${pair##*:}"
@@ -204,6 +205,7 @@ install_tree() {
       "gui-update.sh:digivice-gui-update" \
       "home-relaunch.sh:digivice-home-relaunch" \
       "apply-update.sh:digivice-apply-update" \
+      "digivice-gb.sh:digivice-gb" \
       "power.sh:digivice-power" \
       "full-update.sh:digivice-full-update"
     do

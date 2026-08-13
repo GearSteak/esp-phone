@@ -98,6 +98,12 @@ apt-get install -y \
   alsa-utils \
   2>&1 | tee -a "$LOG" | tail -n 20
 
+# Game Boy / GBC (optional — Games → Game Boy)
+log "apt: Game Boy emulator (best-effort)…"
+apt-get install -y retroarch libretro-gambatte 2>&1 | tee -a "$LOG" | tail -n 10 \
+  || apt-get install -y mgba-sdl 2>&1 | tee -a "$LOG" | tail -n 10 \
+  || log "WARN: no GB emulator package — install later: sudo apt install retroarch libretro-gambatte"
+
 # --- repo ---
 find_repo() {
   if [[ -n "${ESP_HANDSET_REPO:-}" && -d "${ESP_HANDSET_REPO}/pi_handset" ]]; then
@@ -205,6 +211,10 @@ fi
 if [[ -f "$ROOT/session/apply-update.sh" ]]; then
   install -m 755 "$ROOT/session/apply-update.sh" "$PREFIX/session/apply-update.sh"
   install -m 755 "$ROOT/session/apply-update.sh" /usr/local/bin/digivice-apply-update
+fi
+if [[ -f "$ROOT/session/digivice-gb.sh" ]]; then
+  install -m 755 "$ROOT/session/digivice-gb.sh" "$PREFIX/session/digivice-gb.sh"
+  install -m 755 "$ROOT/session/digivice-gb.sh" /usr/local/bin/digivice-gb
 fi
 if [[ -f "$ROOT/session/install-home-request.sh" ]]; then
   install -m 755 "$ROOT/session/install-home-request.sh" "$PREFIX/session/install-home-request.sh"

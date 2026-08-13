@@ -90,6 +90,8 @@ install -m 755 "$ROOT/session/home-relaunch.sh" "$PREFIX/session/home-relaunch.s
 install -m 755 "$ROOT/session/home-relaunch.sh" /usr/local/bin/digivice-home-relaunch
 install -m 755 "$ROOT/session/apply-update.sh" "$PREFIX/session/apply-update.sh"
 install -m 755 "$ROOT/session/apply-update.sh" /usr/local/bin/digivice-apply-update
+install -m 755 "$ROOT/session/digivice-gb.sh" "$PREFIX/session/digivice-gb.sh"
+install -m 755 "$ROOT/session/digivice-gb.sh" /usr/local/bin/digivice-gb
 install -m 755 "$ROOT/session/install-home-request.sh" "$PREFIX/session/install-home-request.sh"
 bash "$ROOT/session/install-home-request.sh" 2>/dev/null || true
 install -m 755 "$ROOT/session/ensure-buttons.sh" "$PREFIX/session/ensure-buttons.sh"
