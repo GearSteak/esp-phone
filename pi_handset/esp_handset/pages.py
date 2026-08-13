@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 from datetime import datetime
 from pathlib import Path
-from typing import Callable, Optional, Tuple
+from typing import Callable, List, Optional, Tuple
 
 from PyQt5.QtCore import Qt, QSize
 from PyQt5.QtGui import QPixmap, QTextCursor
@@ -33,7 +34,9 @@ from esp_handset import pi_camera
 
 DATA = Path.home() / ".esp-handset"
 CONTACTS = DATA / "contacts.json"
+CONTACT_PHOTOS = DATA / "contact_photos"
 SMS_LOG = DATA / "sms.json"
+LORA_LOG = DATA / "lora.json"
 NOTES = DATA / "notes.json"
 TODOS = DATA / "todos.json"
 CALL_LOG = DATA / "call_log.json"
@@ -245,33 +248,106 @@ def _digits_tail(num: str, n: int = 10) -> str:
     return d[-n:] if d else ""
 
 
-def _contact_display(number: str) -> Tuple[str, str]:
-    """Return (display_name, initial) for a phone number."""
-    num = str(number or "").strip()
+def _normalize_contact(c: dict) -> dict:
+    """One contact card: name + phone / LoRa / email + optional photo."""
+    phone = str(c.get("phone") or c.get("number") or "").strip()
+    lora = str(c.get("lora") or c.get("lora_id") or "").strip()
+    email = str(c.get("email") or "").strip()
+    image = str(c.get("image") or "").strip()
+    name = str(c.get("name") or "").strip()
+    if not name:
+        name = phone or lora or email or "Unknown"
+    return {
+        "name": name,
+        "phone": phone,
+        "number": phone,  # legacy alias used by dialer/SMS
+        "lora": lora,
+        "email": email,
+        "image": image,
+    }
+
+
+def _contact_identity_ok(c: dict) -> bool:
+    return bool(c.get("phone") or c.get("lora") or c.get("email"))
+
+
+def _load_contacts() -> List[dict]:
     raw = _load_json(CONTACTS, [])
-    if isinstance(raw, list):
-        tail = _digits_tail(num)
-        for c in raw:
-            if not isinstance(c, dict):
-                continue
-            cnum = str(c.get("number") or "").strip()
-            if not cnum:
-                continue
-            if cnum == num or (tail and _digits_tail(cnum) == tail):
-                name = str(c.get("name") or "").strip() or cnum
-                initial = name[:1].upper() if name else "?"
-                if not initial.isalnum():
-                    initial = "#"
-                return name, initial
-    # Fall back to number; initial from last digit or #
-    initial = num[-1:].upper() if num else "?"
-    if initial.isdigit():
-        pass
-    elif initial.isalpha():
-        pass
-    else:
+    if not isinstance(raw, list):
+        return []
+    out = [_normalize_contact(c) for c in raw if isinstance(c, dict)]
+    return [c for c in out if _contact_identity_ok(c)]
+
+
+def _save_contacts(contacts: List[dict]) -> None:
+    cleaned = [_normalize_contact(c) for c in contacts if isinstance(c, dict)]
+    cleaned = [c for c in cleaned if _contact_identity_ok(c)]
+    cleaned.sort(
+        key=lambda c: (
+            str(c.get("name") or "").casefold(),
+            str(c.get("phone") or c.get("lora") or c.get("email") or ""),
+        )
+    )
+    _save_json(CONTACTS, cleaned)
+
+
+def _contact_photo_file(c: dict) -> Optional[Path]:
+    img = str(c.get("image") or "").strip()
+    if not img:
+        return None
+    p = Path(img)
+    if not p.is_absolute():
+        p = CONTACT_PHOTOS / img
+    return p if p.is_file() else None
+
+
+def _import_contact_photo(src: Path, stem: str) -> str:
+    """Copy image into contact_photos/; return relative filename."""
+    CONTACT_PHOTOS.mkdir(parents=True, exist_ok=True)
+    safe = "".join(ch if ch.isalnum() or ch in "-_" else "_" for ch in (stem or "contact"))[:24]
+    ext = src.suffix.lower() if src.suffix.lower() in (".jpg", ".jpeg", ".png", ".webp") else ".jpg"
+    name = f"{safe}_{int(datetime.now().timestamp())}{ext}"
+    dest = CONTACT_PHOTOS / name
+    shutil.copy2(src, dest)
+    return name
+
+
+def _lookup_contact(
+    *, phone: str = "", lora: str = "", email: str = ""
+) -> Optional[dict]:
+    phone = str(phone or "").strip()
+    lora = str(lora or "").strip()
+    email = str(email or "").strip().casefold()
+    tail = _digits_tail(phone)
+    for c in _load_contacts():
+        cphone = str(c.get("phone") or "")
+        if phone and (cphone == phone or (tail and _digits_tail(cphone) == tail)):
+            return c
+        if lora and str(c.get("lora") or "") == lora:
+            return c
+        if email and str(c.get("email") or "").casefold() == email:
+            return c
+    return None
+
+
+def _contact_display(
+    *, phone: str = "", lora: str = "", email: str = "", fallback: str = ""
+) -> Tuple[str, str, Optional[str]]:
+    """Return (display_name, initial, photo_path_or_None)."""
+    key = fallback or phone or lora or email or "Unknown"
+    c = _lookup_contact(phone=phone, lora=lora, email=email)
+    if c:
+        name = str(c.get("name") or key)
+        initial = name[:1].upper() if name else "?"
+        if not initial.isalnum():
+            initial = "#"
+        photo = _contact_photo_file(c)
+        return name, initial, str(photo) if photo else None
+    name = key
+    initial = name[:1].upper() if name else "?"
+    if not initial.isalnum():
         initial = "#"
-    return num or "Unknown", initial
+    return name, initial, None
 
 
 def _avatar_color(key: str) -> str:
@@ -286,6 +362,33 @@ def _avatar_color(key: str) -> str:
         "#7a6a2a",
     )
     return palette[sum(ord(c) for c in (key or "?")) % len(palette)]
+
+
+def _make_avatar_label(
+    name: str, initial: str, photo_path: Optional[str] = None, size: int = 36
+) -> QLabel:
+    avatar = QLabel()
+    avatar.setAlignment(Qt.AlignCenter)
+    avatar.setFixedSize(size, size)
+    avatar.setFocusPolicy(Qt.NoFocus)
+    if photo_path:
+        pix = QPixmap(photo_path)
+        if not pix.isNull():
+            scaled = pix.scaled(size, size, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
+            # Circular crop via mask-ish: just show scaled square with radius stylesheet
+            avatar.setPixmap(scaled.copy(0, 0, size, size))
+            avatar.setStyleSheet(
+                f"border-radius:{size // 2}px; background:#243040;"
+            )
+            avatar.setScaledContents(True)
+            return avatar
+    color = _avatar_color(name or initial)
+    avatar.setText(initial or "?")
+    avatar.setStyleSheet(
+        f"background:{color}; color:#fff; border-radius:{size // 2}px;"
+        f"font-size:{max(11, size // 2 - 4)}px; font-weight:800;"
+    )
+    return avatar
 
 
 def _normalize_sms_msg(raw) -> dict:
@@ -325,11 +428,125 @@ def _save_sms_threads(threads: dict) -> None:
     _save_json(SMS_LOG, threads)
 
 
+def _load_lora_threads() -> dict:
+    raw = _load_json(LORA_LOG, {})
+    if not isinstance(raw, dict):
+        return {}
+    out: dict = {}
+    for peer, msgs in raw.items():
+        if not isinstance(msgs, list):
+            continue
+        out[str(peer)] = [_normalize_sms_msg(m) for m in msgs]
+    return out
+
+
+def _save_lora_threads(threads: dict) -> None:
+    _save_json(LORA_LOG, threads)
+
+
+def _parse_lora_rx_line(line: str) -> Optional[Tuple[str, str]]:
+    """Parse 'LORA RX <deviceId text' → (peer_id, text)."""
+    if not line.startswith("LORA RX"):
+        return None
+    rest = line[7:].strip()
+    if rest.startswith("<"):
+        body = rest[1:].strip()
+        peer, _, text = body.partition(" ")
+        if peer:
+            return peer.strip(), text.strip()
+    if rest.lower().startswith("delivered by"):
+        return None
+    return "mesh", rest
+
+
 def _msg_preview(msg: dict) -> str:
     text = str(msg.get("text") or "").replace("\n", " ").strip()
     if msg.get("dir") == "out":
         text = f"You: {text}" if text else "You: "
     return text
+
+
+def _elide_one_line(text: str, max_chars: int = 34) -> str:
+    t = (text or "").replace("\n", " ").strip()
+    if len(t) <= max_chars:
+        return t
+    return t[: max_chars - 1] + "…"
+
+
+def _chat_bubble(msg: dict) -> QWidget:
+    outgoing = msg.get("dir") == "out"
+    text = str(msg.get("text") or "")
+    wrap = QWidget()
+    wrap.setFocusPolicy(Qt.NoFocus)
+    h = QHBoxLayout(wrap)
+    h.setContentsMargins(2, 1, 2, 1)
+    h.setSpacing(0)
+    if outgoing:
+        h.addStretch(1)
+    bubble = QLabel(text)
+    bubble.setWordWrap(True)
+    bubble.setFocusPolicy(Qt.NoFocus)
+    bubble.setMaximumWidth(180)
+    if outgoing:
+        bubble.setStyleSheet(
+            "background:#1f6feb; color:#fff; border-radius:8px;"
+            "padding:6px 8px; font-size:11px;"
+        )
+    else:
+        bubble.setStyleSheet(
+            "background:#243040; color:#e8eef5; border-radius:8px;"
+            "padding:6px 8px; font-size:11px;"
+        )
+    h.addWidget(bubble)
+    if not outgoing:
+        h.addStretch(1)
+    return wrap
+
+
+def _chat_conv_row(
+    title: str,
+    preview: str,
+    *,
+    initial: str,
+    photo: Optional[str] = None,
+    unread: bool = False,
+) -> QWidget:
+    row = QWidget()
+    row.setFocusPolicy(Qt.NoFocus)
+    h = QHBoxLayout(row)
+    h.setContentsMargins(4, 4, 4, 4)
+    h.setSpacing(6)
+    h.addWidget(_make_avatar_label(title, initial, photo, 36))
+
+    text_col = QVBoxLayout()
+    text_col.setSpacing(1)
+    text_col.setContentsMargins(0, 0, 0, 0)
+    name_row = QHBoxLayout()
+    name_row.setSpacing(4)
+    name_lab = QLabel(title)
+    name_lab.setStyleSheet("font-size:12px; font-weight:700; color:#e8eef5;")
+    name_lab.setFocusPolicy(Qt.NoFocus)
+    name_row.addWidget(name_lab, 1)
+    if unread:
+        badge = QLabel("●")
+        badge.setStyleSheet("color:#FFE600; font-size:14px; font-weight:800;")
+        badge.setFixedWidth(14)
+        badge.setFocusPolicy(Qt.NoFocus)
+        name_row.addWidget(badge)
+    text_col.addLayout(name_row)
+    prev_lab = QLabel(preview or "(no messages)")
+    prev_lab.setStyleSheet(
+        "font-size:10px; color:#cde; font-weight:600;"
+        if unread
+        else "font-size:10px; color:#9ab;"
+    )
+    prev_lab.setFocusPolicy(Qt.NoFocus)
+    prev_lab.setWordWrap(False)
+    text_col.addWidget(prev_lab)
+    h.addLayout(text_col, 1)
+    for child in row.findChildren(QWidget):
+        child.setFocusPolicy(Qt.NoFocus)
+    return row
 
 
 def make_sms_page(
@@ -434,99 +651,16 @@ def make_sms_page(
                 pass
         return modem
 
-    def _elide(text: str, width_px: int = 150) -> str:
-        t = (text or "").replace("\n", " ").strip()
-        if len(t) <= 36:
-            return t
-        # Digivice ~240px wide — hard cap keeps one line readable
-        return t[:33] + "…"
-
     def _build_conv_row(number: str, msgs: list) -> QWidget:
-        name, initial = _contact_display(number)
+        name, initial, photo = _contact_display(phone=number, fallback=number)
         last = msgs[-1] if msgs else {"text": "", "dir": "in"}
-        preview = _elide(_msg_preview(last))
+        preview = _elide_one_line(_msg_preview(last))
         unread = any(
             m.get("dir") == "in" and not m.get("read", True) for m in msgs
         )
-
-        row = QWidget()
-        row.setFocusPolicy(Qt.NoFocus)
-        h = QHBoxLayout(row)
-        h.setContentsMargins(4, 4, 4, 4)
-        h.setSpacing(6)
-
-        avatar = QLabel(initial)
-        avatar.setAlignment(Qt.AlignCenter)
-        avatar.setFixedSize(36, 36)
-        avatar.setFocusPolicy(Qt.NoFocus)
-        color = _avatar_color(name or number)
-        avatar.setStyleSheet(
-            f"background:{color}; color:#fff; border-radius:18px;"
-            "font-size:14px; font-weight:800;"
+        return _chat_conv_row(
+            name, preview, initial=initial, photo=photo, unread=unread
         )
-        h.addWidget(avatar)
-
-        text_col = QVBoxLayout()
-        text_col.setSpacing(1)
-        text_col.setContentsMargins(0, 0, 0, 0)
-        name_row = QHBoxLayout()
-        name_row.setSpacing(4)
-        name_lab = QLabel(name)
-        name_lab.setStyleSheet("font-size:12px; font-weight:700; color:#e8eef5;")
-        name_lab.setFocusPolicy(Qt.NoFocus)
-        name_row.addWidget(name_lab, 1)
-        if unread:
-            badge = QLabel("●")
-            badge.setStyleSheet("color:#FFE600; font-size:14px; font-weight:800;")
-            badge.setFixedWidth(14)
-            badge.setFocusPolicy(Qt.NoFocus)
-            name_row.addWidget(badge)
-        text_col.addLayout(name_row)
-        prev_lab = QLabel(preview or "(no messages)")
-        prev_lab.setStyleSheet(
-            "font-size:10px; color:#9ab;"
-            if not unread
-            else "font-size:10px; color:#cde; font-weight:600;"
-        )
-        prev_lab.setFocusPolicy(Qt.NoFocus)
-        prev_lab.setWordWrap(False)
-        text_col.addWidget(prev_lab)
-        h.addLayout(text_col, 1)
-
-        for child in row.findChildren(QWidget):
-            child.setFocusPolicy(Qt.NoFocus)
-        row.setFocusPolicy(Qt.NoFocus)
-        return row
-
-    def _build_bubble(msg: dict) -> QWidget:
-        outgoing = msg.get("dir") == "out"
-        text = str(msg.get("text") or "")
-        wrap = QWidget()
-        wrap.setFocusPolicy(Qt.NoFocus)
-        h = QHBoxLayout(wrap)
-        h.setContentsMargins(2, 1, 2, 1)
-        h.setSpacing(0)
-        if outgoing:
-            h.addStretch(1)
-        bubble = QLabel(text)
-        bubble.setWordWrap(True)
-        bubble.setFocusPolicy(Qt.NoFocus)
-        bubble.setMaximumWidth(180)
-        if outgoing:
-            bubble.setStyleSheet(
-                "background:#1f6feb; color:#fff; border-radius:8px;"
-                "padding:6px 8px; font-size:11px;"
-            )
-            bubble.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-        else:
-            bubble.setStyleSheet(
-                "background:#243040; color:#e8eef5; border-radius:8px;"
-                "padding:6px 8px; font-size:11px;"
-            )
-        h.addWidget(bubble)
-        if not outgoing:
-            h.addStretch(1)
-        return wrap
 
     def show_inbox() -> None:
         state["peer"] = ""
@@ -580,7 +714,7 @@ def make_sms_page(
         if not number:
             return
         state["peer"] = number
-        name, _ = _contact_display(number)
+        name, _, _ = _contact_display(phone=number, fallback=number)
         thread_title.setText(name if name != number else number)
         if name != number:
             thread_title.setText(f"{name}\n{number}")
@@ -608,8 +742,7 @@ def make_sms_page(
             item = QListWidgetItem()
             item.setSizeHint(QSize(200, 44))
             msg_list.addItem(item)
-            bubble = _build_bubble(m)
-            # Size hint from bubble preferred height
+            bubble = _chat_bubble(m)
             bubble.adjustSize()
             hint_h = max(36, bubble.sizeHint().height() + 4)
             item.setSizeHint(QSize(200, hint_h))
@@ -720,161 +853,348 @@ def make_sms_page(
     return chrome
 
 
-def make_contacts_page(on_back, open_dial: Callable[[str], None]) -> QWidget:
-    """Alphabetized contact list; ＋ Add stays under the list and moves down as you add."""
-    from PyQt5.QtWidgets import QSizePolicy
+def make_contacts_page(
+    on_back,
+    open_dial: Callable[[str], None],
+    open_sms: Optional[Callable[[str], None]] = None,
+    open_lora: Optional[Callable[[str], None]] = None,
+    open_email: Optional[Callable[[str], None]] = None,
+) -> QWidget:
+    """Contact book: photo + phone / LoRa / email; Call · SMS · LoRa · Email."""
+    from PyQt5.QtWidgets import QFileDialog
 
-    body = QWidget()
-    lay = QVBoxLayout(body)
-    lay.setContentsMargins(2, 2, 2, 2)
-    lay.setSpacing(4)
+    from esp_handset import digi_nav
 
-    # Growing stack of contact rows — Maximum height so empty viewport
-    # space is NOT between the list and Add (that was the "dead space").
-    list_wrap = QWidget()
-    list_wrap.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
-    list_lay = QVBoxLayout(list_wrap)
-    list_lay.setContentsMargins(0, 0, 0, 0)
-    list_lay.setSpacing(2)
-    lay.addWidget(list_wrap, 0)
+    root = QWidget()
+    stack = QStackedWidget(root)
+    outer = QVBoxLayout(root)
+    outer.setContentsMargins(0, 0, 0, 0)
+    outer.addWidget(stack)
 
+    # ----- List -----
+    list_page = QWidget()
+    list_lay = QVBoxLayout(list_page)
+    list_lay.setContentsMargins(2, 2, 2, 2)
+    list_lay.setSpacing(4)
+
+    conv_list = QListWidget()
+    conv_list.setSpacing(2)
+    conv_list.setStyleSheet(
+        "QListWidget { background: transparent; border: none; outline: none; }"
+        "QListWidget::item { background: #152030; border-radius: 6px;"
+        "  margin: 1px 0; padding: 0; }"
+        "QListWidget::item:selected { background: #243448;"
+        "  border: 2px solid #FFE600; }"
+    )
+    list_lay.addWidget(conv_list, 1)
     add_btn = QPushButton("＋ Add contact")
-    add_btn.setStyleSheet("font-weight:700; min-height:28px;")
-    add_btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-    lay.addWidget(add_btn, 0)
+    add_btn.setMinimumHeight(30)
+    add_btn.setStyleSheet("font-weight:700;")
+    list_lay.addWidget(add_btn)
+    stack.addWidget(list_page)
 
-    # Inline add form (shown under Add; stays at bottom of scroll content)
+    # ----- Detail -----
+    detail = QWidget()
+    d_lay = QVBoxLayout(detail)
+    d_lay.setContentsMargins(2, 2, 2, 2)
+    d_lay.setSpacing(4)
+    d_avatar_host = QHBoxLayout()
+    d_avatar_slot = QVBoxLayout()
+    d_avatar_host.addStretch(1)
+    d_avatar_host.addLayout(d_avatar_slot)
+    d_avatar_host.addStretch(1)
+    d_lay.addLayout(d_avatar_host)
+    d_name = QLabel("Contact")
+    d_name.setAlignment(Qt.AlignCenter)
+    d_name.setStyleSheet("font-size:14px; font-weight:800;")
+    d_name.setWordWrap(True)
+    d_lay.addWidget(d_name)
+    d_info = QLabel("")
+    d_info.setAlignment(Qt.AlignCenter)
+    d_info.setStyleSheet("font-size:10px; color:#9ab;")
+    d_info.setWordWrap(True)
+    d_lay.addWidget(d_info)
+    act = QVBoxLayout()
+    act.setSpacing(3)
+    btn_call = QPushButton("Call")
+    btn_sms = QPushButton("SMS")
+    btn_lora = QPushButton("LoRa")
+    btn_email = QPushButton("Email")
+    btn_edit = QPushButton("Edit")
+    for b in (btn_call, btn_sms, btn_lora, btn_email, btn_edit):
+        b.setMinimumHeight(30)
+        b.setStyleSheet("font-weight:700;")
+        act.addWidget(b)
+    d_lay.addLayout(act)
+    d_lay.addStretch(1)
+    stack.addWidget(detail)
+
+    # ----- Edit / Add form -----
     form = QWidget()
-    form.setVisible(False)
-    form.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
-    form_lay = QVBoxLayout(form)
-    form_lay.setContentsMargins(0, 4, 0, 0)
-    form_lay.setSpacing(4)
+    f_lay = QVBoxLayout(form)
+    f_lay.setContentsMargins(2, 2, 2, 2)
+    f_lay.setSpacing(3)
     name_ed = QLineEdit()
     name_ed.setPlaceholderText("Name")
-    num_ed = QLineEdit()
-    num_ed.setPlaceholderText("Number")
-    row = QHBoxLayout()
+    phone_ed = QLineEdit()
+    phone_ed.setPlaceholderText("Phone")
+    lora_ed = QLineEdit()
+    lora_ed.setPlaceholderText("LoRa ID")
+    email_ed = QLineEdit()
+    email_ed.setPlaceholderText("Email")
+    photo_lab = QLabel("No photo")
+    photo_lab.setStyleSheet("font-size:10px; color:#9ab;")
+    photo_lab.setWordWrap(True)
+    photo_row = QHBoxLayout()
+    pick_photo = QPushButton("Photo")
+    clear_photo = QPushButton("Clear")
+    photo_row.addWidget(pick_photo, 1)
+    photo_row.addWidget(clear_photo, 1)
     save_btn = QPushButton("Save")
-    save_btn.setStyleSheet("font-weight:700;")
+    save_btn.setStyleSheet("font-weight:800;")
+    save_btn.setMinimumHeight(30)
     cancel_btn = QPushButton("Cancel")
-    row.addWidget(save_btn, 1)
-    row.addWidget(cancel_btn, 1)
-    form_lay.addWidget(name_ed)
-    form_lay.addWidget(num_ed)
-    form_lay.addLayout(row)
-    lay.addWidget(form, 0)
-    # Spare vertical room goes *below* Add, not between list and Add
-    lay.addStretch(1)
+    cancel_btn.setMinimumHeight(28)
+    for w in (name_ed, phone_ed, lora_ed, email_ed):
+        f_lay.addWidget(w)
+    f_lay.addWidget(photo_lab)
+    f_lay.addLayout(photo_row)
+    f_lay.addWidget(save_btn)
+    f_lay.addWidget(cancel_btn)
+    f_lay.addStretch(1)
+    stack.addWidget(form)
 
-    def _sort_key(c: dict):
-        n = str(c.get("name") or "").strip()
-        num = str(c.get("number") or "").strip()
-        return (n.casefold() or num.casefold(), num)
+    state = {"index": -1, "image": "", "mode": "add"}  # mode add|edit
+    avatar_widget: list = [None]
 
-    def _clear_list() -> None:
-        while list_lay.count():
-            item = list_lay.takeAt(0)
+    def _channels_line(c: dict) -> str:
+        bits = []
+        if c.get("phone"):
+            bits.append(str(c["phone"]))
+        if c.get("lora"):
+            bits.append(f"LoRa {c['lora']}")
+        if c.get("email"):
+            bits.append(str(c["email"]))
+        return " · ".join(bits) if bits else "No channels"
+
+    def _clear_avatar_slot() -> None:
+        while d_avatar_slot.count():
+            item = d_avatar_slot.takeAt(0)
             w = item.widget()
             if w is not None:
                 w.deleteLater()
+        avatar_widget[0] = None
 
-    def refresh() -> None:
-        _clear_list()
-        raw = _load_json(CONTACTS, [])
-        if not isinstance(raw, list):
-            raw = []
-        contacts = sorted(
-            [c for c in raw if isinstance(c, dict) and c.get("number")],
-            key=_sort_key,
-        )
-        # Persist sorted order so file stays alphabetical
-        if contacts != raw:
-            _save_json(CONTACTS, contacts)
+    def show_list() -> None:
+        stack.setCurrentWidget(list_page)
+        refresh_list()
+        digi_nav.ensure_page_focus(chrome)
 
+    def refresh_list() -> None:
+        contacts = _load_contacts()
+        _save_contacts(contacts)  # normalize + sort on disk
+        conv_list.clear()
         if not contacts:
-            empty = QLabel("No contacts yet.")
-            empty.setStyleSheet("color:#678;font-size:11px;")
-            list_lay.addWidget(empty)
-
-        last_letter = ""
-        for c in contacts:
-            name = str(c.get("name") or "").strip() or str(c.get("number") or "")
-            number = str(c.get("number") or "").strip()
-            letter = name[:1].upper() if name else "#"
-            if not letter.isalpha():
-                letter = "#"
-            if letter != last_letter:
-                hdr = QLabel(letter)
-                hdr.setStyleSheet(
-                    "color:#ffd700;font-size:11px;font-weight:700;"
-                    "padding:2px 2px 0 2px;"
-                )
-                hdr.setFocusPolicy(Qt.NoFocus)
-                list_lay.addWidget(hdr)
-                last_letter = letter
-
-            label = f"{name}  ·  {number}" if name != number else number
-            btn = QPushButton(label)
-            btn.setStyleSheet(
-                "text-align:left; padding:5px 6px; min-height:24px;"
+            empty = QListWidgetItem("No contacts yet.\n＋ Add below.")
+            empty.setFlags(Qt.NoItemFlags)
+            conv_list.addItem(empty)
+            return
+        for i, c in enumerate(contacts):
+            name = str(c.get("name") or "Unknown")
+            initial = name[:1].upper() if name else "?"
+            if not initial.isalnum():
+                initial = "#"
+            photo = _contact_photo_file(c)
+            preview = _elide_one_line(_channels_line(c), 32)
+            item = QListWidgetItem()
+            item.setData(Qt.UserRole, i)
+            item.setSizeHint(QSize(200, 48))
+            conv_list.addItem(item)
+            conv_list.setItemWidget(
+                item,
+                _chat_conv_row(
+                    name,
+                    preview,
+                    initial=initial,
+                    photo=str(photo) if photo else None,
+                    unread=False,
+                ),
             )
-            btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-            num_capture = number
 
-            def _dial(_checked=False, n=num_capture) -> None:
-                if n:
-                    open_dial(n)
+    def open_detail(index: int) -> None:
+        contacts = _load_contacts()
+        if index < 0 or index >= len(contacts):
+            return
+        state["index"] = index
+        c = contacts[index]
+        name = str(c.get("name") or "Unknown")
+        initial = name[:1].upper() if name else "?"
+        if not initial.isalnum():
+            initial = "#"
+        photo = _contact_photo_file(c)
+        _clear_avatar_slot()
+        av = _make_avatar_label(name, initial, str(photo) if photo else None, 56)
+        d_avatar_slot.addWidget(av)
+        avatar_widget[0] = av
+        d_name.setText(name)
+        d_info.setText(_channels_line(c))
+        btn_call.setEnabled(bool(c.get("phone")))
+        btn_sms.setEnabled(bool(c.get("phone")) and open_sms is not None)
+        btn_lora.setEnabled(bool(c.get("lora")) and open_lora is not None)
+        btn_email.setEnabled(bool(c.get("email")) and open_email is not None)
+        stack.setCurrentWidget(detail)
+        digi_nav.ensure_page_focus(chrome)
 
-            btn.clicked.connect(_dial)
-            list_lay.addWidget(btn)
+    def open_selected() -> None:
+        item = conv_list.currentItem()
+        if item is None:
+            return
+        idx = item.data(Qt.UserRole)
+        if idx is None:
+            return
+        open_detail(int(idx))
 
-        body._contacts = contacts  # type: ignore[attr-defined]
-        add_btn.raise_()
+    def fill_form(c: Optional[dict]) -> None:
+        c = c or {}
+        name_ed.setText(str(c.get("name") or ""))
+        phone_ed.setText(str(c.get("phone") or ""))
+        lora_ed.setText(str(c.get("lora") or ""))
+        email_ed.setText(str(c.get("email") or ""))
+        state["image"] = str(c.get("image") or "")
+        if state["image"]:
+            photo_lab.setText(f"Photo: {Path(state['image']).name}")
+        else:
+            photo_lab.setText("No photo")
 
-    def show_form() -> None:
-        form.setVisible(True)
-        add_btn.setVisible(False)
-        name_ed.clear()
-        num_ed.clear()
+    def show_add() -> None:
+        state["mode"] = "add"
+        state["index"] = -1
+        fill_form(None)
+        stack.setCurrentWidget(form)
         name_ed.setFocus(Qt.OtherFocusReason)
+        digi_nav.ensure_page_focus(chrome)
+
+    def show_edit() -> None:
+        contacts = _load_contacts()
+        idx = state["index"]
+        if idx < 0 or idx >= len(contacts):
+            return
+        state["mode"] = "edit"
+        fill_form(contacts[idx])
+        stack.setCurrentWidget(form)
+        digi_nav.ensure_page_focus(chrome)
+
+    def do_pick_photo() -> None:
+        start = str(PHOTOS if PHOTOS.is_dir() else Path.home() / "Pictures")
+        fn, _ = QFileDialog.getOpenFileName(
+            form,
+            "Contact photo",
+            start,
+            "Images (*.jpg *.jpeg *.png *.webp *.bmp)",
+        )
+        if not fn:
+            return
         try:
-            from esp_handset import digi_nav
+            rel = _import_contact_photo(Path(fn), name_ed.text().strip() or "contact")
+            state["image"] = rel
+            photo_lab.setText(f"Photo: {rel}")
+        except Exception as e:
+            QMessageBox.warning(form, "Photo", str(e))
 
-            digi_nav.clear_highlights(body)
-            digi_nav._highlight(name_ed, True)
-        except Exception:
-            pass
-
-    def hide_form() -> None:
-        form.setVisible(False)
-        add_btn.setVisible(True)
-        name_ed.clear()
-        num_ed.clear()
+    def do_clear_photo() -> None:
+        state["image"] = ""
+        photo_lab.setText("No photo")
 
     def do_save() -> None:
-        n = name_ed.text().strip()
-        number = num_ed.text().strip()
-        if not number:
-            num_ed.setFocus(Qt.OtherFocusReason)
-            return
-        contacts = _load_json(CONTACTS, [])
-        if not isinstance(contacts, list):
-            contacts = []
-        contacts.append({"name": n or number, "number": number})
-        contacts = sorted(
-            [c for c in contacts if isinstance(c, dict) and c.get("number")],
-            key=_sort_key,
+        c = _normalize_contact(
+            {
+                "name": name_ed.text().strip(),
+                "phone": phone_ed.text().strip(),
+                "lora": lora_ed.text().strip(),
+                "email": email_ed.text().strip(),
+                "image": state["image"],
+            }
         )
-        _save_json(CONTACTS, contacts)
-        hide_form()
-        refresh()
+        if not _contact_identity_ok(c):
+            QMessageBox.warning(
+                form, "Contacts", "Need at least phone, LoRa ID, or email."
+            )
+            return
+        contacts = _load_contacts()
+        if state["mode"] == "edit" and 0 <= state["index"] < len(contacts):
+            contacts[state["index"]] = c
+        else:
+            contacts.append(c)
+        _save_contacts(contacts)
+        show_list()
 
-    add_btn.clicked.connect(show_form)
+    def do_call() -> None:
+        contacts = _load_contacts()
+        idx = state["index"]
+        if 0 <= idx < len(contacts) and contacts[idx].get("phone"):
+            open_dial(str(contacts[idx]["phone"]))
+
+    def do_sms() -> None:
+        contacts = _load_contacts()
+        idx = state["index"]
+        if open_sms and 0 <= idx < len(contacts) and contacts[idx].get("phone"):
+            open_sms(str(contacts[idx]["phone"]))
+
+    def do_lora() -> None:
+        contacts = _load_contacts()
+        idx = state["index"]
+        if open_lora and 0 <= idx < len(contacts) and contacts[idx].get("lora"):
+            open_lora(str(contacts[idx]["lora"]))
+
+    def do_email() -> None:
+        contacts = _load_contacts()
+        idx = state["index"]
+        if open_email and 0 <= idx < len(contacts) and contacts[idx].get("email"):
+            open_email(str(contacts[idx]["email"]))
+
+    def chrome_back() -> None:
+        cur = stack.currentWidget()
+        if cur is form:
+            if state["mode"] == "edit" and state["index"] >= 0:
+                open_detail(state["index"])
+            else:
+                show_list()
+        elif cur is detail:
+            show_list()
+        else:
+            on_back()
+
+    def on_hardware_back() -> bool:
+        cur = stack.currentWidget()
+        if cur is form:
+            if state["mode"] == "edit" and state["index"] >= 0:
+                open_detail(state["index"])
+            else:
+                show_list()
+            return True
+        if cur is detail:
+            show_list()
+            return True
+        return False
+
+    conv_list.itemActivated.connect(lambda _i: open_selected())
+    conv_list.itemClicked.connect(lambda _i: open_selected())
+    add_btn.clicked.connect(show_add)
+    btn_call.clicked.connect(do_call)
+    btn_sms.clicked.connect(do_sms)
+    btn_lora.clicked.connect(do_lora)
+    btn_email.clicked.connect(do_email)
+    btn_edit.clicked.connect(show_edit)
+    pick_photo.clicked.connect(do_pick_photo)
+    clear_photo.clicked.connect(do_clear_photo)
     save_btn.clicked.connect(do_save)
-    cancel_btn.clicked.connect(hide_form)
-    refresh()
-    return page_chrome("Contacts", body, on_back)
+    cancel_btn.clicked.connect(chrome_back)
+
+    chrome = page_chrome("Contacts", root, chrome_back, scroll=False)
+    chrome.on_hardware_back = on_hardware_back  # type: ignore[attr-defined]
+    chrome.refresh_contacts = show_list  # type: ignore[attr-defined]
+    show_list()
+    return chrome
 
 
 def make_call_log_page(on_back) -> QWidget:
@@ -1250,51 +1570,344 @@ def make_gallery_page(on_back: Callable[[], None], on_status) -> QWidget:
 
 
 def make_lora_page(bridge, on_back, on_status) -> QWidget:
-    body = QWidget()
-    lay = QVBoxLayout(body)
-    log = QTextEdit()
-    log.setReadOnly(True)
-    out = QLineEdit()
-    row = QHBoxLayout()
-    send = QPushButton("Send")
-    sos = QPushButton("SOS")
-    row.addWidget(send)
-    row.addWidget(sos)
-    lay.addWidget(log, 1)
-    lay.addWidget(out)
-    lay.addLayout(row)
-    tip = QLabel("Heltec-compatible mesh via ESP SX1276")
-    tip.setStyleSheet("color:#9ab;")
-    lay.addWidget(tip)
+    """LoRa mesh inbox + thread — same conversation pattern as SMS."""
+    from esp_handset import digi_nav
 
-    def do_send():
-        text = out.text().strip()
-        if not text or not bridge:
-            if not bridge:
-                QMessageBox.warning(body, "LoRa", "ESP not connected")
+    root = QWidget()
+    stack = QStackedWidget(root)
+    outer = QVBoxLayout(root)
+    outer.setContentsMargins(0, 0, 0, 0)
+    outer.addWidget(stack)
+
+    inbox = QWidget()
+    in_lay = QVBoxLayout(inbox)
+    in_lay.setContentsMargins(2, 2, 2, 2)
+    in_lay.setSpacing(4)
+
+    conv_list = QListWidget()
+    conv_list.setSpacing(2)
+    conv_list.setStyleSheet(
+        "QListWidget { background: transparent; border: none; outline: none; }"
+        "QListWidget::item { background: #152030; border-radius: 6px;"
+        "  margin: 1px 0; padding: 0; }"
+        "QListWidget::item:selected { background: #243448;"
+        "  border: 2px solid #FFE600; }"
+    )
+    in_lay.addWidget(conv_list, 1)
+
+    row_btns = QHBoxLayout()
+    new_btn = QPushButton("＋ New")
+    new_btn.setMinimumHeight(30)
+    new_btn.setStyleSheet("font-weight:700;")
+    sos_btn = QPushButton("SOS")
+    sos_btn.setMinimumHeight(30)
+    sos_btn.setStyleSheet("font-weight:800; background:#8a2020;")
+    row_btns.addWidget(new_btn, 1)
+    row_btns.addWidget(sos_btn)
+    in_lay.addLayout(row_btns)
+
+    new_form = QWidget()
+    new_form.setVisible(False)
+    nf_lay = QVBoxLayout(new_form)
+    nf_lay.setContentsMargins(0, 0, 0, 0)
+    nf_lay.setSpacing(3)
+    new_to = QLineEdit()
+    new_to.setPlaceholderText("LoRa device ID")
+    nf_row = QHBoxLayout()
+    new_open = QPushButton("Open")
+    new_open.setStyleSheet("font-weight:700;")
+    new_cancel = QPushButton("Cancel")
+    nf_row.addWidget(new_open, 1)
+    nf_row.addWidget(new_cancel, 1)
+    nf_lay.addWidget(new_to)
+    nf_lay.addLayout(nf_row)
+    tip = QLabel("Broadcast = 0 · match Contacts LoRa ID")
+    tip.setStyleSheet("font-size:9px; color:#678;")
+    tip.setWordWrap(True)
+    nf_lay.addWidget(tip)
+    in_lay.addWidget(new_form)
+    stack.addWidget(inbox)
+
+    thread = QWidget()
+    th_lay = QVBoxLayout(thread)
+    th_lay.setContentsMargins(2, 2, 2, 2)
+    th_lay.setSpacing(3)
+    thread_title = QLabel("LoRa")
+    thread_title.setStyleSheet("font-size:12px; font-weight:700;")
+    thread_title.setWordWrap(True)
+    th_lay.addWidget(thread_title)
+    msg_list = QListWidget()
+    msg_list.setStyleSheet(
+        "QListWidget { background: transparent; border: none; outline: none; }"
+        "QListWidget::item { background: transparent; margin: 2px 0; padding: 0; }"
+        "QListWidget::item:selected { background: rgba(255,230,0,0.12);"
+        "  border: 1px solid #FFE600; border-radius: 4px; }"
+    )
+    th_lay.addWidget(msg_list, 1)
+    compose_row = QHBoxLayout()
+    compose_row.setSpacing(3)
+    compose = QLineEdit()
+    compose.setPlaceholderText("Type a message…")
+    compose.setMinimumHeight(30)
+    send_btn = QPushButton("Send")
+    send_btn.setMinimumHeight(30)
+    send_btn.setFixedWidth(52)
+    send_btn.setStyleSheet("font-weight:800;")
+    compose_row.addWidget(compose, 1)
+    compose_row.addWidget(send_btn)
+    th_lay.addLayout(compose_row)
+    stack.addWidget(thread)
+
+    state = {"peer": ""}
+
+    def show_inbox() -> None:
+        state["peer"] = ""
+        new_form.setVisible(False)
+        stack.setCurrentWidget(inbox)
+        refresh_inbox()
+        digi_nav.ensure_page_focus(chrome)
+
+    def refresh_inbox() -> None:
+        threads = _load_lora_threads()
+        items = list(threads.items())
+
+        def sort_key(pair):
+            peer, msgs = pair
+            last_at = str(msgs[-1].get("at") or "") if msgs else ""
+            return (last_at, peer)
+
+        items.sort(key=sort_key, reverse=True)
+        conv_list.clear()
+        if not items:
+            empty = QListWidgetItem("No LoRa chats yet.\n＋ New or wait for RX.")
+            empty.setFlags(Qt.NoItemFlags)
+            conv_list.addItem(empty)
+            return
+        for peer, msgs in items:
+            name, initial, photo = _contact_display(lora=peer, fallback=peer)
+            if peer in ("0", "broadcast"):
+                name, initial, photo = "Broadcast", "B", None
+            last = msgs[-1] if msgs else {"text": "", "dir": "in"}
+            preview = _elide_one_line(_msg_preview(last))
+            unread = any(
+                m.get("dir") == "in" and not m.get("read", True) for m in msgs
+            )
+            item = QListWidgetItem()
+            item.setData(Qt.UserRole, peer)
+            item.setSizeHint(QSize(200, 48))
+            conv_list.addItem(item)
+            conv_list.setItemWidget(
+                item,
+                _chat_conv_row(
+                    name, preview, initial=initial, photo=photo, unread=unread
+                ),
+            )
+
+    def mark_read(peer: str) -> None:
+        threads = _load_lora_threads()
+        msgs = threads.get(peer)
+        if not msgs:
+            return
+        changed = False
+        for m in msgs:
+            if m.get("dir") == "in" and not m.get("read", True):
+                m["read"] = True
+                changed = True
+        if changed:
+            threads[peer] = msgs
+            _save_lora_threads(threads)
+
+    def open_thread(peer: str) -> None:
+        peer = str(peer or "").strip()
+        if not peer:
+            return
+        if peer == "0":
+            peer = "broadcast"
+        state["peer"] = peer
+        name, _, _ = _contact_display(lora=peer, fallback=peer)
+        if peer == "broadcast":
+            name = "Broadcast"
+        thread_title.setText(f"{name}\nID {peer}" if name != peer else f"LoRa {peer}")
+        mark_read(peer)
+        refresh_thread()
+        stack.setCurrentWidget(thread)
+        compose.clear()
+        digi_nav.ensure_page_focus(chrome)
+        compose.setFocus(Qt.OtherFocusReason)
+
+    def refresh_thread() -> None:
+        peer = state["peer"]
+        msg_list.clear()
+        if not peer:
+            return
+        msgs = _load_lora_threads().get(peer, [])
+        if not msgs:
+            item = QListWidgetItem("No messages yet.")
+            item.setFlags(Qt.NoItemFlags)
+            msg_list.addItem(item)
+            return
+        for m in msgs:
+            item = QListWidgetItem()
+            bubble = _chat_bubble(m)
+            bubble.adjustSize()
+            item.setSizeHint(QSize(200, max(36, bubble.sizeHint().height() + 4)))
+            msg_list.addItem(item)
+            msg_list.setItemWidget(item, bubble)
+        msg_list.scrollToBottom()
+
+    def open_selected() -> None:
+        item = conv_list.currentItem()
+        if item is None:
+            return
+        peer = item.data(Qt.UserRole)
+        if peer:
+            open_thread(str(peer))
+
+    def start_new() -> None:
+        new_form.setVisible(True)
+        new_to.setFocus(Qt.OtherFocusReason)
+
+    def cancel_new() -> None:
+        new_form.setVisible(False)
+        new_to.clear()
+        digi_nav.ensure_page_focus(chrome)
+
+    def open_new() -> None:
+        peer = new_to.text().strip() or "broadcast"
+        if peer == "0":
+            peer = "broadcast"
+        new_form.setVisible(False)
+        threads = _load_lora_threads()
+        threads.setdefault(peer, [])
+        _save_lora_threads(threads)
+        open_thread(peer)
+
+    def _target_id(peer: str) -> int:
+        if peer in ("broadcast", "mesh", ""):
+            return 0
+        try:
+            return int(peer)
+        except ValueError:
+            return 0
+
+    def do_send() -> None:
+        peer = state["peer"]
+        text = compose.text().strip().replace("\n", " ")
+        if not peer or not text:
+            return
+        if not bridge:
+            QMessageBox.warning(root, "LoRa", "ESP not connected")
             return
         try:
-            bridge.lora_send(text)
-            log.append(f"> {text}")
-            out.clear()
+            bridge.lora_send(text, target=_target_id(peer))
         except Exception as e:
-            QMessageBox.warning(body, "LoRa", str(e))
+            QMessageBox.warning(root, "LoRa", str(e))
+            return
+        threads = _load_lora_threads()
+        threads.setdefault(peer, []).append(
+            {
+                "dir": "out",
+                "text": text,
+                "at": datetime.now().isoformat(),
+                "read": True,
+            }
+        )
+        _save_lora_threads(threads)
+        compose.clear()
+        refresh_thread()
+        on_status(f"LoRa → {peer}")
 
-    def do_sos():
+    def do_sos() -> None:
         if not bridge:
-            QMessageBox.warning(body, "LoRa", "ESP not connected")
+            QMessageBox.warning(root, "LoRa", "ESP not connected")
             return
         try:
             bridge.lora_sos()
-            log.append("> SOS")
-            on_status("LoRa SOS sent")
         except Exception as e:
-            QMessageBox.warning(body, "LoRa", str(e))
+            QMessageBox.warning(root, "LoRa", str(e))
+            return
+        threads = _load_lora_threads()
+        threads.setdefault("broadcast", []).append(
+            {
+                "dir": "out",
+                "text": "SOS NEED HELP",
+                "at": datetime.now().isoformat(),
+                "read": True,
+            }
+        )
+        _save_lora_threads(threads)
+        on_status("LoRa SOS sent")
+        refresh_inbox()
+        if stack.currentWidget() is thread and state["peer"] == "broadcast":
+            refresh_thread()
 
-    send.clicked.connect(do_send)
-    sos.clicked.connect(do_sos)
-    body.lora_log = log  # type: ignore[attr-defined]
-    return page_chrome("LoRa SOS", body, on_back)
+    def ingest_rx(line: str) -> None:
+        """Called from handset_app when LORA RX arrives."""
+        parsed = _parse_lora_rx_line(line)
+        if not parsed:
+            return
+        peer, text = parsed
+        if not text:
+            return
+        threads = _load_lora_threads()
+        threads.setdefault(peer, []).append(
+            {
+                "dir": "in",
+                "text": text,
+                "at": datetime.now().isoformat(),
+                "read": False,
+            }
+        )
+        _save_lora_threads(threads)
+        if stack.currentWidget() is thread and state["peer"] == peer:
+            mark_read(peer)
+            refresh_thread()
+        else:
+            refresh_inbox()
+
+    def chrome_back() -> None:
+        if stack.currentWidget() is thread:
+            show_inbox()
+        elif new_form.isVisible():
+            cancel_new()
+        else:
+            on_back()
+
+    def on_hardware_back() -> bool:
+        if stack.currentWidget() is thread:
+            show_inbox()
+            return True
+        if new_form.isVisible():
+            cancel_new()
+            return True
+        return False
+
+    def refresh_lora() -> None:
+        if stack.currentWidget() is thread and state["peer"]:
+            mark_read(state["peer"])
+            refresh_thread()
+        refresh_inbox()
+
+    conv_list.itemActivated.connect(lambda _i: open_selected())
+    conv_list.itemClicked.connect(lambda _i: open_selected())
+    new_btn.clicked.connect(start_new)
+    new_open.clicked.connect(open_new)
+    new_cancel.clicked.connect(cancel_new)
+    send_btn.clicked.connect(do_send)
+    compose.returnPressed.connect(do_send)
+    sos_btn.clicked.connect(do_sos)
+
+    chrome = page_chrome("LoRa", root, chrome_back, scroll=False)
+    chrome.refresh_lora = refresh_lora  # type: ignore[attr-defined]
+    chrome.on_hardware_back = on_hardware_back  # type: ignore[attr-defined]
+    chrome.open_lora_thread = open_thread  # type: ignore[attr-defined]
+    chrome.ingest_lora_rx = ingest_rx  # type: ignore[attr-defined]
+    # Legacy no-op so old log.append callers don't crash
+    chrome.lora_log = None  # type: ignore[attr-defined]
+
+    refresh_inbox()
+    stack.setCurrentWidget(inbox)
+    return chrome
 
 
 def make_gps_page(modem, on_back, on_status, get_modem=None) -> QWidget:

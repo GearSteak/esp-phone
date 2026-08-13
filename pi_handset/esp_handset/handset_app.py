@@ -207,12 +207,46 @@ def build_app(bridge: Optional[EspBridge], modem: Optional[Sim7600]) -> PhoneShe
                 child.setText(number)
                 break
 
-    shell.register_page("contacts", pages.make_contacts_page(back, open_dial))
+    def open_sms_to(number: str) -> None:
+        shell.go("messages")
+        opener = getattr(sms_page, "open_sms_thread", None)
+        if callable(opener):
+            opener(number)
+
+    lora_page = pages.make_lora_page(bridge, back, status)
+    shell.register_page("lora", lora_page)
+
+    def open_lora_to(peer: str) -> None:
+        shell.go("lora")
+        opener = getattr(lora_page, "open_lora_thread", None)
+        if callable(opener):
+            opener(peer)
+
+    def open_email_to(addr: str) -> None:
+        shell.go("email")
+        # Prefill compose "To" if the email page exposes one
+        page = shell.pages.get("email")
+        if page is None:
+            return
+        for child in page.findChildren(QLineEdit):
+            ph = (child.placeholderText() or "").lower()
+            if "to" in ph or "email" in ph or not child.text():
+                child.setText(addr)
+                break
+
+    shell.register_page(
+        "contacts",
+        pages.make_contacts_page(
+            back,
+            open_dial,
+            open_sms=open_sms_to,
+            open_lora=open_lora_to,
+            open_email=open_email_to,
+        ),
+    )
     shell.register_page("call_log", pages.make_call_log_page(back))
     shell.register_page("camera", pages.make_camera_page(back, status))
     shell.register_page("gallery", pages.make_gallery_page(back, status))
-    lora_page = pages.make_lora_page(bridge, back, status)
-    shell.register_page("lora", lora_page)
     shell.register_page("gps", pages.make_gps_page(modem, back, status, get_modem=get_modem))
     shell.register_page("notes", pages.make_notes_page(back))
     shell.register_page("todos", pages.make_todos_page(back))
@@ -338,15 +372,19 @@ def build_app(bridge: Optional[EspBridge], modem: Optional[Sim7600]) -> PhoneShe
         if line.startswith("LORA RX") or line.startswith("ACK LORA") or line.startswith(
             "ERR LORA"
         ):
-            log = getattr(lora_page, "lora_log", None)
-            if log is not None:
-                log.append(line)
-            status(line[:48])
             if line.startswith("LORA RX"):
+                ingest = getattr(lora_page, "ingest_lora_rx", None)
+                if callable(ingest):
+                    ingest(line)
                 store.push_notif("LoRa", line[7:].strip()[:80], "lora")
                 ref = getattr(notifs_page, "refresh_notifs", None)
                 if callable(ref):
                     ref()
+            else:
+                refresh = getattr(lora_page, "refresh_lora", None)
+                if callable(refresh):
+                    refresh()
+            status(line[:48])
         elif line.startswith("STATUS") or line.startswith("READY"):
             if "steps=" in line:
                 try:
