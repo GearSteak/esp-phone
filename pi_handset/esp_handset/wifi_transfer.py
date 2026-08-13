@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
 from urllib.parse import quote, unquote, urlparse
 
-from PyQt5.QtCore import Qt, pyqtSignal, QObject, QTimer
+from PyQt5.QtCore import Qt, pyqtSignal, QObject
 from PyQt5.QtWidgets import (
     QHBoxLayout,
     QLabel,
@@ -679,30 +679,25 @@ def make_wifi_transfer_page(
         status.setText("Running modem doctor…")
         prep_btn.setEnabled(False)
 
-        holder: dict = {"ok": False, "msg": ""}
-
         def work() -> None:
-            holder["ok"], holder["msg"] = _refresh_modem_report()
+            ok, msg = _refresh_modem_report()
+            signals.prep_done.emit(ok, msg)
 
-        def after() -> None:
-            prep_btn.setEnabled(True)
-            if server_holder.get("httpd") is None:
-                start_server()
-            ip = _lan_ip()
-            url_lab.setText(f"http://{ip}:{UPLOAD_PORT}")
-            if holder["ok"] and _modem_report_path() is not None:
-                status.setText(
-                    f"Report ready · on PC open:\n"
-                    f"http://{ip}:{UPLOAD_PORT}/diag/modem.txt"
-                )
-            else:
-                status.setText(f"Doctor failed: {holder['msg']}")
+        threading.Thread(target=work, daemon=True).start()
 
-        def run_then_ui() -> None:
-            work()
-            QTimer.singleShot(0, after)
-
-        threading.Thread(target=run_then_ui, daemon=True).start()
+    def on_prep_done(ok: bool, msg: str) -> None:
+        prep_btn.setEnabled(True)
+        if server_holder.get("httpd") is None:
+            start_server()
+        ip = _lan_ip()
+        url_lab.setText(f"http://{ip}:{UPLOAD_PORT}")
+        if ok and _modem_report_path() is not None:
+            status.setText(
+                f"Report ready · on PC open:\n"
+                f"http://{ip}:{UPLOAD_PORT}/diag/modem.txt"
+            )
+        else:
+            status.setText(f"Doctor failed: {msg}")
 
     def on_got(msg: str) -> None:
         status.setText(f"Saved {msg}\nSend more or Stop")
@@ -716,6 +711,7 @@ def make_wifi_transfer_page(
     signals.got_file.connect(on_got)
     signals.failed.connect(on_fail)
     signals.activity.connect(on_activity)
+    signals.prep_done.connect(on_prep_done)
 
     for key, b in dest_btns.items():
         b.clicked.connect(lambda _=False, k=key: set_dest(k))
