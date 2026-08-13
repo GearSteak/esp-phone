@@ -41,8 +41,7 @@ def _usable(w: QWidget) -> bool:
         return False
     if w.focusPolicy() == Qt.NoFocus:
         return False
-    # OSK has its own stick navigation — never steal focus onto keycaps
-    # from page digi_nav (also avoids ghosts if OSK visibility glitches)
+    # Skip leftover OSK widgets if any remain in old layouts
     p: Optional[QWidget] = w
     while p is not None:
         if p.objectName() == "oskRoot":
@@ -192,12 +191,15 @@ def list_nudge(lst: QListWidget, delta: int) -> bool:
     return False
 
 
-def activate_focused(w: Optional[QWidget], open_osk) -> bool:
-    """Confirm on current widget. open_osk(widget) for text fields."""
+def activate_focused(w: Optional[QWidget], focus_text=None) -> bool:
+    """Confirm on current widget. Text fields → focus for CardKB / BT typing."""
     if w is None:
         return False
     if isinstance(w, (QLineEdit, QTextEdit, QPlainTextEdit)):
-        open_osk(w)
+        w.setFocus(Qt.OtherFocusReason)
+        ensure_visible(w)
+        if callable(focus_text):
+            focus_text(w)
         return True
     if isinstance(w, QListWidget):
         item = w.currentItem()
@@ -226,9 +228,9 @@ def activate_focused(w: Optional[QWidget], open_osk) -> bool:
     return False
 
 
-def activate_page(root: QWidget, open_osk) -> bool:
+def activate_page(root: QWidget, focus_text=None) -> bool:
     """Confirm the digi-highlighted control on a page (ignore stolen Qt focus)."""
-    return activate_focused(digi_current(root), open_osk)
+    return activate_focused(digi_current(root), focus_text)
 
 
 def ensure_page_focus(root: QWidget) -> None:

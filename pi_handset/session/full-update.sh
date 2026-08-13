@@ -12,7 +12,7 @@
 #    • git fetch + hard-reset main (re-clone if git corrupt)
 #    • apt packages (PyQt, uinput, GPIO, xdotool, spidev, …)
 #    • copies UI/scripts → /opt/esp-handset + /usr/local/bin
-#    • systemd: digi-buttons-inputd, esp-keyd (enable + start)
+#    • systemd: digi-buttons-inputd, esp-keyd, cardkb-inputd (enable + start)
 #    • udev + uinput + software mouse cursor conf
 #    • passwordless digivice-update / full-update / power for Settings
 #    • FIX SCREENS: kill broken HDMI hotplug, restore userspace ST7789 SPI,
@@ -424,11 +424,31 @@ Environment=ESP_HANDSET_PREFIX=$PREFIX
 WantedBy=multi-user.target
 EOF
 
+cat >/etc/systemd/system/cardkb-inputd.service <<EOF
+[Unit]
+Description=Digivice CardKB I2C → uinput
+After=multi-user.target
+
+[Service]
+Type=simple
+User=root
+ExecStart=/usr/bin/python3 $PREFIX/cardkb_inputd.py
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
 systemctl daemon-reload
 systemctl enable digi-buttons-inputd.service
 systemctl restart digi-buttons-inputd.service || true
 systemctl enable esp-keyd.service
 systemctl restart esp-keyd.service || true
+# CardKB (I2C) — enable; retries if unplugged
+systemctl enable cardkb-inputd.service 2>/dev/null || true
+systemctl restart cardkb-inputd.service || true
+systemctl disable t9-keypad-inputd.service hat-inputd.service 2>/dev/null || true
 
 if [[ -x /usr/local/bin/digivice-ensure-buttons ]]; then
   bash /usr/local/bin/digivice-ensure-buttons 2>&1 | tee -a "$LOG" || true

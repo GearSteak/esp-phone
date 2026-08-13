@@ -1,6 +1,7 @@
 # M5Stack CardKB on Digivice (Pi)
 
-Optional full QWERTY on I2C. Nav buttons stay on the hard pad ([`DIGI_BUTTONS.md`](DIGI_BUTTONS.md)).
+Full QWERTY on I2C. Nav buttons stay on the hard pad ([`DIGI_BUTTONS.md`](DIGI_BUTTONS.md)).
+Bluetooth / USB keyboards also type into Digivice text fields (OSK removed).
 
 ## Wiring (Pi 40-pin)
 
@@ -15,10 +16,11 @@ Same Grove colors as Heltec CardKB. Do **not** share these pins with anything el
 
 ## Enable on the Pi
 
+`full-update` / `install-handset` enables `cardkb-inputd` by default.
+
 ```bash
 # I2C must be on
 sudo raspi-config nonint do_i2c 0
-# or: enable I2C in raspi-config → Interface Options
 
 # See the keyboard at 0x5F
 sudo i2cdetect -y 1
@@ -31,7 +33,8 @@ Service runs `cardkb_inputd.py` → uinput (`Digivice-CardKB`).
 
 ## Digivice use
 
-- Letters / digits / Enter / Backspace for SMS, notes, search, etc.
+- Confirm on a text field (or start typing) to focus it.
+- Letters / digits / Enter / Backspace from CardKB or a paired Bluetooth keyboard.
 - Arrow codes from CardKB also work for nav if you prefer keys over the pad.
 
-Leave `cardkb-inputd` **disabled** if CardKB is not plugged in (avoids I2C retry spam).
+To disable without unplugging: `sudo systemctl disable --now cardkb-inputd`.

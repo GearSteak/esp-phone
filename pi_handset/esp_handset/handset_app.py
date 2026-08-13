@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """ESP Digivice handset — Waveshare 2\" LCD (240×320) + hard-button nav.
 
-Cellular / SMS / GPS: SIM7600G-H HAT (AT over USB).
-Nav: Up/Down/Left/Right/Confirm/Back/Home (digi-buttons-inputd). Typing: OSK.
+Cellular / SMS / GPS: SIM7600G-H HAT (AT over USB or GPIO UART).
+Nav: Up/Down/Left/Right/Confirm/Back/Home (digi-buttons-inputd).
+Typing: CardKB (I2C) and Bluetooth / USB keyboards into focused fields.
 LoRa: Heltec USB CDC (optional notify TFT). Exit to Linux Desktop for emulators/apt.
 """
 
@@ -18,16 +19,74 @@ from PyQt5.QtCore import QObject, pyqtSignal, QEvent, Qt
 from PyQt5.QtWidgets import QApplication, QLabel, QMessageBox, QLineEdit, QTextEdit, QPlainTextEdit
 
 
-class _KioskKeyFilter(QObject):
-    """Route nav keys to Digivice when focus is not in a text field.
+_TEXT_TYPES = (QLineEdit, QTextEdit, QPlainTextEdit)
 
-    USB keyboards often land focus on labels/status chrome under X11/Wayland.
-    Exit keys always reach the shell so Digivice can be left.
+
+def _is_typing_key(event) -> bool:
+    key = event.key()
+    if key in (
+        Qt.Key_Backspace,
+        Qt.Key_Delete,
+        Qt.Key_Tab,
+        Qt.Key_Left,
+        Qt.Key_Right,
+        Qt.Key_Home,
+        Qt.Key_End,
+    ):
+        # Left/Right/Home as typing only when already in a field (handled elsewhere)
+        return key in (Qt.Key_Backspace, Qt.Key_Delete, Qt.Key_Tab)
+    if key in (
+        Qt.Key_Shift,
+        Qt.Key_Control,
+        Qt.Key_Alt,
+        Qt.Key_Meta,
+        Qt.Key_AltGr,
+        Qt.Key_CapsLock,
+        Qt.Key_NumLock,
+        Qt.Key_ScrollLock,
+    ):
+        return False
+    text = event.text() or ""
+    return bool(text) and text.isprintable()
+
+
+class _KioskKeyFilter(QObject):
+    """Route nav keys to Digivice; let CardKB/BT type into text fields.
+
+    When a typing key arrives and digi-highlight is on a text field (or one exists
+    on the page), focus that field so Bluetooth / CardKB input lands there.
     """
 
     def __init__(self, shell: object):
         super().__init__(shell)
         self._shell = shell
+
+    def _text_target(self):
+        w = QApplication.focusWidget()
+        if isinstance(w, _TEXT_TYPES):
+            return w
+        page = None
+        try:
+            key = self._shell._nav[-1] if getattr(self._shell, "_nav", None) else None
+            pages = getattr(self._shell, "pages", {}) or {}
+            if key and key in pages:
+                page = pages[key]
+        except Exception:
+            page = None
+        if page is None:
+            return None
+        try:
+            from esp_handset import digi_nav
+
+            cur = digi_nav.digi_current(page)
+            if isinstance(cur, _TEXT_TYPES):
+                return cur
+            for child in page.findChildren(_TEXT_TYPES):
+                if child.isVisible() and child.isEnabled():
+                    return child
+        except Exception:
+            pass
+        return None
 
     def eventFilter(self, obj, event):  # noqa: N802
         if event.type() != QEvent.KeyPress:
@@ -47,12 +106,23 @@ class _KioskKeyFilter(QObject):
             self._shell.keyPressEvent(event)
             return True
         w = QApplication.focusWidget()
-        if isinstance(w, (QLineEdit, QTextEdit, QPlainTextEdit)):
-            # Triple-Back (Esc) still leaves Digivice
-            if key == Qt.Key_Escape:
+        if isinstance(w, _TEXT_TYPES):
+            # Digivice Home / Back still leave the field
+            if key in (Qt.Key_Escape, Qt.Key_Home):
                 self._shell.keyPressEvent(event)
                 return True
+            # Prefer typing: Left/Right move caret inside the field
             return False
+
+        # Not in a text field: CardKB/BT printable → focus a text field and deliver
+        if _is_typing_key(event):
+            target = self._text_target()
+            if target is not None:
+                target.setFocus(Qt.OtherFocusReason)
+                QApplication.sendEvent(target, event)
+                return True
+            return False
+
         nav = {
             Qt.Key_Left,
             Qt.Key_Right,
@@ -62,7 +132,6 @@ class _KioskKeyFilter(QObject):
             Qt.Key_Enter,
             Qt.Key_Escape,
             Qt.Key_Home,
-            Qt.Key_F2,
         }
         if key not in nav:
             return False

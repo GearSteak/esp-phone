@@ -359,7 +359,10 @@ if [[ -x /usr/local/bin/digivice-hdmi-hotplug ]]; then
 elif [[ -f "$ROOT/session/hdmi-hotplug.sh" ]]; then
   bash "$ROOT/session/hdmi-hotplug.sh" --disable || true
 fi
-systemctl disable t9-keypad-inputd.service cardkb-inputd.service hat-inputd.service 2>/dev/null || true
+systemctl disable t9-keypad-inputd.service hat-inputd.service 2>/dev/null || true
+# CardKB on Digivice (I2C) — enable; retries quietly if unplugged
+systemctl enable cardkb-inputd.service 2>/dev/null || true
+systemctl restart cardkb-inputd.service || true
 systemctl enable esp-keyd.service
 systemctl restart esp-keyd.service || true
 systemctl enable ModemManager.service || true

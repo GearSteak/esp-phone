@@ -3221,7 +3221,7 @@ def make_help_page(on_back) -> QWidget:
         "‹ › cycle (wraps) · grow/shrink\n"
         "Confirm / Back / Home buttons\n"
         "D-pad arrows move focus\n"
-        "Type with on-screen keyboard\n"
+        "Type with CardKB or Bluetooth keyboard\n"
         "Back → previous screen\n"
         "Back×3 on Digivice home → desktop\n"
         "Home → Digivice home (never desktop)\n"
@@ -3343,8 +3343,6 @@ def make_network_page(
             msg = str(e).strip() or "reconnect failed"
             lab.setText(msg + "\n\n" + Sim7600.diagnose())
             on_status("modem fail")
-
-    from pathlib import Path
 
     btn.clicked.connect(refresh)
     scan.clicked.connect(do_scan)

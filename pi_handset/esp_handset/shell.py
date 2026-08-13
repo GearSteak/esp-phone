@@ -11,11 +11,12 @@ from PyQt5.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLabel,
-    QLineEdit,
     QListWidget,
     QMainWindow,
+    QPlainTextEdit,
     QStackedWidget,
     QTextEdit,
+    QLineEdit,
     QVBoxLayout,
     QWidget,
 )
@@ -23,7 +24,6 @@ from PyQt5.QtWidgets import (
 from esp_handset import digi_nav
 from esp_handset import theme as handset_theme
 from esp_handset.digivice_home import DigiviceHome
-from esp_handset.osk import OnScreenKeyboard
 from esp_handset.radial_menu import RadialMenu
 from esp_handset.shell_data import (
     CALLS_APPS,
@@ -71,7 +71,6 @@ class PhoneShell(QMainWindow):
         self._nav: List[str] = ["home"]
         self._radials: Dict[str, RadialMenu] = {}
         self._home: Optional[DigiviceHome] = None
-        self._osk_target: Optional[QWidget] = None
         self.on_linux_desktop: Optional[Callable[[], None]] = None
         self.on_linux_desktop_now: Optional[Callable[[], None]] = None
 
@@ -106,12 +105,6 @@ class PhoneShell(QMainWindow):
 
         self.stack = QStackedWidget()
         outer.addWidget(self.stack, 1)
-
-        self._osk = OnScreenKeyboard(root)
-        self._osk.hide()
-        self._osk.commit.connect(self._osk_commit)
-        self._osk.closed.connect(lambda: None)
-        outer.addWidget(self._osk)
 
         self.setCentralWidget(root)
         self._toasts = ToastHost(root)
@@ -270,7 +263,6 @@ class PhoneShell(QMainWindow):
             if not self._nav or self._nav[-1] != key:
                 self._nav.append(key)
         self.stack.setCurrentWidget(self.pages[key])
-        self.hide_osk()
         if key == "home" and self._home:
             self._home.setFocus(Qt.OtherFocusReason)
         elif key in self._radials:
@@ -283,7 +275,6 @@ class PhoneShell(QMainWindow):
             digi_nav.ensure_page_focus(self.pages[key])
 
     def back(self) -> None:
-        self.hide_osk()
         # App pages can consume Back (e.g. SMS thread → inbox)
         page_key = self._nav[-1] if self._nav else "home"
         page = self.pages.get(page_key)
@@ -311,7 +302,6 @@ class PhoneShell(QMainWindow):
             self.go("home", replace=True)
 
     def home(self) -> None:
-        self.hide_osk()
         self.go("home", replace=True)
 
     def _tick_clock(self) -> None:
@@ -374,66 +364,16 @@ class PhoneShell(QMainWindow):
                 lab.setText(f"“{key}” not wired.")
             self.go("stub")
 
-    def show_osk_for(self, widget: QWidget) -> None:
-        self._osk_target = widget
-        text = ""
-        if isinstance(widget, QLineEdit):
-            text = widget.text()
-        elif isinstance(widget, QTextEdit):
-            text = widget.toPlainText()
-        self._osk.set_prefix_from_text(text)
-        self._osk.show()
-        self._osk.raise_()
-
-    def hide_osk(self) -> None:
-        self._osk.hide()
-        self._osk_target = None
-
-    def toggle_osk(self) -> None:
-        if self._osk.isVisible():
-            self.hide_osk()
+    def focus_text_field(self, widget: QWidget) -> None:
+        """Confirm on a text field → focus for CardKB / Bluetooth typing."""
+        if widget is None:
             return
-        w = self.focusWidget()
-        if isinstance(w, (QLineEdit, QTextEdit)):
-            self.show_osk_for(w)
-        else:
-            page = self.stack.currentWidget()
-            if page:
-                for child in page.findChildren((QLineEdit, QTextEdit)):
-                    child.setFocus()
-                    self.show_osk_for(child)
-                    return
-
-    def _osk_commit(self, ch: str) -> None:
-        w = self._osk_target
-        if w is None:
-            return
-        if isinstance(w, QLineEdit):
-            if ch == "\b":
-                w.backspace()
-            elif ch == "\n":
-                self.hide_osk()
-            else:
-                w.insert(ch)
-            self._osk.set_prefix_from_text(w.text())
-        elif isinstance(w, QTextEdit):
-            c = w.textCursor()
-            if ch == "\b":
-                c.deletePreviousChar()
-            elif ch == "\n":
-                c.insertText("\n")
-            else:
-                c.insertText(ch)
-            w.setTextCursor(c)
-            self._osk.set_prefix_from_text(w.toPlainText(), c.position())
+        widget.setFocus(Qt.OtherFocusReason)
+        digi_nav.ensure_visible(widget)
 
     def keyPressEvent(self, event) -> None:  # noqa: N802
         key = event.key()
-        if key == Qt.Key_F2:
-            self.toggle_osk()
-            event.accept()
-            return
-        # Desktop escapes (must work with grabKeyboard + hard buttons)
+        # Desktop escapes (must work with hard buttons)
         if key in (Qt.Key_F12, Qt.Key_F10):
             self._request_desktop()
             event.accept()
@@ -464,12 +404,6 @@ class PhoneShell(QMainWindow):
             if now - self._esc_last_ms > 1500:
                 self._esc_exits = 0
             self._esc_last_ms = now
-
-            if self._osk.isVisible():
-                self._esc_exits = 0
-                self.hide_osk()
-                event.accept()
-                return
 
             on_home = (self._nav[-1] if self._nav else "home") == "home" and len(
                 self._nav
@@ -502,37 +436,6 @@ class PhoneShell(QMainWindow):
             self.home()
             event.accept()
             return
-        if self._osk.isVisible():
-            mapping = {
-                Qt.Key_Left: "left",
-                Qt.Key_Right: "right",
-                Qt.Key_Up: "up",
-                Qt.Key_Down: "down",
-                Qt.Key_Return: "ok",
-                Qt.Key_Enter: "ok",
-                Qt.Key_Escape: "close",
-            }
-            if key == Qt.Key_Tab:
-                self._osk.nav("pred")
-                event.accept()
-                return
-            name = mapping.get(key)
-            if name and self._osk.nav(name):
-                event.accept()
-                return
-            if key == Qt.Key_Escape:
-                self.hide_osk()
-                event.accept()
-                return
-
-        # Escape already handled above
-
-        if key in (Qt.Key_Return, Qt.Key_Enter) and not self._osk.isVisible():
-            w = self.focusWidget()
-            if isinstance(w, (QLineEdit, QTextEdit)):
-                self.show_osk_for(w)
-                event.accept()
-                return
 
         page_key = self._nav[-1] if self._nav else "home"
 
@@ -580,7 +483,7 @@ class PhoneShell(QMainWindow):
                 radial.activate()
                 event.accept()
                 return
-            # Do not swallow letters / other keys (USB keyboard typing)
+            # Do not swallow letters / other keys (USB/BT keyboard typing)
             super().keyPressEvent(event)
             return
 
@@ -631,11 +534,11 @@ class PhoneShell(QMainWindow):
                             return
                     except Exception:
                         pass
-                if digi_nav.activate_page(page, self.show_osk_for):
+                if digi_nav.activate_page(page, self.focus_text_field):
                     event.accept()
                     return
                 digi_nav.ensure_page_focus(page)
-                if digi_nav.activate_page(page, self.show_osk_for):
+                if digi_nav.activate_page(page, self.focus_text_field):
                     event.accept()
                     return
 
