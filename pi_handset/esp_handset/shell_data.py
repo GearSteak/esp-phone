@@ -29,7 +29,7 @@ HOME_APPS: List[AppEntry] = [
 ]
 
 CALLS_APPS = [
-    AppEntry("phone", "Phone", "Dial · call log", "☎"),
+    AppEntry("phone", "Phone", "T9 dial pad", "☎"),
     AppEntry("contacts", "Contacts", "", "☺"),
 ]
 

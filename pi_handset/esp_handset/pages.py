@@ -13,6 +13,7 @@ from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QPixmap, QTextCursor
 from PyQt5.QtWidgets import (
     QFrame,
+    QGridLayout,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -20,6 +21,7 @@ from PyQt5.QtWidgets import (
     QMessageBox,
     QPushButton,
     QScrollArea,
+    QSizePolicy,
     QTextEdit,
     QVBoxLayout,
     QWidget,
@@ -121,31 +123,52 @@ def stub_page(title: str, blurb: str, on_back: Callable[[], None]) -> QWidget:
 def make_phone_page(
     on_back, on_status, on_call_log: Optional[Callable[[], None]] = None
 ) -> QWidget:
+    """Classic T9 dial pad: big typed-number display + 3×4 keypad."""
     body = QWidget()
     lay = QVBoxLayout(body)
-    dial = QLineEdit()
-    dial.setPlaceholderText("Number")
-    dial.setStyleSheet("font-size: 14px; padding: 6px;")
-    lay.addWidget(dial)
-    row = QHBoxLayout()
-    call = QPushButton("Call")
-    end = QPushButton("End")
-    row.addWidget(call)
-    row.addWidget(end)
-    lay.addLayout(row)
-    if on_call_log:
-        log_btn = QPushButton("Call log")
-        log_btn.clicked.connect(on_call_log)
-        lay.addWidget(log_btn)
-    tip = QLabel("SIP · Confirm OSK · Call log below")
-    tip.setWordWrap(True)
-    tip.setStyleSheet("color: #9ab; font-size: 9px;")
-    lay.addWidget(tip)
-    lay.addStretch(1)
+    lay.setContentsMargins(2, 2, 2, 2)
+    lay.setSpacing(4)
 
-    def do_call():
+    dial = QLineEdit()
+    dial.setObjectName("dialDisplay")
+    dial.setReadOnly(True)
+    dial.setAlignment(Qt.AlignCenter)
+    dial.setPlaceholderText("Enter number")
+    dial.setMinimumHeight(40)
+    dial.setStyleSheet(
+        "font-size: 22px; font-weight: 700; font-family: monospace;"
+        "padding: 8px 4px; letter-spacing: 1px;"
+    )
+    lay.addWidget(dial)
+
+    # T9 labels (classic phone letters under the digit)
+    keys = [
+        ("1", ""),
+        ("2", "ABC"),
+        ("3", "DEF"),
+        ("4", "GHI"),
+        ("5", "JKL"),
+        ("6", "MNO"),
+        ("7", "PQRS"),
+        ("8", "TUV"),
+        ("9", "WXYZ"),
+        ("*", ""),
+        ("0", "+"),
+        ("#", ""),
+    ]
+
+    def append_digit(ch: str) -> None:
+        # Long-press style: 0 key can also add + via its letter row — tap 0 → 0
+        dial.setText(dial.text() + ch)
+        dial.setCursorPosition(len(dial.text()))
+
+    def backspace() -> None:
+        dial.setText(dial.text()[:-1])
+
+    def do_call() -> None:
         num = dial.text().strip()
         if not num:
+            on_status("Enter a number")
             return
         os.system(f"linphonecsh dial {num} >/dev/null 2>&1 &")
         log = _load_json(CALL_LOG, [])
@@ -153,11 +176,66 @@ def make_phone_page(
         _save_json(CALL_LOG, log[:100])
         on_status(f"Dialing {num}")
 
+    def do_end() -> None:
+        os.system("linphonecsh generic 'terminate' >/dev/null 2>&1 &")
+        on_status("Call ended")
+
+    grid = QGridLayout()
+    grid.setContentsMargins(0, 0, 0, 0)
+    grid.setHorizontalSpacing(3)
+    grid.setVerticalSpacing(3)
+    for i, (digit, letters) in enumerate(keys):
+        label = digit if not letters else f"{digit}\n{letters}"
+        btn = QPushButton(label)
+        btn.setMinimumHeight(36)
+        btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        btn.setStyleSheet(
+            "font-size: 14px; font-weight: 800; padding: 2px;"
+            "line-height: 1.05;"
+        )
+        # 0 → digit; hold-style + available as separate action below
+        btn.clicked.connect(lambda _=False, c=digit: append_digit(c))
+        grid.addWidget(btn, i // 3, i % 3)
+    lay.addLayout(grid, 1)
+
+    actions = QHBoxLayout()
+    actions.setSpacing(3)
+    del_btn = QPushButton("⌫")
+    del_btn.setMinimumHeight(32)
+    del_btn.setToolTip("Delete")
+    del_btn.clicked.connect(backspace)
+    plus_btn = QPushButton("+")
+    plus_btn.setMinimumHeight(32)
+    plus_btn.setFixedWidth(36)
+    plus_btn.clicked.connect(lambda: append_digit("+"))
+    call = QPushButton("Call")
+    call.setMinimumHeight(32)
+    call.setStyleSheet("font-weight:800; background:#1a7a3a;")
     call.clicked.connect(do_call)
-    end.clicked.connect(
-        lambda: os.system("linphonecsh generic 'terminate' >/dev/null 2>&1 &")
-    )
-    return page_chrome("Phone", body, on_back)
+    end = QPushButton("End")
+    end.setMinimumHeight(32)
+    end.setStyleSheet("font-weight:800; background:#8a2020;")
+    end.clicked.connect(do_end)
+    actions.addWidget(del_btn)
+    actions.addWidget(plus_btn)
+    actions.addWidget(call, 1)
+    actions.addWidget(end, 1)
+    lay.addLayout(actions)
+
+    if on_call_log:
+        log_btn = QPushButton("Call log")
+        log_btn.setMinimumHeight(26)
+        log_btn.clicked.connect(on_call_log)
+        lay.addWidget(log_btn)
+
+    page = page_chrome("Phone", body, on_back, scroll=False)
+
+    def set_dial_number(number: str) -> None:
+        dial.setText(str(number or "").strip())
+        dial.setCursorPosition(len(dial.text()))
+
+    page.set_dial_number = set_dial_number  # type: ignore[attr-defined]
+    return page
 
 
 def make_sms_page(modem, on_back, on_status) -> QWidget:

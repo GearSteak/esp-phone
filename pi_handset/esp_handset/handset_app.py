@@ -190,9 +190,21 @@ def build_app(bridge: Optional[EspBridge], modem: Optional[Sim7600]) -> PhoneShe
 
     def open_dial(number: str) -> None:
         shell.go("phone")
-        for child in shell.pages["phone"].findChildren(QLineEdit):
-            child.setText(number)
-            break
+        page = shell.pages.get("phone")
+        if page is None:
+            return
+        setter = getattr(page, "set_dial_number", None)
+        if callable(setter):
+            setter(number)
+            return
+        for child in page.findChildren(QLineEdit):
+            if child.objectName() == "dialDisplay":
+                child.setText(number)
+                break
+        else:
+            for child in page.findChildren(QLineEdit):
+                child.setText(number)
+                break
 
     shell.register_page("contacts", pages.make_contacts_page(back, open_dial))
     shell.register_page("call_log", pages.make_call_log_page(back))
@@ -309,8 +321,6 @@ def build_app(bridge: Optional[EspBridge], modem: Optional[Sim7600]) -> PhoneShe
     shell.register_page("stub", pages.stub_page("App", "Unknown app key.", back))
 
     # Bridge events
-    signals = BridgeSignals()
-
     def on_line(_kind: str, line: str) -> None:
         signals.line.emit(line)
 
@@ -374,10 +384,12 @@ def build_app(bridge: Optional[EspBridge], modem: Optional[Sim7600]) -> PhoneShe
     else:
         status("No ESP · modem OK to test")
 
-    if modem:
-        modem.on_sms(lambda n, t: signals.sms.emit(n, t))
+    if get_modem():
+        m0 = get_modem()
+        assert m0 is not None
+        m0.on_sms(lambda n, t: signals.sms.emit(n, t))
         try:
-            status(modem.signal() or "SIM7600")
+            status(m0.signal() or "SIM7600")
         except Exception:
             status("SIM7600")
 
@@ -432,7 +444,9 @@ def main() -> int:
         bridge = None
     try:
         modem = Sim7600()
-        modem.open()
+        # Modem USB often enumerates 10–25s after boot — wait & probe AT
+        modem.open(retries=12, retry_s=2.5)
+        print(f"[handset] SIM7600 on {modem.port}", flush=True)
     except Exception as e:
         print(f"[handset] SIM7600 offline ({e})", flush=True)
         modem = None
