@@ -98,11 +98,14 @@ apt-get install -y \
   alsa-utils \
   2>&1 | tee -a "$LOG" | tail -n 20
 
-# Game Boy / GBC (optional — Games → Game Boy)
-log "apt: Game Boy emulator (best-effort)…"
-apt-get install -y retroarch libretro-gambatte 2>&1 | tee -a "$LOG" | tail -n 10 \
-  || apt-get install -y mgba-sdl 2>&1 | tee -a "$LOG" | tail -n 10 \
-  || log "WARN: no GB emulator package — install later: sudo apt install retroarch libretro-gambatte"
+# Game Boy / GBC — in-UI PyBoy (Digivice keeps SPI; RetroArch handoff stays disabled)
+log "pip: PyBoy (in-UI Game Boy)…"
+python3 -m pip install --break-system-packages -q 'pyboy' 'pillow' 'numpy' \
+  2>&1 | tee -a "$LOG" | tail -n 15 \
+  || log "WARN: pip pyboy failed — Games→GB Play needs: sudo pip3 install --break-system-packages pyboy"
+# Optional desktop cores (not used by Digivice Play)
+apt-get install -y retroarch libretro-gambatte 2>&1 | tee -a "$LOG" | tail -n 5 \
+  || true
 
 # --- repo ---
 find_repo() {

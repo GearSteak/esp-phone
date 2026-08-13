@@ -89,7 +89,24 @@ class _KioskKeyFilter(QObject):
         return None
 
     def eventFilter(self, obj, event):  # noqa: N802
-        if event.type() != QEvent.KeyPress:
+        et = event.type()
+        if et == QEvent.KeyRelease:
+            try:
+                nav_key = self._shell._nav[-1] if getattr(self._shell, "_nav", None) else ""
+                if nav_key == "gb":
+                    page = (getattr(self._shell, "pages", {}) or {}).get("gb")
+                    board = getattr(page, "gb_board", None) if page else None
+                    if (
+                        board is not None
+                        and board.isVisible()
+                        and getattr(board, "playing", False)
+                    ):
+                        board.keyReleaseEvent(event)
+                        return True
+            except Exception:
+                pass
+            return False
+        if et != QEvent.KeyPress:
             return False
         key = event.key()
         # Exit keys always — even if focus is weird
@@ -114,6 +131,16 @@ class _KioskKeyFilter(QObject):
             # Prefer typing: Left/Right move caret inside the field
             return False
 
+        # In-UI Game Boy / arcade: let the board keep focus for pad keys
+        if w is not None and (
+            getattr(w, "digi_gamepad", False)
+            or (w.__class__.__module__ or "").endswith("games_ui")
+        ):
+            if key in (Qt.Key_Escape, Qt.Key_Home):
+                self._shell.keyPressEvent(event)
+                return True
+            return False
+
         # Not in a text field: CardKB/BT printable → focus a text field and deliver
         if _is_typing_key(event):
             target = self._text_target()
@@ -123,7 +150,7 @@ class _KioskKeyFilter(QObject):
                 return True
             return False
 
-        nav = {
+        pad = {
             Qt.Key_Left,
             Qt.Key_Right,
             Qt.Key_Up,
@@ -132,11 +159,46 @@ class _KioskKeyFilter(QObject):
             Qt.Key_Enter,
             Qt.Key_Escape,
             Qt.Key_Home,
+            Qt.Key_Tab,
+            Qt.Key_X,
+            Qt.Key_Z,
+            Qt.Key_S,
+            Qt.Key_Space,
+            Qt.Key_1,
+            Qt.Key_2,
         }
-        if key not in nav:
+        # When GB page is playing, always route pad-ish keys via shell → board
+        try:
+            nav_key = self._shell._nav[-1] if getattr(self._shell, "_nav", None) else ""
+            page = (getattr(self._shell, "pages", {}) or {}).get(nav_key)
+            board = getattr(page, "gb_board", None) if page else None
+            if (
+                board is not None
+                and board.isVisible()
+                and getattr(board, "playing", False)
+                and key in pad
+            ):
+                if key == Qt.Key_Escape:
+                    self._shell.keyPressEvent(event)
+                    return True
+                self._shell.keyPressEvent(event)
+                return True
+        except Exception:
+            pass
+
+        if key not in {
+            Qt.Key_Left,
+            Qt.Key_Right,
+            Qt.Key_Up,
+            Qt.Key_Down,
+            Qt.Key_Return,
+            Qt.Key_Enter,
+            Qt.Key_Escape,
+            Qt.Key_Home,
+        }:
             return False
         # Games keep their own handlers via focused game widget
-        if w is not None and w.__class__.__module__.endswith("games_ui"):
+        if w is not None and (w.__class__.__module__ or "").endswith("games_ui"):
             return False
         self._shell.keyPressEvent(event)
         return True

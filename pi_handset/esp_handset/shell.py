@@ -44,6 +44,8 @@ from esp_handset.toasts import ToastHost
 _GAME_PAGES = {e.key for e in GAMES_APPS}
 # Live boards (timers + own keys) — not button-driven solitaire/uno
 _ARCADE_PAGES = {"snake", "pong", "tetris"}
+# In-UI GB (PyBoy) also eats pad keys while playing
+_GAMEPAD_PAGES = _ARCADE_PAGES | {"gb"}
 
 __all__ = [
     "PhoneShell",
@@ -137,7 +139,7 @@ class PhoneShell(QMainWindow):
             self._home.setFocus(Qt.OtherFocusReason)
         elif key in self._radials:
             self._radials[key].setFocus(Qt.OtherFocusReason)
-        elif key in _ARCADE_PAGES and key in self.pages:
+        elif key in _GAMEPAD_PAGES and key in self.pages:
             pass  # board focuses itself
         elif key in self.pages:
             digi_nav.ensure_page_focus(self.pages[key])
@@ -267,7 +269,7 @@ class PhoneShell(QMainWindow):
             self._home.setFocus(Qt.OtherFocusReason)
         elif key in self._radials:
             self._radials[key].setFocus(Qt.OtherFocusReason)
-        elif key in _ARCADE_PAGES:
+        elif key in _GAMEPAD_PAGES:
             # Game boards take focus themselves on showEvent; don't land on Back chrome
             pass
         else:
@@ -294,7 +296,7 @@ class PhoneShell(QMainWindow):
                 self._home.setFocus(Qt.OtherFocusReason)
             elif key in self._radials:
                 self._radials[key].setFocus(Qt.OtherFocusReason)
-            elif key in _ARCADE_PAGES:
+            elif key in _GAMEPAD_PAGES:
                 pass
             else:
                 digi_nav.ensure_page_focus(self.pages[key])
@@ -489,8 +491,20 @@ class PhoneShell(QMainWindow):
 
         page = self.pages.get(page_key)
         if page is not None and page_key not in self._radials and page_key != "home":
-            if page_key in _ARCADE_PAGES:
-                # Route arrows / Space to the living game board under the page
+            if page_key in _GAMEPAD_PAGES:
+                # Route pad to living game / GB board
+                board = getattr(page, "gb_board", None)
+                if (
+                    board is not None
+                    and board.isVisible()
+                    and getattr(board, "playing", False)
+                    and hasattr(board, "keyPressEvent")
+                ):
+                    board.keyPressEvent(event)
+                    if not board.hasFocus():
+                        board.setFocus(Qt.OtherFocusReason)
+                    event.accept()
+                    return
                 for w in page.findChildren(QWidget):
                     mod = getattr(w.__class__, "__module__", "") or ""
                     if mod.endswith("games_ui") and hasattr(w, "keyPressEvent"):
@@ -499,8 +513,9 @@ class PhoneShell(QMainWindow):
                             w.setFocus(Qt.OtherFocusReason)
                         event.accept()
                         return
-                super().keyPressEvent(event)
-                return
+                if page_key in _ARCADE_PAGES:
+                    super().keyPressEvent(event)
+                    return
 
             cur = digi_nav.digi_current(page)
             if key in (Qt.Key_Left, Qt.Key_Right):
@@ -543,3 +558,18 @@ class PhoneShell(QMainWindow):
                     return
 
         super().keyPressEvent(event)
+
+    def keyReleaseEvent(self, event) -> None:  # noqa: N802
+        page_key = self._nav[-1] if self._nav else "home"
+        if page_key == "gb":
+            page = self.pages.get("gb")
+            board = getattr(page, "gb_board", None) if page else None
+            if (
+                board is not None
+                and board.isVisible()
+                and getattr(board, "playing", False)
+            ):
+                board.keyReleaseEvent(event)
+                event.accept()
+                return
+        super().keyReleaseEvent(event)
