@@ -201,6 +201,7 @@ class _UploadSignals(QObject):
     got_file = pyqtSignal(str)
     failed = pyqtSignal(str)
     activity = pyqtSignal(str)
+    prep_done = pyqtSignal(bool, str)
 
 
 def _parse_multipart(content_type: str, body: bytes):
@@ -678,32 +679,27 @@ def make_wifi_transfer_page(
         status.setText("Running modem doctor…")
         prep_btn.setEnabled(False)
 
+        holder: dict = {"ok": False, "msg": ""}
+
         def work() -> None:
-            ok, msg = _refresh_modem_report()
-            signals.activity.emit(
-                f"Modem report: {msg}" if ok else f"Doctor failed: {msg}"
-            )
+            holder["ok"], holder["msg"] = _refresh_modem_report()
 
         def after() -> None:
             prep_btn.setEnabled(True)
             if server_holder.get("httpd") is None:
                 start_server()
-            else:
-                ip = _lan_ip()
-                url_lab.setText(f"http://{ip}:{UPLOAD_PORT}")
-            p = _modem_report_path()
-            if p is not None:
-                ip = _lan_ip()
+            ip = _lan_ip()
+            url_lab.setText(f"http://{ip}:{UPLOAD_PORT}")
+            if holder["ok"] and _modem_report_path() is not None:
                 status.setText(
                     f"Report ready · on PC open:\n"
                     f"http://{ip}:{UPLOAD_PORT}/diag/modem.txt"
                 )
-            # activity already updated status via signal if fail/ok mid-flight
+            else:
+                status.setText(f"Doctor failed: {holder['msg']}")
 
         def run_then_ui() -> None:
             work()
-            from PyQt5.QtCore import QTimer
-
             QTimer.singleShot(0, after)
 
         threading.Thread(target=run_then_ui, daemon=True).start()
