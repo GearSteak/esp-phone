@@ -7,12 +7,13 @@ import mimetypes
 import socket
 import subprocess
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
 from urllib.parse import quote, unquote, urlparse
 
-from PyQt5.QtCore import Qt, pyqtSignal, QObject
+from PyQt5.QtCore import Qt, pyqtSignal, QObject, QTimer
 from PyQt5.QtWidgets import (
     QHBoxLayout,
     QLabel,
@@ -68,6 +69,50 @@ _FILES_OK = (
 )
 
 _IMG_EXT = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif"}
+
+MODEM_REPORT = DATA / "modem-doctor.txt"
+MODEM_REPORT_TMP = Path("/tmp/digivice-modem-doctor.txt")
+
+
+def _modem_report_path() -> Optional[Path]:
+    for p in (MODEM_REPORT, MODEM_REPORT_TMP, Path.home() / "esp-phone" / "modem-doctor-LATEST.txt"):
+        try:
+            if p.is_file() and p.stat().st_size > 0:
+                return p
+        except OSError:
+            continue
+    return None
+
+
+def _refresh_modem_report() -> Tuple[bool, str]:
+    """Run digivice-modem-doctor if available; return (ok, message)."""
+    cmds = (
+        ["digivice-modem-doctor"],
+        ["sudo", "-n", "digivice-modem-doctor"],
+        ["bash", "/opt/esp-handset/session/digivice-modem-doctor.sh"],
+    )
+    last = "doctor not installed"
+    for cmd in cmds:
+        try:
+            r = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=90,
+                check=False,
+            )
+            if r.returncode == 0 or _modem_report_path() is not None:
+                p = _modem_report_path()
+                return True, f"Report ready ({p.name if p else 'ok'})"
+            last = (r.stderr or r.stdout or last).strip()[:80] or last
+        except FileNotFoundError:
+            continue
+        except Exception as e:
+            last = str(e)[:80]
+    p = _modem_report_path()
+    if p is not None:
+        return True, f"Using existing {p.name}"
+    return False, last
 
 
 def _lan_ip() -> str:
@@ -242,6 +287,9 @@ def _make_handler(get_dest: Callable[[], str], signals: _UploadSignals):
                     return
                 self._serve_file(parts[0], parts[1], inline=True)
                 return
+            if path in ("/diag/modem", "/diag/modem.txt", "/modem-doctor.txt"):
+                self._serve_modem_report(download=path.endswith(".txt"))
+                return
             self.send_error(404)
 
         def _html(self, title: str, inner: str) -> None:
@@ -271,10 +319,28 @@ def _make_handler(get_dest: Callable[[], str], signals: _UploadSignals):
                     f'<a class="btn" style="margin-top:8px;display:block;" href="/browse/{key}">'
                     f"Get {html.escape(label)} ({n})</a>"
                 )
+            report = _modem_report_path()
+            if report is not None:
+                try:
+                    when = time.strftime(
+                        "%Y-%m-%d %H:%M", time.localtime(report.stat().st_mtime)
+                    )
+                    diag_note = f"Ready · {html.escape(when)}"
+                except OSError:
+                    diag_note = "Ready"
+            else:
+                diag_note = "Run Prep on Digivice first (or open after full-update)"
             inner = f"""
 <nav><a href="/">Home</a></nav>
 <h1>Digivice · Transfer</h1>
 <p class="muted">Same Wi‑Fi. Send files to Digivice, or download photos/files to this computer.</p>
+
+<div class="box">
+<h2>Modem doctor</h2>
+<p class="muted">{diag_note} · no SIM is OK for AT/GPS tests</p>
+<a class="btn" style="display:block;" href="/diag/modem.txt">Download modem-doctor.txt</a>
+<a style="display:block;margin-top:8px;" href="/diag/modem">View in browser</a>
+</div>
 
 <div class="box">
 <h2>↓ Get from Digivice</h2>
@@ -373,6 +439,42 @@ def _make_handler(get_dest: Callable[[], str], signals: _UploadSignals):
             self.end_headers()
             self.wfile.write(data)
 
+        def _serve_modem_report(self, *, download: bool) -> None:
+            path = _modem_report_path()
+            if path is None:
+                ok, msg = _refresh_modem_report()
+                path = _modem_report_path() if ok else None
+                if path is None:
+                    body = (
+                        "No modem-doctor.txt yet.\n\n"
+                        "On Digivice: Tools → Transfer → Prep modem report,\n"
+                        "or run: digivice-modem-doctor\n\n"
+                        f"({msg})\n"
+                    ).encode("utf-8")
+                    self.send_response(404)
+                    self.send_header("Content-Type", "text/plain; charset=utf-8")
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+                    signals.activity.emit("No modem report yet")
+                    return
+            try:
+                data = path.read_bytes()
+            except OSError:
+                self.send_error(500)
+                return
+            signals.activity.emit("Sent modem-doctor.txt")
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain; charset=utf-8")
+            self.send_header("Content-Length", str(len(data)))
+            if download:
+                self.send_header(
+                    "Content-Disposition",
+                    'attachment; filename="modem-doctor.txt"',
+                )
+            self.end_headers()
+            self.wfile.write(data)
+
         def do_POST(self) -> None:  # noqa: N802
             if self.path not in ("/upload", "/upload/"):
                 self.send_error(404)
@@ -451,7 +553,7 @@ def make_wifi_transfer_page(
     lay.setContentsMargins(2, 2, 2, 2)
     lay.setSpacing(3)
 
-    tip = QLabel("Start · open link on PC · Get Photos or Send")
+    tip = QLabel("Start · open link on PC · Get Photos / modem report")
     tip.setWordWrap(True)
     tip.setStyleSheet("color:#9ab;font-size:9px;")
 
@@ -481,6 +583,9 @@ def make_wifi_transfer_page(
     start_btn = QPushButton("Start")
     start_btn.setFixedHeight(28)
     start_btn.setStyleSheet("font-weight:800;")
+    prep_btn = QPushButton("Prep modem report")
+    prep_btn.setFixedHeight(26)
+    prep_btn.setStyleSheet("font-size:11px;")
     stop_btn = QPushButton("Stop")
     stop_btn.setFixedHeight(26)
     stop_btn.setEnabled(False)
@@ -490,6 +595,7 @@ def make_wifi_transfer_page(
     lay.addWidget(url_lab)
     lay.addWidget(status, 1)
     lay.addWidget(start_btn)
+    lay.addWidget(prep_btn)
     lay.addWidget(stop_btn)
 
     state = {"dest": initial_dest if initial_dest in DESTINATIONS else "photos"}
@@ -543,7 +649,10 @@ def make_wifi_transfer_page(
         label, _folder, _ = DESTINATIONS[state["dest"]]
         ip = _lan_ip()
         url_lab.setText(f"http://{ip}:{UPLOAD_PORT}")
-        status.setText(f"Open link · Get {label} or Send\nWaiting…")
+        status.setText(
+            f"Open link · Get {label} / modem report\n"
+            f"Modem: http://{ip}:{UPLOAD_PORT}/diag/modem.txt"
+        )
 
         handler = _make_handler(lambda: state["dest"], signals)
         try:
@@ -565,6 +674,40 @@ def make_wifi_transfer_page(
         for b in dest_btns.values():
             b.setEnabled(False)
 
+    def prep_modem() -> None:
+        status.setText("Running modem doctor…")
+        prep_btn.setEnabled(False)
+
+        def work() -> None:
+            ok, msg = _refresh_modem_report()
+            signals.activity.emit(
+                f"Modem report: {msg}" if ok else f"Doctor failed: {msg}"
+            )
+
+        def after() -> None:
+            prep_btn.setEnabled(True)
+            if server_holder.get("httpd") is None:
+                start_server()
+            else:
+                ip = _lan_ip()
+                url_lab.setText(f"http://{ip}:{UPLOAD_PORT}")
+            p = _modem_report_path()
+            if p is not None:
+                ip = _lan_ip()
+                status.setText(
+                    f"Report ready · on PC open:\n"
+                    f"http://{ip}:{UPLOAD_PORT}/diag/modem.txt"
+                )
+            # activity already updated status via signal if fail/ok mid-flight
+
+        def run_then_ui() -> None:
+            work()
+            from PyQt5.QtCore import QTimer
+
+            QTimer.singleShot(0, after)
+
+        threading.Thread(target=run_then_ui, daemon=True).start()
+
     def on_got(msg: str) -> None:
         status.setText(f"Saved {msg}\nSend more or Stop")
 
@@ -581,6 +724,7 @@ def make_wifi_transfer_page(
     for key, b in dest_btns.items():
         b.clicked.connect(lambda _=False, k=key: set_dest(k))
     start_btn.clicked.connect(start_server)
+    prep_btn.clicked.connect(prep_modem)
     stop_btn.clicked.connect(
         lambda: (stop_server(), status.setText("Stopped. Start again when ready."))
     )
