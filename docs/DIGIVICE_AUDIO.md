@@ -38,13 +38,25 @@ On many of these jacks the **middle solder pad is ground**.
 
 Mono speaker: **−** → middle, **+** → one outer pad.
 
-## Force USB + beep
+## Force USB + beep (do this when Linux is silent but Windows works)
 
 ```bash
 cd ~/esp-phone && git pull
-sudo bash ~/esp-phone/pi_handset/session/digivice-audio-usb.sh
-speaker-test -D plughw:1,0 -c 2 -t sine -f 880 -l 2
+sudo bash ~/esp-phone/pi_handset/session/digivice-audio-fix.sh
 ```
+
+That script:
+
+1. Disables HDMI sinks in WirePlumber  
+2. Hard-resets the C-Media USB device (`authorized` 0→1)  
+3. Stops PipeWire and plays an exclusive ALSA beep — **watch the red LED**  
+4. Restarts PipeWire and sets USB as default  
+
+| LED during beep | Meaning |
+|-----------------|---------|
+| **Blinks** + sound | Fixed |
+| **Blinks** + silent | Jack/speakers/amp hardware |
+| **Solid** | Still not streaming — unplug 5s, replug, `sudo digivice-audio-fix --beep-only` |
 
 ## Report
 

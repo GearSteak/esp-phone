@@ -317,6 +317,10 @@ if [[ -f "$ROOT/session/digivice-audio-usb.sh" ]]; then
   install -m 755 "$ROOT/session/digivice-audio-usb.sh" "$PREFIX/session/digivice-audio-usb.sh"
   install -m 755 "$ROOT/session/digivice-audio-usb.sh" /usr/local/bin/digivice-audio-usb
 fi
+if [[ -f "$ROOT/session/digivice-audio-fix.sh" ]]; then
+  install -m 755 "$ROOT/session/digivice-audio-fix.sh" "$PREFIX/session/digivice-audio-fix.sh"
+  install -m 755 "$ROOT/session/digivice-audio-fix.sh" /usr/local/bin/digivice-audio-fix
+fi
 
 if [[ -d "$ROOT/display" ]]; then
   install -m 755 "$ROOT/display/install-spi-userspace.sh" /usr/local/bin/digivice-install-spi-userspace 2>/dev/null || true
