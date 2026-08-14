@@ -1,6 +1,13 @@
 #!/usr/bin/env bash
 # Force Digivice / desktop audio to the USB sound card (not HDMI).
+# Fixes common C-Media 0d8c:0012 issues on Pi:
+#   • asound default uses plug (not raw hw)
+#   • softvol boost (passive speakers are quiet on green jack)
+#   • USB reset after boot (known "solid LED / silent until replug")
+#   • PipeWire default sink → USB + volume up
+#
 #   digivice-audio-usb
+#   digivice-audio-usb --reset-only
 #
 set +e
 set -u
@@ -20,102 +27,176 @@ USER_HOME="$(getent passwd "$USER_NAME" | cut -d: -f6)"
 UID_NUM="$(id -u "$USER_NAME" 2>/dev/null || echo 1000)"
 RUNTIME="/run/user/$UID_NUM"
 
-# Find first non-HDMI / non-vc4 playback card index
-USB_CARD=""
-while IFS= read -r line; do
-  # card 1: Device [Device], device 0: USB Audio [USB Audio]
-  if [[ "$line" =~ ^card\ ([0-9]+): ]]; then
-    idx="${BASH_REMATCH[1]}"
-    low="$(echo "$line" | tr '[:upper:]' '[:lower:]')"
-    if echo "$low" | grep -qE 'hdmi|vc4|headphones bcm|bcm2835'; then
-      continue
-    fi
-    USB_CARD="$idx"
-    log "ALSA card $USB_CARD ← $line"
-    break
-  fi
-done < <(aplay -l 2>/dev/null)
+as_user() {
+  sudo -u "$USER_NAME" -H env XDG_RUNTIME_DIR="$RUNTIME" \
+    DBUS_SESSION_BUS_ADDRESS="unix:path=$RUNTIME/bus" "$@"
+}
 
-if [[ -z "$USB_CARD" ]]; then
-  # Fallback: highest card index often USB on Pi
+# --- reset C-Media USB (Windows blinks when streaming; Linux often needs replug) ---
+reset_cmedia() {
+  local d sys
+  for d in /sys/bus/usb/devices/*; do
+    [[ -f "$d/idVendor" && -f "$d/idProduct" ]] || continue
+    if [[ "$(cat "$d/idVendor" 2>/dev/null)" == "0d8c" ]]; then
+      sys="$(basename "$d")"
+      log "USB reset C-Media at $sys"
+      echo "$sys" >/sys/bus/usb/drivers/usb/unbind 2>/dev/null || true
+      sleep 0.4
+      echo "$sys" >/sys/bus/usb/drivers/usb/bind 2>/dev/null || true
+      sleep 1.2
+    fi
+  done
+  if command -v usbreset >/dev/null 2>&1; then
+    usbreset 0d8c:0012 2>/dev/null || true
+  fi
+}
+
+find_usb_card() {
+  USB_CARD=""
+  USB_NAME=""
+  while IFS= read -r line; do
+    if [[ "$line" =~ ^card\ ([0-9]+):\ ([^ ]+) ]]; then
+      idx="${BASH_REMATCH[1]}"
+      name="${BASH_REMATCH[2]}"
+      low="$(echo "$line" | tr '[:upper:]' '[:lower:]')"
+      if echo "$low" | grep -qE 'hdmi|vc4|headphones bcm|bcm2835'; then
+        continue
+      fi
+      if echo "$low" | grep -qE 'usb|device|c-media|audio'; then
+        USB_CARD="$idx"
+        USB_NAME="$name"
+        return 0
+      fi
+    fi
+  done < <(aplay -l 2>/dev/null)
   USB_CARD="$(aplay -l 2>/dev/null | sed -n 's/^card \([0-9]*\):.*/\1/p' | tail -n1)"
-  log "fallback ALSA card=$USB_CARD"
+  USB_NAME="$(aplay -l 2>/dev/null | sed -n "s/^card ${USB_CARD}: \([^ ]*\).*/\1/p" | head -n1)"
+  [[ -n "$USB_CARD" ]]
+}
+
+unmute_card() {
+  local c="$1"
+  for ctl in Master PCM Speaker Headphone Playback; do
+    amixer -c "$c" -q sset "$ctl" 100% unmute 2>/dev/null || true
+  done
+  amixer -c "$c" -q sset 'Auto-Mute Mode' Disabled 2>/dev/null || true
+  amixer -c "$c" -q sset 'Digivice Boost' 90% 2>/dev/null || true
+}
+
+if [[ "${1:-}" == "--reset-only" ]]; then
+  reset_cmedia
+  sleep 1
+  if find_usb_card; then
+    unmute_card "$USB_CARD"
+  fi
+  exit 0
 fi
 
-if [[ -z "$USB_CARD" ]]; then
-  log "ERROR: no ALSA playback cards (aplay -l empty)"
+reset_cmedia
+
+# Prefer USB as ALSA card 0 next boot
+mkdir -p /etc/modprobe.d
+cat >/etc/modprobe.d/digivice-usb-audio.conf <<'EOF'
+# Digivice: put USB audio first
+options snd-usb-audio index=0
+EOF
+log "wrote /etc/modprobe.d/digivice-usb-audio.conf"
+
+if ! find_usb_card; then
+  log "ERROR: no ALSA playback cards — plug USB audio and retry"
   exit 1
 fi
+log "ALSA card $USB_CARD ($USB_NAME)"
 
 mkdir -p /etc/esp-handset
 echo "$USB_CARD" >/etc/esp-handset/alsa-card
+
+SLAVE="plughw:${USB_CARD},0"
+if [[ -n "$USB_NAME" ]]; then
+  SLAVE="plughw:CARD=${USB_NAME},DEV=0"
+fi
+
+# plug + softvol (raw "type hw" breaks rates / stays silent for many apps)
 cat >/etc/asound.conf <<EOF
-# Digivice — prefer USB sound card (written by digivice-audio-usb)
+# Digivice — USB out with software boost (green jack is line/headphone level)
 defaults.pcm.card $USB_CARD
 defaults.ctl.card $USB_CARD
-pcm.!default {
-  type hw
-  card $USB_CARD
+
+pcm.digiraw {
+  type plug
+  slave.pcm "$SLAVE"
 }
+
+pcm.digiboost {
+  type softvol
+  slave.pcm "digiraw"
+  control {
+    name "Digivice Boost"
+    card $USB_CARD
+  }
+  min_dB -5.0
+  max_dB 18.0
+}
+
+pcm.!default {
+  type plug
+  slave.pcm "digiboost"
+}
+
 ctl.!default {
   type hw
   card $USB_CARD
 }
 EOF
-log "wrote /etc/asound.conf → card $USB_CARD"
+log "wrote /etc/asound.conf → $SLAVE + Digivice Boost"
 
 if [[ -n "$USER_HOME" ]]; then
-  cat >"$USER_HOME/.asoundrc" <<EOF
-defaults.pcm.card $USB_CARD
-defaults.ctl.card $USB_CARD
-EOF
+  cp -f /etc/asound.conf "$USER_HOME/.asoundrc"
   chown "$USER_NAME:$USER_NAME" "$USER_HOME/.asoundrc" 2>/dev/null || true
 fi
 
-# Unmute
-for ctl in Master PCM Speaker Headphone Playback; do
-  amixer -c "$USB_CARD" -q sset "$ctl" 100% unmute 2>/dev/null || true
-done
-amixer -c "$USB_CARD" -q sset 'Auto-Mute Mode' Disabled 2>/dev/null || true
+unmute_card "$USB_CARD"
+# Instantiate softvol control
+timeout 1 aplay -D default /dev/zero 2>/dev/null || true
+unmute_card "$USB_CARD"
 
-# PipeWire / Pulse default sink matching USB / alsa_card
-as_user() {
-  sudo -u "$USER_NAME" -H env XDG_RUNTIME_DIR="$RUNTIME" DBUS_SESSION_BUS_ADDRESS="unix:path=$RUNTIME/bus" "$@"
-}
-
-SINK=""
-if as_user pactl list short sinks >/dev/null 2>&1; then
-  SINK="$(as_user pactl list short sinks 2>/dev/null | awk '{print $2}' | grep -iE 'usb|alsa_output' | grep -viE 'hdmi|vc4' | head -n1)"
-  if [[ -z "$SINK" ]]; then
-    SINK="$(as_user pactl list short sinks 2>/dev/null | awk '{print $2}' | grep -viE 'hdmi|vc4' | head -n1)"
-  fi
-  if [[ -n "$SINK" ]]; then
-    as_user pactl set-default-sink "$SINK" 2>/dev/null && log "pactl default sink → $SINK"
-    as_user pactl set-sink-mute "$SINK" 0 2>/dev/null || true
-    as_user pactl set-sink-volume "$SINK" 100% 2>/dev/null || true
-  else
-    log "WARN: no non-HDMI Pulse sink found"
-  fi
+ID="$(as_user wpctl status 2>/dev/null | awk '
+  /Sinks:/ {in_s=1; next}
+  /Sources:/ {in_s=0}
+  in_s && /USB|Analog/ && $0 !~ /HDMI|Vc4|vc4/ {
+    if (match($0, /[0-9]+/)) { print substr($0, RSTART, RLENGTH); exit }
+  }
+  in_s && /^[ \t]*\*?[ \t]*[0-9]+\./ && $0 !~ /HDMI|Vc4|vc4/ {
+    if (match($0, /[0-9]+/)) { print substr($0, RSTART, RLENGTH); exit }
+  }
+')"
+if [[ -n "$ID" ]]; then
+  as_user wpctl set-default "$ID" 2>/dev/null && log "wpctl default → $ID"
+  as_user wpctl set-mute "$ID" 0 2>/dev/null || true
+  as_user wpctl set-volume "$ID" 1.5 2>/dev/null \
+    || as_user wpctl set-volume "$ID" 1.0 2>/dev/null || true
 fi
 
-if as_user wpctl status >/dev/null 2>&1; then
-  # Pick first Sink id that looks like USB / not HDMI
-  ID="$(as_user wpctl status 2>/dev/null | awk '
-    /Sinks:/ {in_s=1; next}
-    /Sources:/ {in_s=0}
-    in_s && /^[[:space:]]*\*?[[:space:]]*[0-9]+\./ {
-      line=$0
-      if (line ~ /HDMI|Vc4|vc4/) next
-      if (match(line, /[0-9]+/)) { print substr(line, RSTART, RLENGTH); exit }
-    }')"
-  if [[ -n "$ID" ]]; then
-    as_user wpctl set-default "$ID" 2>/dev/null && log "wpctl default → $ID"
-    as_user wpctl set-mute "$ID" 0 2>/dev/null || true
-    as_user wpctl set-volume "$ID" 1.0 2>/dev/null || true
-  fi
-fi
+cat >/etc/systemd/system/digivice-audio-usb-reset.service <<'EOF'
+[Unit]
+Description=Reset C-Media USB audio after boot (solid-LED / silent until replug)
+After=multi-user.target sound.target
+Wants=sound.target
 
-log "Test:  speaker-test -D hw:$USB_CARD,0 -t sine -f 880 -l 1 -c 1"
-log "Or:    speaker-test -c 1 -t sine -f 880 -l 1"
-log "If ALSA plays with no error but silence → jack detect / need amp (see digivice-audio-doctor)"
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/digivice-audio-usb --reset-only
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+EOF
+systemctl daemon-reload 2>/dev/null || true
+systemctl enable digivice-audio-usb-reset.service 2>/dev/null || true
+
+log "Watch the RED LED — it should BLINK during this beep (like Windows):"
+log "  speaker-test -D plughw:$USB_CARD,0 -c 2 -t sine -f 880 -l 2"
+log "If LED stays solid: unplug/replug the USB stick, then rerun digivice-audio-usb."
+log "Quiet speakers: green jack is weak into passive speakers — louder drivers help a"
+log "  little; a small amp or MAX98357 helps a lot. Boost: alsamixer -c $USB_CARD"
 exit 0
