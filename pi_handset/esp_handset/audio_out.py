@@ -13,7 +13,7 @@ from pathlib import Path
 from shutil import which
 from typing import List, Optional, Tuple
 
-AUDIO_BUILD = "v13-card0"
+AUDIO_BUILD = "v14-sink"
 _LOG = Path.home() / ".esp-handset" / "last-beep.txt"
 _WAV = Path.home() / ".esp-handset" / "beep-loud.wav"
 
@@ -139,36 +139,42 @@ def _unmute_card(card: str) -> None:
         )
 
 
-def _wpctl_usb_default() -> None:
-    """Point PipeWire at USB sink and max volume — no sudo."""
-    code, out = _run(["wpctl", "status"], timeout=5)
-    _log("wpctl status (sinks excerpt):")
+def _wpctl_usb_default() -> Optional[str]:
+    """Point PipeWire at the CM108 USB sink (not HDMI). Returns sink id or None."""
+    _code, out = _run(["wpctl", "status"], timeout=5)
+    _log("wpctl sinks:")
     sink_id = None
     in_sinks = False
     for line in out.splitlines():
         if "Sinks:" in line:
             in_sinks = True
             continue
-        if in_sinks and ("Sources:" in line or "Filters:" in line):
-            break
         if not in_sinks:
             continue
+        if "Sources:" in line:
+            break
         _log(f"  {line}")
         low = line.lower()
-        if any(x in low for x in ("hdmi", "vc4")):
+        if any(x in low for x in ("hdmi", "vc4", "bcm2835", "built-in", "dummy")):
             continue
-        if any(x in low for x in ("usb", "device", "analog", "c-media", "audio")):
-            m = re.search(r"\b(\d+)\b", line)
-            if m:
-                sink_id = m.group(1)
-                break
+        # CM108 shows as "USB PnP Sound Device" / "C-Media" — do NOT match generic "audio"
+        if not any(x in low for x in ("usb", "pn p", "pnp", "c-media", "cm108")):
+            if "device" in low and "sound" in low:
+                pass
+            else:
+                continue
+        m = re.search(r"(\d+)\.", line)
+        if m:
+            sink_id = m.group(1)
+            break
     if sink_id:
         _run(["wpctl", "set-default", sink_id], timeout=3)
-        _log(f"wpctl set-default {sink_id}")
-    _run(["wpctl", "set-mute", "@DEFAULT_AUDIO_SINK@", "0"], timeout=3)
-    _run(["wpctl", "set-volume", "@DEFAULT_AUDIO_SINK@", "1.0"], timeout=3)
-    # some builds allow >100%
-    _run(["wpctl", "set-volume", "@DEFAULT_AUDIO_SINK@", "1.5"], timeout=3)
+        _run(["wpctl", "set-mute", sink_id, "0"], timeout=3)
+        _run(["wpctl", "set-volume", sink_id, "1.0"], timeout=3)
+        _log(f"wpctl USB default={sink_id}")
+        return sink_id
+    _log("wpctl: no USB sink found")
+    return None
 
 
 def wake_usb_audio() -> None:
@@ -208,10 +214,13 @@ def play_test_tone_detail(*, seconds: float = 5.0) -> Tuple[bool, str]:
         except OSError:
             pass
 
-    _wpctl_usb_default()
+    sink = _wpctl_usb_default()
+    _log(f"usb_sink={sink}")
 
-    # Prefer PipeWire tools (Digivice user session — same as music apps)
+    # Prefer PipeWire tools, aimed at the USB node (not HDMI)
     players: List[List[str]] = []
+    if which("pw-play") and sink:
+        players.append(["pw-play", "--target", sink, str(wav)])
     if which("pw-play"):
         players.append(["pw-play", str(wav)])
     if which("paplay"):
@@ -220,22 +229,6 @@ def play_test_tone_detail(*, seconds: float = 5.0) -> Tuple[bool, str]:
         players.append(["aplay", "-D", f"plughw:{card},0", str(wav)])
     if which("aplay"):
         players.append(["aplay", str(wav)])
-    if which("speaker-test"):
-        players.append(
-            [
-                "speaker-test",
-                "-c",
-                "2",
-                "-r",
-                "48000",
-                "-t",
-                "sine",
-                "-f",
-                "880",
-                "-l",
-                "2",
-            ]
-        )
 
     last_err = "no player"
     for cmd in players:
