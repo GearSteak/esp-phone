@@ -3067,7 +3067,7 @@ def make_debug_page(on_back: Callable[[], None]) -> QWidget:
             return
         _set_busy(True)
         _set_badge(spk_badge, "SPK", "wait")
-        _set_status("Playing… wait")
+        _set_status("LOUD 5s — listen!")
 
         from PyQt5.QtCore import QObject, pyqtSignal
 
@@ -3076,7 +3076,6 @@ def make_debug_page(on_back: Callable[[], None]) -> QWidget:
         class _Sig(QObject):
             done = pyqtSignal(bool, str)
 
-        # Must live on GUI thread — QTimer from worker thread never ran (stuck UI)
         sig = getattr(body, "_beep_sig", None)
         if sig is None:
             sig = _Sig(body)
@@ -3085,9 +3084,7 @@ def make_debug_page(on_back: Callable[[], None]) -> QWidget:
             def _on_done(ok: bool, msg: str) -> None:
                 _set_busy(False)
                 short = (msg or "").replace("\n", " ")
-                if "sudo blocked" in short.lower():
-                    _set_status("Need sudo update")
-                elif not ok:
+                if not ok:
                     _set_status("Beep FAIL")
                 else:
                     _set_status("Done — heard it?")
@@ -3098,7 +3095,7 @@ def make_debug_page(on_back: Callable[[], None]) -> QWidget:
 
         def _work() -> None:
             try:
-                ok, msg = play_test_tone_detail()
+                ok, msg = play_test_tone_detail(seconds=5.0)
             except Exception as e:
                 ok, msg = False, str(e)[:40]
             sig.done.emit(ok, msg)
@@ -3188,6 +3185,7 @@ def make_debug_page(on_back: Callable[[], None]) -> QWidget:
         rec.finished.connect(_after_rec)
 
     sound_btn.clicked.connect(cycle_sound)
+    wake_btn.clicked.connect(do_wake)
     spk_btn.clicked.connect(speaker_test)
     mic_btn.clicked.connect(mic_test)
     yes_btn.clicked.connect(on_yes)

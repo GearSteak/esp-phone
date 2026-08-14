@@ -1,158 +1,280 @@
-"""Digivice playback — recover C-Media stick, then ui-beep."""
+"""Digivice beep — PipeWire first (simple), then ALSA. Long loud tone."""
 
 from __future__ import annotations
 
+import math
 import os
-import signal
+import re
+import struct
 import subprocess
+import wave
 from datetime import datetime
 from pathlib import Path
 from shutil import which
 from typing import List, Optional, Tuple
 
-AUDIO_BUILD = "v11"
+AUDIO_BUILD = "v12-pw"
 _LOG = Path.home() / ".esp-handset" / "last-beep.txt"
+_WAV = Path.home() / ".esp-handset" / "beep-loud.wav"
 
 
 def _fix_bin() -> Optional[str]:
     for p in (
         "/usr/local/bin/digivice-audio-fix",
         "/opt/esp-handset/session/digivice-audio-fix.sh",
-        str(Path(__file__).resolve().parents[1] / "session" / "digivice-audio-fix.sh"),
     ):
         if os.path.isfile(p) and os.access(p, os.X_OK):
             return p
     return which("digivice-audio-fix")
 
 
-def _kill_tree(proc: subprocess.Popen) -> None:
+def _log(msg: str) -> None:
     try:
-        os.killpg(proc.pid, signal.SIGKILL)
-    except Exception:
-        try:
-            proc.kill()
-        except Exception:
-            pass
-    try:
-        proc.wait(timeout=2)
-    except Exception:
+        _LOG.parent.mkdir(parents=True, exist_ok=True)
+        with open(_LOG, "a", encoding="utf-8") as f:
+            f.write(msg.rstrip() + "\n")
+    except OSError:
         pass
 
 
-def _run_fix_detached(args: List[str], timeout: float) -> Tuple[int, str]:
-    fix = _fix_bin()
-    if not fix:
-        return 1, "digivice-audio-fix missing"
-    _LOG.parent.mkdir(parents=True, exist_ok=True)
-    header = (
-        f"build={AUDIO_BUILD}\n"
-        f"when={datetime.now().isoformat(timespec='seconds')}\n"
-        f"user={os.environ.get('USER', '?')}\n"
-        f"cmd=sudo -n {fix} {' '.join(args)}\n"
-        f"---\n"
-    )
-    _LOG.write_text(header, encoding="utf-8")
-    cmd = ["sudo", "-n", fix, *args]
-    env = os.environ.copy()
-    me = os.environ.get("USER") or os.environ.get("LOGNAME")
-    if me and me != "root":
-        env["SUDO_USER"] = me
-    logf = open(_LOG, "a", encoding="utf-8")
+def _reset_log() -> None:
     try:
-        proc = subprocess.Popen(
-            cmd,
-            stdin=subprocess.DEVNULL,
-            stdout=logf,
-            stderr=subprocess.STDOUT,
-            start_new_session=True,
-            env=env,
+        _LOG.parent.mkdir(parents=True, exist_ok=True)
+        _LOG.write_text(
+            f"build={AUDIO_BUILD}\n"
+            f"when={datetime.now().isoformat(timespec='seconds')}\n"
+            f"user={os.environ.get('USER', '?')}\n---\n",
+            encoding="utf-8",
         )
-        try:
-            code = proc.wait(timeout=timeout)
-        except subprocess.TimeoutExpired:
-            _kill_tree(proc)
-            try:
-                logf.write("\n[timeout — killed]\n")
-            except Exception:
-                pass
-            code = 124
-    except Exception as e:
-        try:
-            logf.write(f"\n[error] {e}\n")
-        except Exception:
-            pass
-        return 1, str(e)
-    finally:
-        try:
-            logf.close()
-        except Exception:
-            pass
-    try:
-        out = _LOG.read_text(encoding="utf-8", errors="replace")
     except OSError:
-        out = f"exit {code}"
-    return code, out
+        pass
+
+
+def _run(cmd: List[str], timeout: float = 12.0) -> Tuple[int, str]:
+    try:
+        r = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
+        )
+        out = ((r.stdout or "") + (r.stderr or "")).strip()
+        return r.returncode, out
+    except subprocess.TimeoutExpired:
+        return 124, "timeout"
+    except Exception as e:
+        return 1, str(e)
+
+
+def _usb_card() -> Optional[str]:
+    p = Path("/etc/esp-handset/alsa-card")
+    try:
+        if p.is_file():
+            c = p.read_text().strip()
+            if c.isdigit():
+                return c
+    except OSError:
+        pass
+    code, out = _run(["aplay", "-l"], timeout=5)
+    if code != 0 and not out:
+        return None
+    for line in out.splitlines():
+        m = re.match(r"^card (\d+):", line)
+        if not m:
+            continue
+        low = line.lower()
+        if any(x in low for x in ("hdmi", "vc4", "bcm2835")):
+            continue
+        if any(x in low for x in ("usb", "device", "c-media", "audio", "headset")):
+            return m.group(1)
+    for line in out.splitlines():
+        m = re.match(r"^card (\d+):", line)
+        if not m:
+            continue
+        low = line.lower()
+        if any(x in low for x in ("hdmi", "vc4", "bcm2835")):
+            continue
+        return m.group(1)
+    return None
+
+
+def _make_loud_wav(seconds: float = 5.0) -> Path:
+    """Stereo full-scale 880Hz — hard to miss in headphones."""
+    _WAV.parent.mkdir(parents=True, exist_ok=True)
+    rate, freq = 48000, 880.0
+    n = int(rate * seconds)
+    with wave.open(str(_WAV), "w") as w:
+        w.setnchannels(2)
+        w.setsampwidth(2)
+        w.setframerate(rate)
+        for i in range(n):
+            # slight left/right so either channel works
+            v = int(31000 * math.sin(2 * math.pi * freq * i / rate))
+            w.writeframes(struct.pack("<hh", v, v))
+    return _WAV
+
+
+def _unmute_card(card: str) -> None:
+    for ctl in ("Speaker", "PCM", "Master", "Headphone", "Playback"):
+        _run(
+            ["amixer", "-c", card, "-q", "sset", ctl, "100%", "unmute"],
+            timeout=3,
+        )
+    # raw: set every simple control that looks like playback
+    code, out = _run(["amixer", "-c", card, "scontrols"], timeout=3)
+    for line in out.splitlines():
+        m = re.search(r"Simple mixer control '([^']+)'", line)
+        if not m:
+            continue
+        name = m.group(1)
+        if name.lower().startswith(("mic", "capture", "auto")):
+            continue
+        _run(
+            ["amixer", "-c", card, "-q", "sset", name, "100%", "unmute"],
+            timeout=2,
+        )
+
+
+def _wpctl_usb_default() -> None:
+    """Point PipeWire at USB sink and max volume — no sudo."""
+    code, out = _run(["wpctl", "status"], timeout=5)
+    _log("wpctl status (sinks excerpt):")
+    sink_id = None
+    in_sinks = False
+    for line in out.splitlines():
+        if "Sinks:" in line:
+            in_sinks = True
+            continue
+        if in_sinks and ("Sources:" in line or "Filters:" in line):
+            break
+        if not in_sinks:
+            continue
+        _log(f"  {line}")
+        low = line.lower()
+        if any(x in low for x in ("hdmi", "vc4")):
+            continue
+        if any(x in low for x in ("usb", "device", "analog", "c-media", "audio")):
+            m = re.search(r"\b(\d+)\b", line)
+            if m:
+                sink_id = m.group(1)
+                break
+    if sink_id:
+        _run(["wpctl", "set-default", sink_id], timeout=3)
+        _log(f"wpctl set-default {sink_id}")
+    _run(["wpctl", "set-mute", "@DEFAULT_AUDIO_SINK@", "0"], timeout=3)
+    _run(["wpctl", "set-volume", "@DEFAULT_AUDIO_SINK@", "1.0"], timeout=3)
+    # some builds allow >100%
+    _run(["wpctl", "set-volume", "@DEFAULT_AUDIO_SINK@", "1.5"], timeout=3)
 
 
 def wake_usb_audio() -> None:
-    """Recover C-Media into ALSA (authorized=1 + rebind)."""
-    _run_fix_detached(["--recover"], timeout=15.0)
+    fix = _fix_bin()
+    if fix:
+        _run(["sudo", "-n", fix, "--recover"], timeout=15)
+    card = _usb_card()
+    if card:
+        _unmute_card(card)
+    _wpctl_usb_default()
 
 
-def play_test_tone(*, seconds: float = 2.0) -> bool:
-    del seconds
-    ok, _ = play_test_tone_detail()
+def play_test_tone(*, seconds: float = 5.0) -> bool:
+    ok, _ = play_test_tone_detail(seconds=seconds)
     return ok
 
 
-def play_test_tone_detail(*, seconds: float = 2.0) -> Tuple[bool, str]:
-    del seconds
-    if not _fix_bin():
-        return False, "fix missing"
+def play_test_tone_detail(*, seconds: float = 5.0) -> Tuple[bool, str]:
+    """
+    Digivice path: do NOT stop PipeWire / sudo dance.
+    Max volume → 5s loud stereo wav via pw-play/paplay/aplay.
+    LED blink + silence was exclusive-ALSA complexity; this is normal playback.
+    """
+    _reset_log()
+    secs = max(4.0, float(seconds))
+    wav = _make_loud_wav(secs)
+    _log(f"wav={wav} secs={secs}")
 
-    # Recover first if stick vanished from ALSA
-    code_r, out_r = _run_fix_detached(["--recover"], timeout=15.0)
-    if "OK card=" not in out_r and "ERROR" in out_r:
-        # Still try beep — recover logs help
-        pass
+    card = _usb_card()
+    _log(f"card={card}")
+    if card:
+        _unmute_card(card)
+        try:
+            Path("/etc/esp-handset").mkdir(parents=True, exist_ok=True)
+            # best-effort; may need sudo — ignore fail
+            Path("/etc/esp-handset/alsa-card").write_text(card)
+        except OSError:
+            pass
 
-    code, out = _run_fix_detached(["--ui-beep"], timeout=20.0)
-    combined = out_r + "\n" + out
-    if "password" in combined.lower():
-        return False, "sudo blocked"
-    if "ERROR: no USB card" in combined or "FAIL: stick not in ALSA" in combined:
-        return False, "No stick — unplug/replug"
-    played = (
-        "aplay exit=" in out
-        or "speaker-test exit=" in out
-        or "LISTEN NOW" in out
-        or "ui-beep card=" in out
-    )
-    if played and code in (0, 124):
-        for line in out.splitlines():
-            if "aplay exit=" in line or "speaker-test exit=" in line:
-                return True, f"{AUDIO_BUILD} {line.strip()[-18:]}"
-        return True, f"{AUDIO_BUILD} done"
-    for line in reversed(combined.splitlines()):
-        line = line.strip()
-        if line.startswith("[audio-fix]"):
-            msg = line.replace("[audio-fix] ", "")
-            if "gui_user=" in msg or "mixer:" in msg:
-                continue
-            return False, msg[:40]
-    return False, f"fail exit={code}"
+    _wpctl_usb_default()
+
+    # Prefer PipeWire tools (Digivice user session — same as music apps)
+    players: List[List[str]] = []
+    if which("pw-play"):
+        players.append(["pw-play", str(wav)])
+    if which("paplay"):
+        players.append(["paplay", str(wav)])
+    if which("aplay") and card:
+        players.append(["aplay", "-D", f"plughw:{card},0", str(wav)])
+    if which("aplay"):
+        players.append(["aplay", str(wav)])
+    if which("speaker-test"):
+        players.append(
+            [
+                "speaker-test",
+                "-c",
+                "2",
+                "-r",
+                "48000",
+                "-t",
+                "sine",
+                "-f",
+                "880",
+                "-l",
+                "2",
+            ]
+        )
+
+    last_err = "no player"
+    for cmd in players:
+        _log(f"try: {' '.join(cmd)}")
+        code, out = _run(cmd, timeout=secs + 4.0)
+        _log(f"exit={code} {out[-200:]}")
+        if code in (0, 124):
+            return True, f"{AUDIO_BUILD} OK"
+        last_err = out[-40:] if out else f"exit {code}"
+
+    # Last resort: old sudo exclusive path (only if PW failed)
+    fix = _fix_bin()
+    if fix:
+        _log("fallback sudo --ui-beep")
+        env = os.environ.copy()
+        me = os.environ.get("USER") or os.environ.get("LOGNAME")
+        if me:
+            env["SUDO_USER"] = me
+        try:
+            r = subprocess.run(
+                ["sudo", "-n", fix, "--ui-beep"],
+                capture_output=True,
+                text=True,
+                timeout=25,
+                check=False,
+                env=env,
+            )
+            _log(f"ui-beep exit={r.returncode}")
+            if r.returncode in (0, 124):
+                return True, f"{AUDIO_BUILD} alsa OK"
+        except Exception as e:
+            _log(str(e))
+
+    return False, last_err[:40]
 
 
 def play_cmd_for_debug() -> List[str]:
-    fix = _fix_bin()
-    if fix:
-        return ["sudo", "-n", fix, "--ui-beep"]
     return []
 
 
-def last_beep_tail(n: int = 8) -> str:
+def last_beep_tail(n: int = 10) -> str:
     try:
-        lines = _LOG.read_text(encoding="utf-8", errors="replace").splitlines()
-        return "\n".join(lines[-n:])
+        return "\n".join(_LOG.read_text(encoding="utf-8", errors="replace").splitlines()[-n:])
     except OSError:
-        return "(no last-beep.txt)"
+        return "(no log)"
