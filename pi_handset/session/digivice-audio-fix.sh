@@ -127,6 +127,36 @@ if [[ "${1:-}" == "--beep" ]]; then
   exit $?
 fi
 
+if [[ "${1:-}" == "--soft-beep" ]]; then
+  # No USB re-auth — only exclusive ALSA (use when stick already awake / LED can blink).
+  find_usb_card
+  if [[ -z "$USB_CARD" ]]; then
+    log "ERROR: no USB card"
+    aplay -l 2>&1 || true
+    exit 1
+  fi
+  mkdir -p /etc/esp-handset
+  echo "$USB_CARD" >/etc/esp-handset/alsa-card
+  for ctl in Speaker PCM Master Headphone; do
+    amixer -c "$USB_CARD" -q sset "$ctl" 100% unmute 2>/dev/null || true
+  done
+  amixer -c "$USB_CARD" 2>/dev/null | head -n 25 | while read -r l; do log "mix $l"; done
+  log "soft-beep card=$USB_CARD — stop PipeWire"
+  as_user systemctl --user stop pipewire-pulse wireplumber pipewire 2>/dev/null || true
+  sleep 0.8
+  fuser -k "/dev/snd/pcmC${USB_CARD}D0p" 2>/dev/null || true
+  sleep 0.2
+  for ctl in Speaker PCM Master Headphone; do
+    amixer -c "$USB_CARD" -q sset "$ctl" 100% unmute 2>/dev/null || true
+  done
+  log ">>> WATCH RED LED / LISTEN (soft-beep) <<<"
+  timeout 6 speaker-test -D "plughw:$USB_CARD,0" -c 2 -r 48000 -t sine -f 880 -l 2
+  rc=$?
+  log "speaker-test exit=$rc"
+  as_user systemctl --user start pipewire wireplumber pipewire-pulse 2>/dev/null || true
+  exit "$rc"
+fi
+
 # 1) Kill USB autosuspend for C-Media (common solid-LED / silent cause on Pi)
 log "Disabling USB autosuspend for C-Media…"
 mkdir -p /etc/udev/rules.d

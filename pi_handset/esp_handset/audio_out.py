@@ -1,15 +1,16 @@
-"""Digivice playback — must call the same digivice-audio-fix as the terminal."""
+"""Digivice playback — run audio fix detached (no pkill race, no PIPE stall)."""
 
 from __future__ import annotations
 
 import os
 import subprocess
+import time
 from datetime import datetime
 from pathlib import Path
 from shutil import which
-from typing import List, Optional, Sequence, Tuple
+from typing import List, Optional, Tuple
 
-AUDIO_BUILD = "v7-cli"
+AUDIO_BUILD = "v8-detach"
 _LOG = Path.home() / ".esp-handset" / "last-beep.txt"
 
 
@@ -24,14 +25,6 @@ def _fix_bin() -> Optional[str]:
     return which("digivice-audio-fix")
 
 
-def _write_log(text: str) -> None:
-    try:
-        _LOG.parent.mkdir(parents=True, exist_ok=True)
-        _LOG.write_text(text, encoding="utf-8")
-    except OSError:
-        pass
-
-
 def wake_usb_audio() -> None:
     fix = _fix_bin()
     if not fix:
@@ -39,34 +32,52 @@ def wake_usb_audio() -> None:
     try:
         subprocess.run(
             ["sudo", "-n", fix, "--persist-only"],
-            capture_output=True,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
             timeout=8,
             check=False,
+            start_new_session=True,
         )
     except Exception:
         pass
 
 
-def _run(cmd: Sequence[str], timeout: float) -> Tuple[int, str]:
+def _run_fix_detached(args: List[str], timeout: float) -> Tuple[int, str]:
+    """Run sudo digivice-audio-fix in its own session; log to file (not PIPE)."""
+    fix = _fix_bin()
+    if not fix:
+        return 1, "digivice-audio-fix missing"
+    _LOG.parent.mkdir(parents=True, exist_ok=True)
+    header = (
+        f"build={AUDIO_BUILD}\n"
+        f"when={datetime.now().isoformat(timespec='seconds')}\n"
+        f"cmd=sudo -n {fix} {' '.join(args)}\n"
+        f"---\n"
+    )
+    _LOG.write_text(header, encoding="utf-8")
+    cmd = ["sudo", "-n", fix, *args]
     try:
-        r = subprocess.run(
-            list(cmd),
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-            check=False,
-        )
-        out = ((r.stdout or "") + (r.stderr or "")).strip()
-        return r.returncode, out
-    except subprocess.TimeoutExpired as e:
-        out = ""
-        for chunk in (e.stdout, e.stderr):
-            if not chunk:
-                continue
-            out += chunk if isinstance(chunk, str) else chunk.decode("utf-8", "replace")
-        return 124, (out or "timeout").strip()
+        with open(_LOG, "a", encoding="utf-8") as logf:
+            r = subprocess.run(
+                cmd,
+                stdin=subprocess.DEVNULL,
+                stdout=logf,
+                stderr=subprocess.STDOUT,
+                timeout=timeout,
+                check=False,
+                start_new_session=True,  # survive Digivice pkill of process group
+            )
+        code = r.returncode
+    except subprocess.TimeoutExpired:
+        code = 124
     except Exception as e:
         return 1, str(e)
+    try:
+        out = _LOG.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        out = f"exit {code}"
+    return code, out
 
 
 def play_test_tone(*, seconds: float = 2.0) -> bool:
@@ -76,43 +87,47 @@ def play_test_tone(*, seconds: float = 2.0) -> bool:
 
 
 def play_test_tone_detail(*, seconds: float = 2.0) -> Tuple[bool, str]:
-    """Exact CLI path: sudo digivice-audio-fix (no soft fallback that fakes success)."""
+    """Prefer soft-beep (no USB yank); then full CLI fix. Never fake OK."""
     del seconds
-    stamp = datetime.now().isoformat(timespec="seconds")
-    lines = [f"build={AUDIO_BUILD}", f"when={stamp}"]
-
     fix = _fix_bin()
-    lines.append(f"fix_bin={fix or 'MISSING'}")
     if not fix:
-        msg = "digivice-audio-fix missing"
-        _write_log("\n".join(lines + [msg]) + "\n")
-        return False, msg
+        return False, "digivice-audio-fix missing"
 
-    # Same command that works in the terminal — no --beep, no user-path fallback
-    cmd = ["sudo", "-n", fix]
-    lines.append(f"try: {' '.join(cmd)}")
-    code, out = _run(cmd, timeout=60.0)
-    lines.append(f"exit={code}")
-    if out:
-        lines.append(out[-2000:])
-    _write_log("\n".join(lines) + "\n")
+    # 1) soft-beep — same exclusive ALSA as terminal, no re-auth
+    code, out = _run_fix_detached(["--soft-beep"], timeout=25.0)
+    if code in (0, 124) and (
+        "speaker-test exit=" in out or "WATCH RED LED" in out or "soft-beep" in out
+    ):
+        return True, f"{AUDIO_BUILD} soft OK · hear?"
 
-    if code in (0, 124):
-        # Confirm the script actually ran speaker-test (not a silent early exit)
-        if "speaker-test" in out.lower() or "WATCH RED LED" in out or "beep:" in out:
-            return True, f"{AUDIO_BUILD} CLI fix OK"
-        if code == 124:
-            return True, f"{AUDIO_BUILD} timed out (may have played)"
-        return True, f"{AUDIO_BUILD} exit 0 · check headphones"
+    # 2) full terminal command
+    code2, out2 = _run_fix_detached([], timeout=60.0)
+    if code2 in (0, 124) and (
+        "speaker-test" in out2.lower() or "WATCH RED LED" in out2 or "beep:" in out2
+    ):
+        return True, f"{AUDIO_BUILD} full OK · hear?"
 
-    if "password" in out.lower() or "a password is required" in out.lower():
-        return False, "sudo blocked — run: sudo digivice-full-update"
-    tail = (out.splitlines()[-1] if out else f"exit {code}")[:40]
-    return False, f"fix fail: {tail}"
+    combined = (out + "\n" + out2)[-1200:]
+    if "password" in combined.lower():
+        return False, "sudo blocked — sudo digivice-full-update"
+    # Surface last log line on Digivice
+    for line in reversed(combined.splitlines()):
+        line = line.strip()
+        if line and not line.startswith("build=") and line != "---":
+            return False, line[:48]
+    return False, f"fail soft={code} full={code2}"
 
 
 def play_cmd_for_debug() -> List[str]:
     fix = _fix_bin()
     if fix:
-        return ["sudo", "-n", fix]
+        return ["sudo", "-n", fix, "--soft-beep"]
     return []
+
+
+def last_beep_tail(n: int = 6) -> str:
+    try:
+        lines = _LOG.read_text(encoding="utf-8", errors="replace").splitlines()
+        return "\n".join(lines[-n:])
+    except OSError:
+        return "(no last-beep.txt)"

@@ -3061,24 +3061,25 @@ def make_debug_page(on_back: Callable[[], None]) -> QWidget:
             _set_badge(spk_badge, "SPK", "none")
             status.setText("No playback device")
             return
-        _kill_all()
+        # Do NOT pkill speaker-test here — that races sudo digivice-audio-fix
         _set_busy(True)
         _set_badge(spk_badge, "SPK", "wait")
-        status.setText("CLI fix… ~15s · keep headphones in")
+        from esp_handset.audio_out import AUDIO_BUILD, last_beep_tail, play_test_tone_detail
+
+        status.setText(f"{AUDIO_BUILD}… ~10s · headphones in")
 
         import threading
 
-        from esp_handset.audio_out import play_test_tone_detail
-
         def _work() -> None:
             ok, msg = play_test_tone_detail()
+            tail = last_beep_tail(4)
 
             def _ui() -> None:
                 _set_busy(False)
                 if not ok:
-                    status.setText(f"FAIL: {msg}")
+                    status.setText(f"FAIL: {msg}\n{tail[-80:]}")
                 else:
-                    status.setText(msg[:48])
+                    status.setText(f"{msg}\n{tail[-60:]}")
                 _ask_heard("speaker")
 
             QTimer.singleShot(0, _ui)
