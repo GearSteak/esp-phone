@@ -629,7 +629,16 @@ def make_ebook_page(on_back: Callable[[], None]) -> QWidget:
     return page_chrome("Ebooks", body, on_back)
 
 
-# ----- Accounts / Sounds / Email -----
+# ----- Accounts / Email -----
+
+
+def make_sounds_page(on_back: Callable[[], None]) -> QWidget:
+    """Deprecated — Audio lives under Settings → Audio (set_debug)."""
+    from esp_handset.pages import make_debug_page
+
+    return make_debug_page(on_back)
+
+
 def make_accounts_page(on_back: Callable[[], None]) -> QWidget:
     body = QWidget()
     lay = QVBoxLayout(body)
@@ -702,52 +711,6 @@ def make_accounts_page(on_back: Callable[[], None]) -> QWidget:
 
     save.clicked.connect(do_save)
     return page_chrome("Accounts", body, on_back)
-
-
-def make_sounds_page(on_back: Callable[[], None]) -> QWidget:
-    body = QWidget()
-    lay = QVBoxLayout(body)
-    prefs = store.load("sounds.json", {"profile": "Normal", "enabled": True})
-    profile = QComboBox()
-    profile.addItems(["Silent", "Normal", "Loud", "Outdoor"])
-    profile.setCurrentText(prefs.get("profile", "Normal"))
-    enabled = QCheckBox("Sounds enabled")
-    enabled.setChecked(bool(prefs.get("enabled", True)))
-    test = QPushButton("Test notify sound")
-    save = QPushButton("Save")
-    lay.addWidget(QLabel("Profile"))
-    lay.addWidget(profile)
-    lay.addWidget(enabled)
-    lay.addWidget(test)
-    lay.addWidget(save)
-    lay.addWidget(
-        QLabel("Volume keys still go through esp-keyd → PipeWire.")
-    )
-    lay.addStretch(1)
-
-    def do_save():
-        store.save(
-            "sounds.json",
-            {"profile": profile.currentText(), "enabled": enabled.isChecked()},
-        )
-
-    def do_test():
-        if not enabled.isChecked() or profile.currentText() == "Silent":
-            QMessageBox.information(body, "Sounds", "Silent / disabled")
-            return
-        from esp_handset.audio_out import play_test_tone
-
-        if play_test_tone():
-            return
-        QMessageBox.information(
-            body,
-            "Sounds",
-            "No tone.\nRun: sudo digivice-audio-fix\nthen try again.",
-        )
-
-    save.clicked.connect(do_save)
-    test.clicked.connect(do_test)
-    return page_chrome("Sounds", body, on_back)
 
 
 def make_email_page(on_back: Callable[[], None]) -> QWidget:

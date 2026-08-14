@@ -14,26 +14,6 @@ if [[ "$(id -u)" -ne 0 ]]; then
   exit 1
 fi
 
-if [[ "${1:-}" == "--persist-only" ]]; then
-  # Install rules + wake devices; no beep
-  mkdir -p /etc/udev/rules.d /etc/modprobe.d
-  if [[ -f /opt/esp-handset/session/99-digivice-cmedia-nosuspend.rules ]]; then
-    install -m 644 /opt/esp-handset/session/99-digivice-cmedia-nosuspend.rules \
-      /etc/udev/rules.d/99-digivice-cmedia-nosuspend.rules
-  fi
-  echo "options usbcore autosuspend=-1" >/etc/modprobe.d/digivice-usb-autosuspend.conf
-  echo -1 >/sys/module/usbcore/parameters/autosuspend 2>/dev/null || true
-  udevadm control --reload-rules 2>/dev/null || true
-  for d in /sys/bus/usb/devices/*; do
-    [[ -f "$d/idVendor" ]] || continue
-    [[ "$(cat "$d/idVendor" 2>/dev/null)" == "0d8c" ]] || continue
-    echo on >"$d/power/control" 2>/dev/null || true
-    echo -1 >"$d/power/autosuspend_delay_ms" 2>/dev/null || true
-  done
-  log "persist OK (no beep)"
-  exit 0
-fi
-
 USER_NAME="${SUDO_USER:-gearsteak}"
 [[ "$USER_NAME" == "root" ]] && USER_NAME=gearsteak
 for u in gearsteak pi isaac; do
@@ -46,6 +26,86 @@ as_user() {
   sudo -u "$USER_NAME" -H env XDG_RUNTIME_DIR="$RUNTIME" \
     DBUS_SESSION_BUS_ADDRESS="unix:path=$RUNTIME/bus" "$@"
 }
+
+wake_cmedia() {
+  echo -1 >/sys/module/usbcore/parameters/autosuspend 2>/dev/null || true
+  for d in /sys/bus/usb/devices/*; do
+    [[ -f "$d/idVendor" ]] || continue
+    [[ "$(cat "$d/idVendor" 2>/dev/null)" == "0d8c" ]] || continue
+    echo on >"$d/power/control" 2>/dev/null || true
+    echo -1 >"$d/power/autosuspend" 2>/dev/null || true
+    echo -1 >"$d/power/autosuspend_delay_ms" 2>/dev/null || true
+  done
+}
+
+find_usb_card() {
+  USB_CARD=""
+  while IFS= read -r line; do
+    if [[ "$line" =~ ^card\ ([0-9]+): ]]; then
+      idx="${BASH_REMATCH[1]}"
+      low="$(echo "$line" | tr '[:upper:]' '[:lower:]')"
+      echo "$low" | grep -qE 'hdmi|vc4' && continue
+      echo "$low" | grep -qE 'usb|device|c-media|audio' || continue
+      USB_CARD="$idx"
+      break
+    fi
+  done < <(aplay -l 2>/dev/null)
+}
+
+exclusive_beep() {
+  # Digivice UI path: stop PipeWire, ALSA exclusive sine, restart PW.
+  local rc=1
+  _pw_restart() {
+    as_user systemctl --user start pipewire wireplumber pipewire-pulse 2>/dev/null || true
+  }
+  trap _pw_restart EXIT
+  wake_cmedia
+  sleep 0.3
+  find_usb_card
+  if [[ -z "$USB_CARD" ]]; then
+    log "ERROR: no USB playback card"
+    aplay -l 2>&1 || true
+    trap - EXIT
+    _pw_restart
+    return 1
+  fi
+  mkdir -p /etc/esp-handset
+  echo "$USB_CARD" >/etc/esp-handset/alsa-card
+  for ctl in Speaker PCM Master Headphone; do
+    amixer -c "$USB_CARD" -q sset "$ctl" 100% unmute 2>/dev/null || true
+  done
+  log "card $USB_CARD · stop PipeWire · exclusive beep"
+  as_user systemctl --user stop pipewire-pulse wireplumber pipewire 2>/dev/null || true
+  sleep 0.6
+  fuser -k "/dev/snd/pcmC${USB_CARD}D0p" 2>/dev/null || true
+  sleep 0.15
+  log ">>> WATCH RED LED — must BLINK <<<"
+  timeout 5 speaker-test -D "plughw:$USB_CARD,0" -c 2 -r 48000 -t sine -f 880 -l 1
+  rc=$?
+  log "speaker-test exit=$rc"
+  trap - EXIT
+  _pw_restart
+  return "$rc"
+}
+
+if [[ "${1:-}" == "--persist-only" ]]; then
+  # Install rules + wake devices; no beep
+  mkdir -p /etc/udev/rules.d /etc/modprobe.d
+  if [[ -f /opt/esp-handset/session/99-digivice-cmedia-nosuspend.rules ]]; then
+    install -m 644 /opt/esp-handset/session/99-digivice-cmedia-nosuspend.rules \
+      /etc/udev/rules.d/99-digivice-cmedia-nosuspend.rules
+  fi
+  echo "options usbcore autosuspend=-1" >/etc/modprobe.d/digivice-usb-autosuspend.conf
+  wake_cmedia
+  udevadm control --reload-rules 2>/dev/null || true
+  log "persist OK (no beep)"
+  exit 0
+fi
+
+if [[ "${1:-}" == "--beep" ]]; then
+  exclusive_beep
+  exit $?
+fi
 
 # 1) Kill USB autosuspend for C-Media (common solid-LED / silent cause on Pi)
 log "Disabling USB autosuspend for C-Media…"

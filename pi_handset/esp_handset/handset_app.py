@@ -222,7 +222,6 @@ from esp_handset.shell import (  # noqa: E402
     CLOCK_APPS,
     GAMES_APPS,
     MEDIA_APPS,
-    SETTINGS_APPS,
     SMS_APPS,
     TOOLS_APPS,
     PhoneShell,
@@ -299,10 +298,7 @@ def build_app(bridge: Optional[EspBridge], modem: Optional[Sim7600]) -> PhoneShe
         "folder_tools",
         shell.build_folder_keyed("folder_tools", "Tools", TOOLS_APPS),
     )
-    shell.register_page(
-        "folder_settings",
-        shell.build_folder_keyed("folder_settings", "Settings", SETTINGS_APPS),
-    )
+    # Settings: hub list only (not a second radial with duplicate Audio/Sounds)
     shell.register_page(
         "folder_media",
         shell.build_folder_keyed("folder_media", "Media", MEDIA_APPS),
@@ -400,6 +396,8 @@ def build_app(bridge: Optional[EspBridge], modem: Optional[Sim7600]) -> PhoneShe
     shell.register_page("set_update", pages.make_update_page(back))
     shell.register_page("set_mouse", pages.make_mouse_page(back))
     shell.register_page("set_debug", pages.make_debug_page(back))
+    # Old Sounds menu key → same Audio page
+    shell.pages["set_sounds"] = shell.pages["set_debug"]
     shell.register_page("set_power", pages.make_power_page(back))
     shell.register_page("help", pages.make_help_page(back))
     shell.register_page(
@@ -496,7 +494,6 @@ def build_app(bridge: Optional[EspBridge], modem: Optional[Sim7600]) -> PhoneShe
     shell.register_page("uno", games_ui.make_uno(back))
     shell.register_page("set_security", features.make_security_page(back))
     shell.register_page("set_accounts", features.make_accounts_page(back))
-    shell.register_page("set_sounds", features.make_sounds_page(back))
     shell.register_page("stub", pages.stub_page("App", "Unknown app key.", back))
 
     # Bridge events
