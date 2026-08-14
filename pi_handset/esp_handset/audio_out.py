@@ -1,4 +1,4 @@
-"""Digivice playback — ui-beep (full-scale mono aplay) with correct PipeWire user."""
+"""Digivice playback — recover C-Media stick, then ui-beep."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from pathlib import Path
 from shutil import which
 from typing import List, Optional, Tuple
 
-AUDIO_BUILD = "v10"
+AUDIO_BUILD = "v11"
 _LOG = Path.home() / ".esp-handset" / "last-beep.txt"
 
 
@@ -23,24 +23,6 @@ def _fix_bin() -> Optional[str]:
         if os.path.isfile(p) and os.access(p, os.X_OK):
             return p
     return which("digivice-audio-fix")
-
-
-def wake_usb_audio() -> None:
-    fix = _fix_bin()
-    if not fix:
-        return
-    try:
-        subprocess.run(
-            ["sudo", "-n", fix, "--persist-only"],
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            timeout=8,
-            check=False,
-            start_new_session=True,
-        )
-    except Exception:
-        pass
 
 
 def _kill_tree(proc: subprocess.Popen) -> None:
@@ -72,7 +54,6 @@ def _run_fix_detached(args: List[str], timeout: float) -> Tuple[int, str]:
     _LOG.write_text(header, encoding="utf-8")
     cmd = ["sudo", "-n", fix, *args]
     env = os.environ.copy()
-    # Ensure sudo sees Digivice user (script prefers SUDO_USER for PipeWire stop)
     me = os.environ.get("USER") or os.environ.get("LOGNAME")
     if me and me != "root":
         env["SUDO_USER"] = me
@@ -113,6 +94,11 @@ def _run_fix_detached(args: List[str], timeout: float) -> Tuple[int, str]:
     return code, out
 
 
+def wake_usb_audio() -> None:
+    """Recover C-Media into ALSA (authorized=1 + rebind)."""
+    _run_fix_detached(["--recover"], timeout=15.0)
+
+
 def play_test_tone(*, seconds: float = 2.0) -> bool:
     del seconds
     ok, _ = play_test_tone_detail()
@@ -120,33 +106,40 @@ def play_test_tone(*, seconds: float = 2.0) -> bool:
 
 
 def play_test_tone_detail(*, seconds: float = 2.0) -> Tuple[bool, str]:
-    """UI beep: full-scale mono aplay after stopping Digivice user's PipeWire."""
     del seconds
     if not _fix_bin():
         return False, "fix missing"
 
-    # 20s budget — must not cut the 2s tone (old 12s kill = one LED blink)
+    # Recover first if stick vanished from ALSA
+    code_r, out_r = _run_fix_detached(["--recover"], timeout=15.0)
+    if "OK card=" not in out_r and "ERROR" in out_r:
+        # Still try beep — recover logs help
+        pass
+
     code, out = _run_fix_detached(["--ui-beep"], timeout=20.0)
+    combined = out_r + "\n" + out
+    if "password" in combined.lower():
+        return False, "sudo blocked"
+    if "ERROR: no USB card" in combined or "FAIL: stick not in ALSA" in combined:
+        return False, "No stick — unplug/replug"
     played = (
         "aplay exit=" in out
         or "speaker-test exit=" in out
         or "LISTEN NOW" in out
         or "ui-beep card=" in out
     )
-    if "password" in out.lower():
-        return False, "sudo blocked"
-    if "ERROR: no USB" in out or "no USB card" in out:
-        return False, "no USB card"
     if played and code in (0, 124):
-        # Extract aplay/speaker-test exit for tip line
         for line in out.splitlines():
             if "aplay exit=" in line or "speaker-test exit=" in line:
                 return True, f"{AUDIO_BUILD} {line.strip()[-18:]}"
         return True, f"{AUDIO_BUILD} done"
-    for line in reversed(out.splitlines()):
+    for line in reversed(combined.splitlines()):
         line = line.strip()
         if line.startswith("[audio-fix]"):
-            return False, line.replace("[audio-fix] ", "")[:40]
+            msg = line.replace("[audio-fix] ", "")
+            if "gui_user=" in msg or "mixer:" in msg:
+                continue
+            return False, msg[:40]
     return False, f"fail exit={code}"
 
 

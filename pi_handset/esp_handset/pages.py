@@ -2836,6 +2836,11 @@ def make_debug_page(on_back: Callable[[], None]) -> QWidget:
     sound_btn.setStyleSheet("font-size:11px;")
     lay.addWidget(sound_btn)
 
+    wake_btn = QPushButton("FIX USB")
+    wake_btn.setFixedHeight(32)
+    wake_btn.setStyleSheet("font-size:13px; font-weight:700;")
+    lay.addWidget(wake_btn)
+
     yes_btn = _big_btn("YES")
     no_btn = _big_btn("NO")
     yes_btn.setStyleSheet("font-size:15px; font-weight:700; background:#1a5a2a;")
@@ -2897,6 +2902,41 @@ def make_debug_page(on_back: Callable[[], None]) -> QWidget:
         spk_btn.setEnabled(not on)
         mic_btn.setEnabled(not on)
         sound_btn.setEnabled(not on)
+        wake_btn.setEnabled(not on)
+
+    def do_wake() -> None:
+        if busy["on"]:
+            return
+        _set_busy(True)
+        _set_status("Fixing USB…")
+
+        from PyQt5.QtCore import QObject, pyqtSignal
+
+        from esp_handset.audio_out import wake_usb_audio
+
+        class _W(QObject):
+            done = pyqtSignal(str)
+
+        sig = getattr(body, "_wake_sig", None)
+        if sig is None:
+            sig = _W(body)
+            body._wake_sig = sig
+
+            def _done(msg: str) -> None:
+                _set_busy(False)
+                _set_status(msg)
+                scan_hw()
+
+            sig.done.connect(_done)
+
+        def _work() -> None:
+            try:
+                wake_usb_audio()
+                sig.done.emit("USB fix done")
+            except Exception as e:
+                sig.done.emit(str(e)[:40])
+
+        threading.Thread(target=_work, daemon=True).start()
 
     def _ask_heard(kind: str) -> None:
         pending["kind"] = kind

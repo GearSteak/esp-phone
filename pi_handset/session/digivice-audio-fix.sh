@@ -39,24 +39,68 @@ wake_cmedia() {
   for d in /sys/bus/usb/devices/*; do
     [[ -f "$d/idVendor" ]] || continue
     [[ "$(cat "$d/idVendor" 2>/dev/null)" == "0d8c" ]] || continue
+    # Never leave stick unauthorized (that = no ALSA card + solid/dead LED)
+    echo 1 >"$d/authorized" 2>/dev/null || true
     echo on >"$d/power/control" 2>/dev/null || true
     echo -1 >"$d/power/autosuspend" 2>/dev/null || true
     echo -1 >"$d/power/autosuspend_delay_ms" 2>/dev/null || true
   done
 }
 
+recover_cmedia() {
+  # Bring C-Media back after a bad re-auth / autosuspend
+  log "recover C-Media USB…"
+  wake_cmedia
+  for d in /sys/bus/usb/devices/*; do
+    [[ -f "$d/idVendor" ]] || continue
+    [[ "$(cat "$d/idVendor" 2>/dev/null)" == "0d8c" ]] || continue
+    name="$(basename "$d")"
+    log "  force auth+rebind $name"
+    echo 1 >"$d/authorized" 2>/dev/null || true
+    if [[ -e "$d/driver" ]]; then
+      echo "$name" >"$d/driver/unbind" 2>/dev/null || true
+      sleep 0.4
+    fi
+    echo "$name" >/sys/bus/usb/drivers/usb/bind 2>/dev/null || true
+    sleep 0.8
+    echo 1 >"$d/authorized" 2>/dev/null || true
+    echo on >"$d/power/control" 2>/dev/null || true
+  done
+  modprobe snd-usb-audio 2>/dev/null || true
+  sleep 1.2
+  log "lsusb C-Media:"
+  lsusb 2>/dev/null | grep -i '0d8c\|c-media\|audio' | while read -r l; do log "  $l"; done
+  log "aplay -l:"
+  aplay -l 2>&1 | while read -r l; do log "  $l"; done
+}
+
 find_usb_card() {
   USB_CARD=""
+  # 1) Prefer USB / C-Media style names
   while IFS= read -r line; do
     if [[ "$line" =~ ^card\ ([0-9]+): ]]; then
       idx="${BASH_REMATCH[1]}"
       low="$(echo "$line" | tr '[:upper:]' '[:lower:]')"
-      echo "$low" | grep -qE 'hdmi|vc4' && continue
-      echo "$low" | grep -qE 'usb|device|c-media|audio' || continue
-      USB_CARD="$idx"
-      break
+      echo "$low" | grep -qE 'hdmi|vc4|bcm2835' && continue
+      if echo "$low" | grep -qE 'usb|device|c-media|audio|headset|pn[np]'; then
+        USB_CARD="$idx"
+        log "card $USB_CARD ← $line"
+        return 0
+      fi
     fi
   done < <(aplay -l 2>/dev/null)
+  # 2) Any non-HDMI playback card (cheap sticks often name oddly)
+  while IFS= read -r line; do
+    if [[ "$line" =~ ^card\ ([0-9]+): ]]; then
+      idx="${BASH_REMATCH[1]}"
+      low="$(echo "$line" | tr '[:upper:]' '[:lower:]')"
+      echo "$low" | grep -qE 'hdmi|vc4|bcm2835' && continue
+      USB_CARD="$idx"
+      log "card $USB_CARD (fallback) ← $line"
+      return 0
+    fi
+  done < <(aplay -l 2>/dev/null)
+  return 1
 }
 
 exclusive_beep() {
@@ -66,21 +110,9 @@ exclusive_beep() {
     as_user systemctl --user start pipewire wireplumber pipewire-pulse 2>/dev/null || true
   }
   trap _pw_restart EXIT
-  wake_cmedia
-  for d in /sys/bus/usb/devices/*; do
-    [[ -f "$d/idVendor" ]] || continue
-    [[ "$(cat "$d/idVendor" 2>/dev/null)" == "0d8c" ]] || continue
-    if [[ -f "$d/authorized" ]]; then
-      log "USB re-auth $(basename "$d")"
-      echo 0 >"$d/authorized" 2>/dev/null || true
-      sleep 0.6
-      echo 1 >"$d/authorized" 2>/dev/null || true
-      sleep 1.5
-    fi
-  done
-  sleep 1
-  find_usb_card
-  if [[ -z "$USB_CARD" ]]; then
+  recover_cmedia
+  find_usb_card || true
+  if [[ -z "${USB_CARD:-}" ]]; then
     log "ERROR: no USB playback card"
     aplay -l 2>&1 || true
     trap - EXIT
@@ -123,10 +155,21 @@ if [[ "${1:-}" == "--persist-only" ]]; then
       /etc/udev/rules.d/99-digivice-cmedia-nosuspend.rules
   fi
   echo "options usbcore autosuspend=-1" >/etc/modprobe.d/digivice-usb-autosuspend.conf
-  wake_cmedia
+  recover_cmedia
   udevadm control --reload-rules 2>/dev/null || true
   log "persist OK (no beep)"
   exit 0
+fi
+
+if [[ "${1:-}" == "--recover" ]]; then
+  recover_cmedia
+  find_usb_card || true
+  if [[ -n "${USB_CARD:-}" ]]; then
+    log "OK card=$USB_CARD"
+    exit 0
+  fi
+  log "FAIL: stick not in ALSA — unplug/replug USB audio, then retry"
+  exit 1
 fi
 
 if [[ "${1:-}" == "--beep" ]]; then
@@ -137,10 +180,17 @@ fi
 if [[ "${1:-}" == "--soft-beep" || "${1:-}" == "--ui-beep" ]]; then
   # Digivice Debug BEEP — must match working CLI exclusive path.
   # Stick: C-Media USB (Amazon green=headphones / pink=mic).
-  find_usb_card
-  if [[ -z "$USB_CARD" ]]; then
+  wake_cmedia
+  find_usb_card || true
+  if [[ -z "${USB_CARD:-}" ]]; then
+    log "no card yet — recover…"
+    recover_cmedia
+    find_usb_card || true
+  fi
+  if [[ -z "${USB_CARD:-}" ]]; then
     log "ERROR: no USB card"
-    aplay -l 2>&1 || true
+    lsusb 2>&1 | while read -r l; do log "  $l"; done
+    aplay -l 2>&1 | while read -r l; do log "  $l"; done
     exit 1
   fi
   mkdir -p /etc/esp-handset
@@ -216,21 +266,8 @@ ACTION=="add|change", SUBSYSTEM=="usb", ATTR{idVendor}=="0d8c", \
 EOF
 udevadm control --reload-rules 2>/dev/null || true
 
-for d in /sys/bus/usb/devices/*; do
-  [[ -f "$d/idVendor" ]] || continue
-  [[ "$(cat "$d/idVendor" 2>/dev/null)" == "0d8c" ]] || continue
-  log "  wake $(basename "$d")"
-  echo on >"$d/power/control" 2>/dev/null || true
-  echo -1 >"$d/power/autosuspend" 2>/dev/null || true
-  echo -1 >"$d/power/autosuspend_delay_ms" 2>/dev/null || true
-  # Full device re-auth (same idea as unplug/replug)
-  if [[ -f "$d/authorized" ]]; then
-    echo 0 >"$d/authorized" 2>/dev/null || true
-    sleep 0.6
-    echo 1 >"$d/authorized" 2>/dev/null || true
-    sleep 1.5
-  fi
-done
+# Soft recover only — do NOT authorized=0 (that can leave stick dead / no ALSA card)
+recover_cmedia
 
 # Also system-wide USB autosuspend off (Pi likes to sleep gadgets)
 if [[ -f /sys/module/usbcore/parameters/autosuspend ]]; then
@@ -240,25 +277,15 @@ if [[ -f /sys/module/usbcore/parameters/autosuspend ]]; then
   log "usbcore autosuspend=-1"
 fi
 
-sleep 1
+sleep 0.5
 
 # 2) Find USB card
-USB_CARD=""
-while IFS= read -r line; do
-  if [[ "$line" =~ ^card\ ([0-9]+): ]]; then
-    idx="${BASH_REMATCH[1]}"
-    low="$(echo "$line" | tr '[:upper:]' '[:lower:]')"
-    echo "$low" | grep -qE 'hdmi|vc4' && continue
-    echo "$low" | grep -qE 'usb|device|c-media|audio' || continue
-    USB_CARD="$idx"
-    log "card $USB_CARD ← $line"
-    break
-  fi
-done < <(aplay -l 2>/dev/null)
+find_usb_card || true
 
-if [[ -z "$USB_CARD" ]]; then
+if [[ -z "${USB_CARD:-}" ]]; then
   log "ERROR: no USB playback card after reset"
   aplay -l 2>&1 || true
+  lsusb 2>&1 || true
   exit 1
 fi
 
