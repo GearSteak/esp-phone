@@ -80,7 +80,7 @@ mkdir -p /etc/esp-handset
 echo "$CARD" >/etc/esp-handset/alsa-card
 
 for ctl in Speaker PCM Master Headphone; do
-  amixer -c "$CARD" -q sset "$ctl" 100% unmute 2>/dev/null || true
+  amixer -c "$CARD" -q sset "$ctl" 35% unmute 2>/dev/null || true
 done
 
 # Prime with silence so boot does not speak "Front Center". First open may -524.

@@ -12,8 +12,8 @@ aplay -l
 echo
 echo "Waiting 2s (chip wake)…"
 sleep 2
-amixer -c 0 -q sset Speaker 100% unmute 2>/dev/null
-amixer -c 0 -q sset PCM 100% unmute 2>/dev/null
+amixer -c 1 -q sset Speaker 35% unmute 2>/dev/null
+amixer -c 1 -q sset PCM 35% unmute 2>/dev/null
 
 NAME="$(aplay -l 2>/dev/null | awk '/^card 0:/{gsub(/:/,"",$2); print $2; exit}')"
 [[ -n "$NAME" ]] || NAME=Device
@@ -26,27 +26,22 @@ play() {
 }
 
 ok=1
-play aplay -D "sysdefault:CARD=$NAME" "$WAV"
+play aplay -D plughw:1,0 "$WAV"
 ok=$?
 if [[ $ok -ne 0 ]]; then
   echo "retry after 2s (mini CM108 first-open quirk)…"
   sleep 2
-  play aplay -D "sysdefault:CARD=$NAME" "$WAV"
+  play aplay -D plughw:1,0 "$WAV"
   ok=$?
 fi
 if [[ $ok -ne 0 ]]; then
   sleep 2
-  play aplay -D plughw:0,0 "$WAV"
+  play speaker-test -D plughw:1,0 -c 2 -r 48000 -t sine -f 880 -l 1
   ok=$?
 fi
 if [[ $ok -ne 0 ]]; then
   sleep 2
-  play speaker-test -D plughw:0,0 -c 2 -r 48000 -t sine -f 880 -l 1
-  ok=$?
-fi
-if [[ $ok -ne 0 ]]; then
-  sleep 2
-  play speaker-test -D plughw:0,0 -c 1 -r 48000 -t sine -f 880 -l 1
+  play speaker-test -D plughw:1,0 -c 1 -r 48000 -t sine -f 880 -l 1
   ok=$?
 fi
 echo "exit=$ok  (LED blink = USB is streaming)"

@@ -77,7 +77,7 @@ find_usb_card() {
 unmute_card() {
   local c="$1"
   for ctl in Master PCM Speaker Headphone Playback; do
-    amixer -c "$c" -q sset "$ctl" 100% unmute 2>/dev/null || true
+    amixer -c "$c" -q sset "$ctl" 35% unmute 2>/dev/null || true
   done
   amixer -c "$c" -q sset 'Auto-Mute Mode' Disabled 2>/dev/null || true
   amixer -c "$c" -q sset 'Digivice Boost' 90% 2>/dev/null || true

@@ -14,7 +14,7 @@ from pathlib import Path
 from shutil import which
 from typing import List, Optional, Tuple
 
-AUDIO_BUILD = "v16-sealed"
+AUDIO_BUILD = "v17-quiet"
 _LOG = Path.home() / ".esp-handset" / "last-beep.txt"
 _WAV = Path.home() / ".esp-handset" / "beep-loud.wav"
 
@@ -100,14 +100,14 @@ def _make_loud_wav(seconds: float = 4.0) -> Path:
         w.setsampwidth(2)
         w.setframerate(rate)
         for i in range(n):
-            v = int(31000 * math.sin(2 * math.pi * freq * i / rate))
+            v = int(7000 * math.sin(2 * math.pi * freq * i / rate))
             w.writeframes(struct.pack("<hh", v, v))
     return _WAV
 
 
 def _unmute_card(card: str) -> None:
     for ctl in ("Speaker", "PCM", "Master", "Headphone"):
-        _run(["amixer", "-c", card, "-q", "sset", ctl, "100%", "unmute"], timeout=3)
+        _run(["amixer", "-c", card, "-q", "sset", ctl, "35%", "unmute"], timeout=3)
 
 
 def _wake_bin() -> Optional[str]:
@@ -160,8 +160,8 @@ def _alsa_play(wav: Path, secs: float) -> Tuple[bool, str]:
     time.sleep(2.0)
 
     devices = [
-        f"sysdefault:CARD={alsa_name}",
         f"plughw:{card},0",
+        f"sysdefault:CARD={alsa_name}",
         f"hw:{card},0",
     ]
     last = "no play"

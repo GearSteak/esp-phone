@@ -137,7 +137,7 @@ EOF
   cp -f /etc/asound.conf "$USER_HOME/.asoundrc" 2>/dev/null || true
   chown "$USER_NAME:$USER_NAME" "$USER_HOME/.asoundrc" 2>/dev/null || true
   for ctl in Speaker PCM Master Headphone; do
-    amixer -c "$USB_CARD" -q sset "$ctl" 100% unmute 2>/dev/null || true
+    amixer -c "$USB_CARD" -q sset "$ctl" 35% unmute 2>/dev/null || true
   done
   log "Stopping PipeWire for exclusive ALSA…"
   as_user systemctl --user stop pipewire-pulse wireplumber pipewire 2>/dev/null || true
@@ -212,10 +212,10 @@ if [[ "${1:-}" == "--soft-beep" || "${1:-}" == "--ui-beep" ]]; then
     case "$ctl" in
       Mic*|Capture*|Auto*) continue ;;
     esac
-    amixer -c "$USB_CARD" -q sset "$ctl" 100% unmute 2>/dev/null || true
+    amixer -c "$USB_CARD" -q sset "$ctl" 35% unmute 2>/dev/null || true
   done < <(amixer -c "$USB_CARD" scontrols 2>/dev/null)
   for ctl in Speaker PCM Master Headphone Playback; do
-    amixer -c "$USB_CARD" -q sset "$ctl" 100% unmute 2>/dev/null || true
+    amixer -c "$USB_CARD" -q sset "$ctl" 35% unmute 2>/dev/null || true
   done
   log "mixer:"
   amixer -c "$USB_CARD" sget Speaker 2>/dev/null | head -n 8 | while read -r l; do log "  $l"; done
@@ -227,7 +227,7 @@ if [[ "${1:-}" == "--soft-beep" || "${1:-}" == "--ui-beep" ]]; then
   fuser -k "/dev/snd/pcmC${USB_CARD}D0p" 2>/dev/null || true
   sleep 0.2
   for ctl in Speaker PCM Master Headphone; do
-    amixer -c "$USB_CARD" -q sset "$ctl" 100% unmute 2>/dev/null || true
+    amixer -c "$USB_CARD" -q sset "$ctl" 35% unmute 2>/dev/null || true
   done
 
   # Full-scale mono 880Hz 2s — same path CLI uses, clearer than speaker-test
@@ -242,7 +242,7 @@ with wave.open(path, "w") as w:
     w.setsampwidth(2)
     w.setframerate(rate)
     for i in range(n):
-        v = int(32000 * math.sin(2 * math.pi * freq * i / rate))
+        v = int(7000 * math.sin(2 * math.pi * freq * i / rate))
         w.writeframes(struct.pack("<h", v))
 PY
   log ">>> LISTEN NOW (green jack) LED should blink ~2s <<<"
@@ -312,7 +312,7 @@ cp -f /etc/asound.conf "$USER_HOME/.asoundrc" 2>/dev/null || true
 chown "$USER_NAME:$USER_NAME" "$USER_HOME/.asoundrc" 2>/dev/null || true
 
 for ctl in Speaker PCM Master Headphone; do
-  amixer -c "$USB_CARD" -q sset "$ctl" 100% unmute 2>/dev/null || true
+  amixer -c "$USB_CARD" -q sset "$ctl" 35% unmute 2>/dev/null || true
 done
 
 # 3) Exclusive beep — PipeWire often holds the device half-asleep
