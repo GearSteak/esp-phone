@@ -139,9 +139,39 @@ def _unmute_card(card: str) -> None:
         )
 
 
+def _ensure_pipewire() -> None:
+    """SSH/Digivice often have no sinks after we stopped PipeWire for exclusive ALSA."""
+    env = os.environ.copy()
+    uid = str(os.getuid())
+    env.setdefault("XDG_RUNTIME_DIR", f"/run/user/{uid}")
+    for cmd in (
+        ["systemctl", "--user", "start", "pipewire", "wireplumber", "pipewire-pulse"],
+        ["systemctl", "--user", "restart", "wireplumber"],
+    ):
+        try:
+            subprocess.run(
+                cmd,
+                capture_output=True,
+                timeout=8,
+                check=False,
+                env=env,
+            )
+        except Exception:
+            pass
+
+
 def _wpctl_usb_default() -> Optional[str]:
     """Point PipeWire at the CM108 USB sink (not HDMI). Returns sink id or None."""
+    _ensure_pipewire()
     _code, out = _run(["wpctl", "status"], timeout=5)
+    if "Sinks:" in out and not re.search(r"Sinks:\s*\n\s*[├└│].*\d+\.", out):
+        # Empty sink list — kick WirePlumber once
+        _log("wpctl sinks empty — restart wireplumber")
+        _ensure_pipewire()
+        import time as _t
+
+        _t.sleep(1.5)
+        _code, out = _run(["wpctl", "status"], timeout=5)
     _log("wpctl sinks:")
     sink_id = None
     in_sinks = False
