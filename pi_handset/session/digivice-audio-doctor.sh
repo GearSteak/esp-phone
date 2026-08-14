@@ -100,8 +100,19 @@ run_as_user() {
   done
   echo
 
-  echo "--- amixer FULL card 1 (USB) ---"
-  amixer -c 1 contents 2>&1 | head -n 200
+  USB_C=""
+  while IFS= read -r line; do
+    if [[ "$line" =~ ^card\ ([0-9]+): ]]; then
+      idx="${BASH_REMATCH[1]}"
+      low="$(echo "$line" | tr '[:upper:]' '[:lower:]')"
+      echo "$low" | grep -qE 'hdmi|vc4|bcm2835' && continue
+      USB_C="$idx"
+      echo "$low" | grep -qE 'usb|device|c-media|audio|headset' && break
+    fi
+  done < <(aplay -l 2>/dev/null)
+  [[ -n "$USB_C" ]] || USB_C=0
+  echo "--- amixer FULL card $USB_C ---"
+  amixer -c "$USB_C" contents 2>&1 | head -n 200
   echo
 
   echo "--- exclusive play (stop PW briefly) ---"
@@ -112,8 +123,8 @@ run_as_user() {
     systemctl --user stop pipewire pipewire-pulse wireplumber 2>&1 || true
   fi
   sleep 1
-  echo ">> exclusive speaker-test plughw:1,0 …"
-  timeout 4 speaker-test -D plughw:1,0 -t sine -f 880 -l 1 -c 2 2>&1 | tail -n 12
+  echo ">> exclusive speaker-test plughw:$USB_C,0 …"
+  timeout 4 speaker-test -D "plughw:$USB_C,0" -t sine -f 880 -l 1 -c 2 2>&1 | tail -n 12
   echo "exit=$?"
   if [[ "$(id -u)" -eq 0 && -n "${SUDO_USER:-}" && "${SUDO_USER}" != "root" ]]; then
     sudo -u "$SUDO_USER" -H env XDG_RUNTIME_DIR="/run/user/$(id -u "$SUDO_USER")" \

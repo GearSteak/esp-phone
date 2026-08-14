@@ -3123,11 +3123,18 @@ def make_debug_page(on_back: Callable[[], None]) -> QWidget:
         _set_busy(True)
         _set_badge(mic_badge, "MIC", "wait")
         _set_status("Speak now (3s)")
-        card = "1"
+        card = "0"
         try:
-            card = Path("/etc/esp-handset/alsa-card").read_text().strip() or "1"
-        except OSError:
-            pass
+            from esp_handset.audio_out import _usb_card as _live_card
+
+            card = _live_card() or "0"
+        except Exception:
+            try:
+                saved = Path("/etc/esp-handset/alsa-card").read_text().strip()
+                if saved.isdigit():
+                    card = saved
+            except OSError:
+                pass
         rec = _run_cmd(
             [
                 "arecord",

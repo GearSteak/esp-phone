@@ -13,7 +13,7 @@ from pathlib import Path
 from shutil import which
 from typing import List, Optional, Tuple
 
-AUDIO_BUILD = "v12-pw"
+AUDIO_BUILD = "v13-card0"
 _LOG = Path.home() / ".esp-handset" / "last-beep.txt"
 _WAV = Path.home() / ".esp-handset" / "beep-loud.wav"
 
@@ -67,36 +67,39 @@ def _run(cmd: List[str], timeout: float = 12.0) -> Tuple[int, str]:
         return 1, str(e)
 
 
+def _aplay_cards() -> list:
+    """Live ALSA playback cards from `aplay -l` (never trust a stale file)."""
+    _code, out = _run(["aplay", "-l"], timeout=5)
+    cards = []
+    for line in out.splitlines():
+        m = re.match(r"^card (\d+):", line)
+        if not m:
+            continue
+        low = line.lower()
+        if any(x in low for x in ("hdmi", "vc4", "bcm2835")):
+            continue
+        cards.append((m.group(1), low, line))
+    return cards
+
+
 def _usb_card() -> Optional[str]:
+    cards = _aplay_cards()
+    if not cards:
+        return None
+    live = {c[0] for c in cards}
+    # Saved index is only used if that card still exists (old default was 1; stick is often 0)
     p = Path("/etc/esp-handset/alsa-card")
     try:
         if p.is_file():
-            c = p.read_text().strip()
-            if c.isdigit():
-                return c
+            saved = p.read_text().strip()
+            if saved in live:
+                return saved
     except OSError:
         pass
-    code, out = _run(["aplay", "-l"], timeout=5)
-    if code != 0 and not out:
-        return None
-    for line in out.splitlines():
-        m = re.match(r"^card (\d+):", line)
-        if not m:
-            continue
-        low = line.lower()
-        if any(x in low for x in ("hdmi", "vc4", "bcm2835")):
-            continue
-        if any(x in low for x in ("usb", "device", "c-media", "audio", "headset")):
-            return m.group(1)
-    for line in out.splitlines():
-        m = re.match(r"^card (\d+):", line)
-        if not m:
-            continue
-        low = line.lower()
-        if any(x in low for x in ("hdmi", "vc4", "bcm2835")):
-            continue
-        return m.group(1)
-    return None
+    for idx, low, _line in cards:
+        if any(x in low for x in ("usb", "device", "c-media", "audio", "headset", "pn[p]")):
+            return idx
+    return cards[0][0]
 
 
 def _make_loud_wav(seconds: float = 5.0) -> Path:
