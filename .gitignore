@@ -13,6 +13,7 @@ sip.env
 .esp-handset/
 
 # Pi diagnostic dumps (paste into chat; do not commit)
+audio-doctor-LATEST.txt
 modem-doctor-LATEST.txt
 
 # Never commit Game Boy ROMs (personal copies stay local / on the Pi only)

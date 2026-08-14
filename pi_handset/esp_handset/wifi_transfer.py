@@ -72,10 +72,22 @@ _IMG_EXT = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif"}
 
 MODEM_REPORT = DATA / "modem-doctor.txt"
 MODEM_REPORT_TMP = Path("/tmp/digivice-modem-doctor.txt")
+AUDIO_REPORT = DATA / "audio-doctor.txt"
+AUDIO_REPORT_TMP = Path("/tmp/digivice-audio-doctor.txt")
 
 
 def _modem_report_path() -> Optional[Path]:
     for p in (MODEM_REPORT, MODEM_REPORT_TMP, Path.home() / "esp-phone" / "modem-doctor-LATEST.txt"):
+        try:
+            if p.is_file() and p.stat().st_size > 0:
+                return p
+        except OSError:
+            continue
+    return None
+
+
+def _audio_report_path() -> Optional[Path]:
+    for p in (AUDIO_REPORT, AUDIO_REPORT_TMP, Path.home() / "esp-phone" / "audio-doctor-LATEST.txt"):
         try:
             if p.is_file() and p.stat().st_size > 0:
                 return p
@@ -110,6 +122,36 @@ def _refresh_modem_report() -> Tuple[bool, str]:
         except Exception as e:
             last = str(e)[:80]
     p = _modem_report_path()
+    if p is not None:
+        return True, f"Using existing {p.name}"
+    return False, last
+
+
+def _refresh_audio_report() -> Tuple[bool, str]:
+    cmds = (
+        ["digivice-audio-doctor"],
+        ["sudo", "-n", "digivice-audio-doctor"],
+        ["bash", "/opt/esp-handset/session/digivice-audio-doctor.sh"],
+    )
+    last = "doctor not installed"
+    for cmd in cmds:
+        try:
+            r = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=120,
+                check=False,
+            )
+            if r.returncode == 0 or _audio_report_path() is not None:
+                p = _audio_report_path()
+                return True, f"Report ready ({p.name if p else 'ok'})"
+            last = (r.stderr or r.stdout or last).strip()[:80] or last
+        except FileNotFoundError:
+            continue
+        except Exception as e:
+            last = str(e)[:80]
+    p = _audio_report_path()
     if p is not None:
         return True, f"Using existing {p.name}"
     return False, last
@@ -291,6 +333,9 @@ def _make_handler(get_dest: Callable[[], str], signals: _UploadSignals):
             if path in ("/diag/modem", "/diag/modem.txt", "/modem-doctor.txt"):
                 self._serve_modem_report(download=path.endswith(".txt"))
                 return
+            if path in ("/diag/audio", "/diag/audio.txt", "/audio-doctor.txt"):
+                self._serve_audio_report(download=path.endswith(".txt"))
+                return
             self.send_error(404)
 
         def _html(self, title: str, inner: str) -> None:
@@ -341,6 +386,7 @@ def _make_handler(get_dest: Callable[[], str], signals: _UploadSignals):
 <p class="muted">{diag_note} · no SIM is OK for AT/GPS tests</p>
 <a class="btn" style="display:block;" href="/diag/modem.txt">Download modem-doctor.txt</a>
 <a style="display:block;margin-top:8px;" href="/diag/modem">View in browser</a>
+<a class="btn" style="margin-top:10px;display:block;" href="/diag/audio.txt">Download audio-doctor.txt</a>
 </div>
 
 <div class="box">
@@ -476,6 +522,42 @@ def _make_handler(get_dest: Callable[[], str], signals: _UploadSignals):
             self.end_headers()
             self.wfile.write(data)
 
+        def _serve_audio_report(self, *, download: bool) -> None:
+            path = _audio_report_path()
+            if path is None:
+                ok, msg = _refresh_audio_report()
+                path = _audio_report_path() if ok else None
+                if path is None:
+                    body = (
+                        "No audio-doctor.txt yet.\n\n"
+                        "On Digivice: Tools → Transfer → Prep audio report,\n"
+                        "or run: digivice-audio-doctor\n\n"
+                        f"({msg})\n"
+                    ).encode("utf-8")
+                    self.send_response(404)
+                    self.send_header("Content-Type", "text/plain; charset=utf-8")
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+                    signals.activity.emit("No audio report yet")
+                    return
+            try:
+                data = path.read_bytes()
+            except OSError:
+                self.send_error(500)
+                return
+            signals.activity.emit("Sent audio-doctor.txt")
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain; charset=utf-8")
+            self.send_header("Content-Length", str(len(data)))
+            if download:
+                self.send_header(
+                    "Content-Disposition",
+                    'attachment; filename="audio-doctor.txt"',
+                )
+            self.end_headers()
+            self.wfile.write(data)
+
         def do_POST(self) -> None:  # noqa: N802
             if self.path not in ("/upload", "/upload/"):
                 self.send_error(404)
@@ -587,6 +669,9 @@ def make_wifi_transfer_page(
     prep_btn = QPushButton("Prep modem report")
     prep_btn.setFixedHeight(26)
     prep_btn.setStyleSheet("font-size:11px;")
+    prep_audio_btn = QPushButton("Prep audio report")
+    prep_audio_btn.setFixedHeight(26)
+    prep_audio_btn.setStyleSheet("font-size:11px;")
     stop_btn = QPushButton("Stop")
     stop_btn.setFixedHeight(26)
     stop_btn.setEnabled(False)
@@ -597,6 +682,7 @@ def make_wifi_transfer_page(
     lay.addWidget(status, 1)
     lay.addWidget(start_btn)
     lay.addWidget(prep_btn)
+    lay.addWidget(prep_audio_btn)
     lay.addWidget(stop_btn)
 
     state = {"dest": initial_dest if initial_dest in DESTINATIONS else "photos"}
@@ -678,6 +764,7 @@ def make_wifi_transfer_page(
     def prep_modem() -> None:
         status.setText("Running modem doctor…")
         prep_btn.setEnabled(False)
+        prep_audio_btn.setEnabled(False)
 
         def work() -> None:
             ok, msg = _refresh_modem_report()
@@ -685,19 +772,39 @@ def make_wifi_transfer_page(
 
         threading.Thread(target=work, daemon=True).start()
 
+    def prep_audio() -> None:
+        status.setText("Running audio doctor…")
+        prep_btn.setEnabled(False)
+        prep_audio_btn.setEnabled(False)
+
+        def work() -> None:
+            ok, msg = _refresh_audio_report()
+            signals.prep_done.emit(ok, f"audio:{msg}")
+
+        threading.Thread(target=work, daemon=True).start()
+
     def on_prep_done(ok: bool, msg: str) -> None:
         prep_btn.setEnabled(True)
+        prep_audio_btn.setEnabled(True)
         if server_holder.get("httpd") is None:
             start_server()
         ip = _lan_ip()
         url_lab.setText(f"http://{ip}:{UPLOAD_PORT}")
-        if ok and _modem_report_path() is not None:
+        kind = "modem"
+        show = msg
+        if msg.startswith("audio:"):
+            kind = "audio"
+            show = msg[6:]
+        path_ok = (
+            _audio_report_path() if kind == "audio" else _modem_report_path()
+        )
+        if ok and path_ok is not None:
             status.setText(
-                f"Report ready · on PC open:\n"
-                f"http://{ip}:{UPLOAD_PORT}/diag/modem.txt"
+                f"{kind} report ready · on PC open:\n"
+                f"http://{ip}:{UPLOAD_PORT}/diag/{kind}.txt"
             )
         else:
-            status.setText(f"Doctor failed: {msg}")
+            status.setText(f"Doctor failed: {show}")
 
     def on_got(msg: str) -> None:
         status.setText(f"Saved {msg}\nSend more or Stop")
@@ -717,6 +824,7 @@ def make_wifi_transfer_page(
         b.clicked.connect(lambda _=False, k=key: set_dest(k))
     start_btn.clicked.connect(start_server)
     prep_btn.clicked.connect(prep_modem)
+    prep_audio_btn.clicked.connect(prep_audio)
     stop_btn.clicked.connect(
         lambda: (stop_server(), status.setText("Stopped. Start again when ready."))
     )

@@ -309,6 +309,14 @@ if [[ -f "$ROOT/session/digivice-modem-doctor.sh" ]]; then
     log "modem report → $REPO/modem-doctor-LATEST.txt  (paste into Cursor)"
   fi
 fi
+if [[ -f "$ROOT/session/digivice-audio-doctor.sh" ]]; then
+  install -m 755 "$ROOT/session/digivice-audio-doctor.sh" "$PREFIX/session/digivice-audio-doctor.sh"
+  install -m 755 "$ROOT/session/digivice-audio-doctor.sh" /usr/local/bin/digivice-audio-doctor
+fi
+if [[ -f "$ROOT/session/digivice-audio-usb.sh" ]]; then
+  install -m 755 "$ROOT/session/digivice-audio-usb.sh" "$PREFIX/session/digivice-audio-usb.sh"
+  install -m 755 "$ROOT/session/digivice-audio-usb.sh" /usr/local/bin/digivice-audio-usb
+fi
 
 if [[ -d "$ROOT/display" ]]; then
   install -m 755 "$ROOT/display/install-spi-userspace.sh" /usr/local/bin/digivice-install-spi-userspace 2>/dev/null || true
