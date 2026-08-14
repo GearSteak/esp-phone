@@ -3036,12 +3036,12 @@ def make_debug_page(on_back: Callable[[], None]) -> QWidget:
         _kill_all()
         _set_busy(True)
         _set_badge(spk_badge, "SPEAKER", "wait")
-        status.setText("Playing beep…\nListen for a tone.")
-        if _which("speaker-test"):
-            p = _run_cmd(
-                ["speaker-test", "-t", "sine", "-f", "880", "-l", "1", "-c", "1"],
-                timeout_ms=3500,
-            )
+        status.setText("Playing beep on USB…\nListen for a tone.")
+        from esp_handset.audio_out import play_cmd_for_debug
+
+        cmd = play_cmd_for_debug()
+        if cmd:
+            p = _run_cmd(cmd, timeout_ms=5000)
 
             def _done(_code=0, _st=None) -> None:
                 _set_busy(False)
@@ -3062,8 +3062,13 @@ def make_debug_page(on_back: Callable[[], None]) -> QWidget:
             p.finished.connect(_done2)
             return
         if _which("aplay") and Path("/usr/share/sounds/alsa/Front_Center.wav").is_file():
+            card = "1"
+            try:
+                card = Path("/etc/esp-handset/alsa-card").read_text().strip() or "1"
+            except OSError:
+                pass
             p = _run_cmd(
-                ["aplay", "/usr/share/sounds/alsa/Front_Center.wav"],
+                ["aplay", "-D", f"plughw:{card},0", "/usr/share/sounds/alsa/Front_Center.wav"],
                 timeout_ms=5000,
             )
 
@@ -3140,7 +3145,16 @@ def make_debug_page(on_back: Callable[[], None]) -> QWidget:
             status.setText(f"Got signal ({pct}% peak).\nPlaying it back…")
             play_cmd = None
             if _which("aplay"):
-                play_cmd = ["aplay", str(test_wav)]
+                card = "1"
+                try:
+                    card = (
+                        Path("/etc/esp-handset/alsa-card").read_text().strip() or "1"
+                    )
+                except OSError:
+                    pass
+                play_cmd = ["aplay", "-D", f"plughw:{card},0", str(test_wav)]
+                if _which("pasuspender"):
+                    play_cmd = ["pasuspender", "--"] + play_cmd
             elif _which("paplay"):
                 play_cmd = ["paplay", str(test_wav)]
             elif _which("ffplay"):

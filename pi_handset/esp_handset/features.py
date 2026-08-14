@@ -735,21 +735,15 @@ def make_sounds_page(on_back: Callable[[], None]) -> QWidget:
         if not enabled.isChecked() or profile.currentText() == "Silent":
             QMessageBox.information(body, "Sounds", "Silent / disabled")
             return
-        # paplay or speaker-test
-        if _which("paplay") and Path("/usr/share/sounds/freedesktop/stereo/message.oga").exists():
-            subprocess.Popen(
-                ["paplay", "/usr/share/sounds/freedesktop/stereo/message.oga"],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            )
-        elif _which("speaker-test"):
-            subprocess.Popen(
-                ["speaker-test", "-t", "sine", "-f", "880", "-l", "1"],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            )
-        else:
-            QMessageBox.information(body, "Sounds", "No paplay/speaker-test")
+        from esp_handset.audio_out import play_test_tone
+
+        if play_test_tone():
+            return
+        QMessageBox.information(
+            body,
+            "Sounds",
+            "No tone.\nRun: sudo digivice-audio-fix\nthen try again.",
+        )
 
     save.clicked.connect(do_save)
     test.clicked.connect(do_test)
