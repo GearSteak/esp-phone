@@ -3064,7 +3064,7 @@ def make_debug_page(on_back: Callable[[], None]) -> QWidget:
         _kill_all()
         _set_busy(True)
         _set_badge(spk_badge, "SPK", "wait")
-        status.setText("Beep… watch LED blink")
+        status.setText("CLI fix… ~15s · keep headphones in")
 
         import threading
 

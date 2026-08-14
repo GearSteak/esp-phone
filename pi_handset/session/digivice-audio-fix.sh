@@ -53,14 +53,13 @@ find_usb_card() {
 }
 
 exclusive_beep() {
-  # Digivice UI path: hard USB wake + stop PipeWire + ALSA exclusive sine.
+  # Keep identical to the full-script exclusive section (what works in the terminal).
   local rc=1
   _pw_restart() {
     as_user systemctl --user start pipewire wireplumber pipewire-pulse 2>/dev/null || true
   }
   trap _pw_restart EXIT
   wake_cmedia
-  # Same hard re-auth as full fix (soft wake alone often leaves solid LED / silence)
   for d in /sys/bus/usb/devices/*; do
     [[ -f "$d/idVendor" ]] || continue
     [[ "$(cat "$d/idVendor" 2>/dev/null)" == "0d8c" ]] || continue
@@ -69,9 +68,10 @@ exclusive_beep() {
       echo 0 >"$d/authorized" 2>/dev/null || true
       sleep 0.6
       echo 1 >"$d/authorized" 2>/dev/null || true
-      sleep 1.2
+      sleep 1.5
     fi
   done
+  sleep 1
   find_usb_card
   if [[ -z "$USB_CARD" ]]; then
     log "ERROR: no USB playback card"
@@ -82,54 +82,26 @@ exclusive_beep() {
   fi
   mkdir -p /etc/esp-handset
   echo "$USB_CARD" >/etc/esp-handset/alsa-card
-  # Re-auth often resets mixer to mute/min — crank every simple control
-  while IFS= read -r line; do
-    ctl="${line#Simple mixer control \'}"
-    ctl="${ctl%\',*}"
-    [[ -n "$ctl" ]] || continue
-    amixer -c "$USB_CARD" -q sset "$ctl" 100% unmute 2>/dev/null || true
-  done < <(amixer -c "$USB_CARD" scontrols 2>/dev/null)
-  for ctl in Speaker PCM Master Headphone Playback; do
-    amixer -c "$USB_CARD" -q sset "$ctl" 100% unmute 2>/dev/null || true
-  done
-  log "mixer after unmute:"
-  amixer -c "$USB_CARD" 2>/dev/null | head -n 40 | while read -r l; do log "  $l"; done
-  log "card $USB_CARD · stop PipeWire · exclusive beep"
-  as_user systemctl --user stop pipewire-pulse wireplumber pipewire 2>/dev/null || true
-  sleep 0.6
-  fuser -k "/dev/snd/pcmC${USB_CARD}D0p" 2>/dev/null || true
-  sleep 0.15
-  # Unmute again right before play (some sticks reset on open)
+  cat >/etc/asound.conf <<EOF
+defaults.pcm.card $USB_CARD
+defaults.ctl.card $USB_CARD
+pcm.!default { type plug; slave.pcm "plughw:$USB_CARD,0"; }
+ctl.!default { type hw; card $USB_CARD; }
+EOF
+  cp -f /etc/asound.conf "$USER_HOME/.asoundrc" 2>/dev/null || true
+  chown "$USER_NAME:$USER_NAME" "$USER_HOME/.asoundrc" 2>/dev/null || true
   for ctl in Speaker PCM Master Headphone; do
     amixer -c "$USB_CARD" -q sset "$ctl" 100% unmute 2>/dev/null || true
   done
-  log ">>> WATCH RED LED — must BLINK <<<"
-  log "green jack = speakers/headphones (line level — may need amp)"
-  # Longer + mid freq (cuts better on tiny speakers); then full-scale wav
-  timeout 6 speaker-test -D "plughw:$USB_CARD,0" -c 2 -r 48000 -t sine -f 1000 -l 2
+  log "Stopping PipeWire for exclusive ALSA…"
+  as_user systemctl --user stop pipewire-pulse wireplumber pipewire 2>/dev/null || true
+  sleep 0.8
+  fuser -k "/dev/snd/pcmC${USB_CARD}D0p" 2>/dev/null || true
+  sleep 0.2
+  log ">>> WATCH RED LED — must BLINK (Windows behavior) <<<"
+  log "beep: plughw:$USB_CARD,0  48000Hz stereo 3s"
+  timeout 5 speaker-test -D "plughw:$USB_CARD,0" -c 2 -r 48000 -t sine -f 880 -l 1
   rc=$?
-  BEEP_WAV="/tmp/digivice-beep-full.wav"
-  if command -v python3 >/dev/null; then
-    python3 - <<'PY' 2>/dev/null || true
-import math, struct, wave
-path = "/tmp/digivice-beep-full.wav"
-rate, secs, freq = 48000, 2.0, 880.0
-n = int(rate * secs)
-with wave.open(path, "w") as w:
-    w.setnchannels(2)
-    w.setsampwidth(2)
-    w.setframerate(rate)
-    for i in range(n):
-        # nearly full-scale stereo sine
-        v = int(30000 * math.sin(2 * math.pi * freq * i / rate))
-        w.writeframes(struct.pack("<hh", v, v))
-print(path)
-PY
-    if [[ -f "$BEEP_WAV" ]]; then
-      log "full-scale wav → plughw:$USB_CARD,0"
-      timeout 4 aplay -D "plughw:$USB_CARD,0" -q "$BEEP_WAV" 2>/dev/null || true
-    fi
-  fi
   log "speaker-test exit=$rc"
   trap - EXIT
   _pw_restart
