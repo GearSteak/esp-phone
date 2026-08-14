@@ -321,6 +321,10 @@ if [[ -f "$ROOT/session/digivice-audio-fix.sh" ]]; then
   install -m 755 "$ROOT/session/digivice-audio-fix.sh" "$PREFIX/session/digivice-audio-fix.sh"
   install -m 755 "$ROOT/session/digivice-audio-fix.sh" /usr/local/bin/digivice-audio-fix
 fi
+if [[ -f "$ROOT/session/digivice-cm108-beep.sh" ]]; then
+  install -m 755 "$ROOT/session/digivice-cm108-beep.sh" "$PREFIX/session/digivice-cm108-beep.sh"
+  install -m 755 "$ROOT/session/digivice-cm108-beep.sh" /usr/local/bin/digivice-cm108-beep
+fi
 # Keep C-Media USB audio awake across reboots
 if [[ -f "$ROOT/session/99-digivice-cmedia-nosuspend.rules" ]]; then
   install -m 644 "$ROOT/session/99-digivice-cmedia-nosuspend.rules" \

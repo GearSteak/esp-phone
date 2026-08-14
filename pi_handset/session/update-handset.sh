@@ -220,6 +220,7 @@ install_tree() {
       "digivice-audio-doctor.sh:digivice-audio-doctor" \
       "digivice-audio-usb.sh:digivice-audio-usb" \
       "digivice-audio-fix.sh:digivice-audio-fix" \
+      "digivice-cm108-beep.sh:digivice-cm108-beep" \
       "ensure-gb-roms.sh:digivice-gb-roms-dir" \
       "power.sh:digivice-power" \
       "full-update.sh:digivice-full-update"
