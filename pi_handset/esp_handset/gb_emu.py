@@ -114,6 +114,59 @@ class _EmuWorker(QThread):
         """One-frame press (for soft Start/Select)."""
         self._lock_cmds.append(("tap", name))
 
+    def _open_pyboy(self, want_sound: bool):
+        from pyboy import PyBoy
+
+        attempts = []
+        if want_sound:
+            attempts.append(
+                {"window": "null", "sound_emulated": True, "sound_volume": 55}
+            )
+            attempts.append({"window": "null", "sound": True})
+        else:
+            attempts.append({"window": "null", "sound_emulated": False})
+            attempts.append({"window": "null", "sound": False})
+        attempts.append({"window": "null"})
+        last_err = None
+        for kw in attempts:
+            try:
+                return PyBoy(str(self._rom), **kw)
+            except TypeError:
+                continue
+            except Exception as e:
+                last_err = e
+                break
+        if last_err:
+            raise last_err
+        return None
+
+    @staticmethod
+    def _feed_gb_audio(boy, pcm):
+        """Write one frame of PyBoy int8 stereo into aplay S16. Drop pcm on pipe fail."""
+        if pcm is None or pcm.stdin is None:
+            return pcm
+        if pcm.poll() is not None:
+            return None
+        try:
+            arr = boy.sound.ndarray
+        except Exception:
+            return pcm
+        if arr is None:
+            return pcm
+        try:
+            n = getattr(arr, "size", 0)
+            if not n:
+                return pcm
+            import numpy as np
+
+            pcm16 = (np.ascontiguousarray(arr, dtype=np.int16) * 72).tobytes()
+            pcm.stdin.write(pcm16)
+        except (BrokenPipeError, OSError):
+            return None
+        except Exception:
+            return pcm
+        return pcm
+
     def run(self) -> None:
         try:
             from pyboy import PyBoy
@@ -123,24 +176,33 @@ class _EmuWorker(QThread):
             return
 
         boy = None
+        pcm = None
         try:
-            kwargs = {"window": "null"}
-            # Quieter / cheaper on Pi Zero 2 W when supported
-            for k, v in (
-                ("sound_emulated", False),
-                ("sound", False),
-            ):
-                try:
-                    boy = PyBoy(str(self._rom), **kwargs, **{k: v})
-                    break
-                except TypeError:
-                    boy = None
+            want_sound = True
+            try:
+                from esp_handset.audio_out import _sounds_on
+
+                want_sound = _sounds_on()
+            except Exception:
+                want_sound = True
+
+            boy = self._open_pyboy(want_sound)
             if boy is None:
-                boy = PyBoy(str(self._rom), window="null")
+                self.failed.emit("PyBoy would not start")
+                self.stopped.emit()
+                return
             try:
                 boy.set_emulation_speed(1)
             except Exception:
                 pass
+
+            if want_sound:
+                try:
+                    from esp_handset.audio_out import open_usb_play_stream
+
+                    pcm = open_usb_play_stream(rate=48000, channels=2)
+                except Exception:
+                    pcm = None
 
             # Skip boot logo a bit faster when possible
             target_s = 1.0 / 55.0
@@ -186,11 +248,17 @@ class _EmuWorker(QThread):
 
                 # Advance ~1 frame; render=True so screen buffer updates
                 try:
-                    alive = boy.tick(1, True)
+                    alive = boy.tick(1, True, True)
                 except TypeError:
-                    alive = boy.tick()
+                    try:
+                        alive = boy.tick(1, True)
+                    except TypeError:
+                        alive = boy.tick()
                 if alive is False:
                     break
+
+                if pcm is not None:
+                    pcm = self._feed_gb_audio(boy, pcm)
 
                 now = time.perf_counter()
                 if now - last_emit >= emit_every:
@@ -207,6 +275,12 @@ class _EmuWorker(QThread):
         except Exception as e:
             self.failed.emit(str(e)[:120])
         finally:
+            try:
+                from esp_handset.audio_out import close_usb_play_stream
+
+                close_usb_play_stream(pcm)
+            except Exception:
+                pass
             try:
                 if boy is not None:
                     boy.stop(save=True)
@@ -421,7 +495,7 @@ def make_gb_page(
     tip = QLabel(
         "In Digivice (no RetroArch).\n"
         f"{py_msg}\n"
-        "Confirm=A · Select=B · S=Start · Back=quit"
+        "Sound → USB headphones. Confirm=A · Select=B · S=Start · Back=quit"
         if ok_py
         else f"{py_msg}\nROMs: Transfer still works."
     )

@@ -348,3 +348,66 @@ def prime_nav_click() -> None:
     _run(["aplay", "-D", dev, "-q", str(silent)], timeout=3)
     time.sleep(0.35)
     _run(["aplay", "-D", dev, "-q", str(silent)], timeout=3)
+
+
+def open_usb_play_stream(
+    *, rate: int = 48000, channels: int = 2
+) -> Optional[subprocess.Popen]:
+    """Persistent aplay stdin for Game Boy PCM (S16 stereo). Mini CM108 first open may -524."""
+    if not which("aplay"):
+        return None
+    dev = _usb_plughw()
+    if not dev:
+        return None
+    card = dev.split(":")[-1].split(",")[0]
+    _unmute_card(card)
+    cmd = [
+        "aplay",
+        "-D",
+        dev,
+        "-q",
+        "-t",
+        "raw",
+        "-f",
+        "S16_LE",
+        "-c",
+        str(channels),
+        "-r",
+        str(rate),
+    ]
+    for attempt in (1, 2):
+        try:
+            p = subprocess.Popen(
+                cmd,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+                bufsize=0,
+            )
+            time.sleep(0.15)
+            if p.poll() is not None:
+                time.sleep(0.5)
+                continue
+            return p
+        except Exception:
+            time.sleep(0.5)
+    return None
+
+
+def close_usb_play_stream(proc: Optional[subprocess.Popen]) -> None:
+    if proc is None:
+        return
+    try:
+        if proc.stdin:
+            proc.stdin.close()
+    except Exception:
+        pass
+    try:
+        proc.terminate()
+        proc.wait(timeout=1.5)
+    except Exception:
+        try:
+            proc.kill()
+        except Exception:
+            pass
