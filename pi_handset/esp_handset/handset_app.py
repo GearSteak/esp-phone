@@ -222,6 +222,7 @@ from esp_handset.shell import (  # noqa: E402
     CLOCK_APPS,
     GAMES_APPS,
     MEDIA_APPS,
+    SETTINGS_APPS,
     SMS_APPS,
     TOOLS_APPS,
     PhoneShell,
@@ -298,7 +299,10 @@ def build_app(bridge: Optional[EspBridge], modem: Optional[Sim7600]) -> PhoneShe
         "folder_tools",
         shell.build_folder_keyed("folder_tools", "Tools", TOOLS_APPS),
     )
-    # Settings: hub list only (not a second radial with duplicate Audio/Sounds)
+    shell.register_page(
+        "folder_settings",
+        shell.build_folder_keyed("folder_settings", "Settings", SETTINGS_APPS),
+    )
     shell.register_page(
         "folder_media",
         shell.build_folder_keyed("folder_media", "Media", MEDIA_APPS),

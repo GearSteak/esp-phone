@@ -57,7 +57,7 @@ TOOLS_APPS = [
 SETTINGS_APPS = [
     AppEntry("set_update", "Update", "Pull · install · restart", "↓"),
     AppEntry("set_mouse", "Mouse", "Desktop pointer speed", "⇔"),
-    AppEntry("set_debug", "Audio", "Beep · mic · profile", "♪"),
+    AppEntry("set_debug", "Debug", "Audio · beep · mic · profile", "⚒"),
     AppEntry("set_appearance", "Look", "Wallpaper", "▣"),
     AppEntry("set_security", "Security", "PIN", "🔒"),
     AppEntry("set_network", "Network", "Wi‑Fi / LTE", "⌁"),
@@ -98,7 +98,7 @@ FOLDER_MAP = {
     "sms": ("folder_sms", "SMS", SMS_APPS),
     "clock": ("folder_clock", "Clock", CLOCK_APPS),
     "tools": ("folder_tools", "Tools", TOOLS_APPS),
-    # Settings uses the scrollable hub page ("settings"), not a radial folder
+    "settings": ("folder_settings", "Settings", SETTINGS_APPS),
     "media": ("folder_media", "Media", MEDIA_APPS),
     "games": ("folder_games", "Games", GAMES_APPS),
 }

@@ -2313,7 +2313,7 @@ def make_settings_hub(on_back, open_page: Callable[[str], None], on_linux) -> QW
     for key, label in [
         ("set_update", "★ Update Digivice"),
         ("set_mouse", "Mouse speed"),
-        ("set_debug", "Audio · beep / mic"),
+        ("set_debug", "Debug · audio"),
         ("set_appearance", "Appearance"),
         ("set_network", "Network / modem"),
         ("set_accounts", "Accounts (SIP)"),
@@ -3076,9 +3076,9 @@ def make_debug_page(on_back: Callable[[], None]) -> QWidget:
             def _ui() -> None:
                 _set_busy(False)
                 if not ok:
-                    status.setText(f"Beep fail: {msg}")
+                    status.setText(f"FAIL: {msg}")
                 else:
-                    status.setText(msg)
+                    status.setText(msg[:48])
                 _ask_heard("speaker")
 
             QTimer.singleShot(0, _ui)
@@ -3181,7 +3181,7 @@ def make_debug_page(on_back: Callable[[], None]) -> QWidget:
     yes_btn.clicked.connect(on_yes)
     no_btn.clicked.connect(on_no)
     QTimer.singleShot(150, scan_hw)
-    return page_chrome("Audio", body, on_back, scroll=False)
+    return page_chrome("Debug", body, on_back, scroll=False)
 
 
 def make_about_page(modem, on_back) -> QWidget:
@@ -3225,7 +3225,7 @@ def make_help_page(on_back) -> QWidget:
         "Settings → Linux → Exit\n"
         "Settings → Update → software only\n"
         "Settings → Mouse → desktop pointer speed\n"
-        "Settings → Audio → Beep / mic\n"
+        "Settings → Debug → Beep / mic\n"
         "Settings → Power → Off/Restart (x2)\n"
         "SSH: digivice-leave\n"
         "Settings → Linux → confirm",
