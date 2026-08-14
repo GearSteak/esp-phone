@@ -67,25 +67,16 @@ def page_chrome(
     *,
     scroll: bool = True,
 ) -> QWidget:
-    """Compact chrome for Digivice panel; body scrolls on 240×320 by default."""
+    """Page body only. Title lives in the shell status bar (clock · title · SIM).
+    Hardware Back is the back control — no in-page ← row (that ate the Dial pad)."""
     from PyQt5.QtWidgets import QSizePolicy
 
+    del on_back  # hardware Back / on_hardware_back on nested pages
     w = QWidget()
+    w.setProperty("digiTitle", title)
     lay = QVBoxLayout(w)
-    lay.setContentsMargins(4, 3, 4, 3)
-    lay.setSpacing(3)
-    head = QHBoxLayout()
-    head.setSpacing(4)
-    if on_back:
-        back = QPushButton("←")
-        back.setFixedWidth(28)
-        back.setFixedHeight(26)
-        back.clicked.connect(on_back)
-        head.addWidget(back)
-    lab = QLabel(title)
-    lab.setStyleSheet("font-size: 12px; font-weight: 700;")
-    head.addWidget(lab, 1)
-    lay.addLayout(head)
+    lay.setContentsMargins(3, 2, 3, 2)
+    lay.setSpacing(2)
 
     if scroll:
         area = QScrollArea()
@@ -128,21 +119,23 @@ def stub_page(title: str, blurb: str, on_back: Callable[[], None]) -> QWidget:
 def make_phone_page(
     on_back, on_status, on_call_log: Optional[Callable[[], None]] = None
 ) -> QWidget:
-    """Classic T9 dial pad: big typed-number display + 3×4 keypad."""
+    """Classic T9 dial pad: number display + 3×4 keypad (fits 240×320)."""
+    del on_back
     body = QWidget()
     lay = QVBoxLayout(body)
-    lay.setContentsMargins(2, 2, 2, 2)
-    lay.setSpacing(4)
+    lay.setContentsMargins(1, 0, 1, 0)
+    lay.setSpacing(3)
 
     dial = QLineEdit()
     dial.setObjectName("dialDisplay")
     dial.setReadOnly(True)
+    dial.setFocusPolicy(Qt.NoFocus)
     dial.setAlignment(Qt.AlignCenter)
-    dial.setPlaceholderText("Enter number")
-    dial.setMinimumHeight(40)
+    dial.setPlaceholderText("number")
+    dial.setFixedHeight(28)
     dial.setStyleSheet(
-        "font-size: 22px; font-weight: 700; font-family: monospace;"
-        "padding: 8px 4px; letter-spacing: 1px;"
+        "font-size: 18px; font-weight: 700; font-family: monospace;"
+        "padding: 2px 4px; letter-spacing: 1px;"
     )
     lay.addWidget(dial)
 
@@ -163,7 +156,6 @@ def make_phone_page(
     ]
 
     def append_digit(ch: str) -> None:
-        # Long-press style: 0 key can also add + via its letter row — tap 0 → 0
         dial.setText(dial.text() + ch)
         dial.setCursorPosition(len(dial.text()))
 
@@ -192,13 +184,11 @@ def make_phone_page(
     for i, (digit, letters) in enumerate(keys):
         label = digit if not letters else f"{digit}\n{letters}"
         btn = QPushButton(label)
-        btn.setMinimumHeight(36)
+        btn.setMinimumHeight(0)
         btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         btn.setStyleSheet(
-            "font-size: 14px; font-weight: 800; padding: 2px;"
-            "line-height: 1.05;"
+            "font-size: 13px; font-weight: 800; padding: 0px;"
         )
-        # 0 → digit; hold-style + available as separate action below
         btn.clicked.connect(lambda _=False, c=digit: append_digit(c))
         grid.addWidget(btn, i // 3, i % 3)
     lay.addLayout(grid, 1)
@@ -206,34 +196,33 @@ def make_phone_page(
     actions = QHBoxLayout()
     actions.setSpacing(3)
     del_btn = QPushButton("⌫")
-    del_btn.setMinimumHeight(32)
-    del_btn.setToolTip("Delete")
+    del_btn.setFixedHeight(28)
     del_btn.clicked.connect(backspace)
     plus_btn = QPushButton("+")
-    plus_btn.setMinimumHeight(32)
-    plus_btn.setFixedWidth(36)
+    plus_btn.setFixedHeight(28)
     plus_btn.clicked.connect(lambda: append_digit("+"))
     call = QPushButton("Call")
-    call.setMinimumHeight(32)
-    call.setStyleSheet("font-weight:800; background:#1a7a3a;")
+    call.setFixedHeight(28)
+    call.setStyleSheet("font-weight:800; background:#1a7a3a; padding:0px;")
     call.clicked.connect(do_call)
     end = QPushButton("End")
-    end.setMinimumHeight(32)
-    end.setStyleSheet("font-weight:800; background:#8a2020;")
+    end.setFixedHeight(28)
+    end.setStyleSheet("font-weight:800; background:#8a2020; padding:0px;")
     end.clicked.connect(do_end)
-    actions.addWidget(del_btn)
-    actions.addWidget(plus_btn)
-    actions.addWidget(call, 1)
-    actions.addWidget(end, 1)
+    actions.addWidget(del_btn, 1)
+    actions.addWidget(plus_btn, 1)
+    actions.addWidget(call, 2)
+    actions.addWidget(end, 2)
     lay.addLayout(actions)
 
     if on_call_log:
         log_btn = QPushButton("Call log")
-        log_btn.setMinimumHeight(26)
+        log_btn.setFixedHeight(22)
+        log_btn.setStyleSheet("font-size:11px; padding:0px;")
         log_btn.clicked.connect(on_call_log)
         lay.addWidget(log_btn)
 
-    page = page_chrome("Phone", body, on_back, scroll=False)
+    page = page_chrome("Phone", body, None, scroll=False)
 
     def set_dial_number(number: str) -> None:
         dial.setText(str(number or "").strip())
@@ -1615,6 +1604,14 @@ def make_gallery_page(on_back: Callable[[], None], on_status) -> QWidget:
 
     # page_chrome with custom back
     chrome = page_chrome("Gallery", root, handle_back, scroll=False)
+
+    def on_hardware_back() -> bool:
+        if stack.currentWidget() is view_page:
+            show_list_mode()
+            return True
+        return False
+
+    chrome.on_hardware_back = on_hardware_back  # type: ignore[attr-defined]
     # expose seek on chrome for shell key routing
     chrome.digi_seek = digi_seek  # type: ignore[attr-defined]
     chrome.digi_seek_active = (  # type: ignore[attr-defined]

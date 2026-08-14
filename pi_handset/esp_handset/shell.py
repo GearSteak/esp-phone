@@ -6,7 +6,7 @@ from datetime import datetime
 from typing import Callable, Dict, List, Optional
 
 from PyQt5.QtCore import Qt, QTimer
-from PyQt5.QtGui import QFont, QPixmap
+from PyQt5.QtGui import QPixmap
 from PyQt5.QtWidgets import (
     QFrame,
     QHBoxLayout,
@@ -89,19 +89,25 @@ class PhoneShell(QMainWindow):
         outer.setSpacing(0)
 
         self.status = QFrame()
-        self.status.setFixedHeight(18)
+        self.status.setFixedHeight(20)
         self.status.setStyleSheet(
             "background: rgba(0,0,0,0.55); border-bottom: 1px solid rgba(255,255,255,0.08);"
         )
         s_lay = QHBoxLayout(self.status)
-        s_lay.setContentsMargins(6, 0, 6, 0)
+        s_lay.setContentsMargins(4, 0, 4, 0)
+        s_lay.setSpacing(4)
         self.clock_lab = QLabel("--:--")
         self.clock_lab.setStyleSheet("font-weight: 700; font-size: 10px;")
+        self.clock_lab.setFixedWidth(34)
+        self.title_lab = QLabel("")
+        self.title_lab.setAlignment(Qt.AlignCenter)
+        self.title_lab.setStyleSheet("font-weight: 700; font-size: 10px; color: #e8eef5;")
         self.signal_lab = QLabel("·")
         self.signal_lab.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         self.signal_lab.setStyleSheet("font-size: 9px; color: #9ab;")
+        self.signal_lab.setMinimumWidth(36)
         s_lay.addWidget(self.clock_lab)
-        s_lay.addStretch(1)
+        s_lay.addWidget(self.title_lab, 1)
         s_lay.addWidget(self.signal_lab)
         outer.addWidget(self.status)
 
@@ -222,12 +228,7 @@ class PhoneShell(QMainWindow):
             QPushButton[digiFocus="1"] {
                 background: #FFE600;
                 color: #000000;
-                border: 3px solid #000000;
-                border-radius: 4px;
-                font-weight: 800;
-                font-size: 12px;
-                padding: 8px 10px;
-                min-height: 32px;
+                border: 2px solid #000000;
             }
             QLineEdit[digiFocus="1"], QTextEdit[digiFocus="1"],
             QPlainTextEdit[digiFocus="1"], QComboBox[digiFocus="1"],
@@ -271,6 +272,23 @@ class PhoneShell(QMainWindow):
         )
         self._wallpaper.setPixmap(scaled)
 
+    def _page_title(self, key: str) -> str:
+        if not key or key == "home":
+            return ""
+        w = self.pages.get(key)
+        if w is not None:
+            t = w.property("digiTitle")
+            if t:
+                return str(t)[:18]
+        for _fk, (pk, title, _apps) in FOLDER_MAP.items():
+            if pk == key:
+                return title[:18]
+        return ""
+
+    def _sync_title(self) -> None:
+        key = self._nav[-1] if self._nav else "home"
+        self.title_lab.setText(self._page_title(key))
+
     def set_status_right(self, text: str) -> None:
         self.signal_lab.setText((text or "")[:18])
 
@@ -297,6 +315,7 @@ class PhoneShell(QMainWindow):
         else:
             # Keep focus on the page control (do NOT steal to shell — breaks Confirm/lists)
             digi_nav.ensure_page_focus(self.pages[key])
+        self._sync_title()
 
     def back(self) -> None:
         # App pages can consume Back (e.g. SMS thread → inbox)
@@ -324,6 +343,8 @@ class PhoneShell(QMainWindow):
                 digi_nav.ensure_page_focus(self.pages[key])
         else:
             self.go("home", replace=True)
+            return
+        self._sync_title()
 
     def home(self) -> None:
         self.go("home", replace=True)
@@ -344,14 +365,10 @@ class PhoneShell(QMainWindow):
         self, title: str, entries: List[AppEntry], page_key: str
     ) -> QWidget:
         page = QWidget()
+        page.setProperty("digiTitle", title)
         lay = QVBoxLayout(page)
         lay.setContentsMargins(4, 2, 4, 2)
         lay.setSpacing(0)
-        head = QLabel(title)
-        head.setAlignment(Qt.AlignCenter)
-        head.setFont(QFont("DejaVu Sans", 9, QFont.Bold))
-        head.setStyleSheet("color: #9ab;")
-        lay.addWidget(head)
         radial = RadialMenu(entries, on_activate=self._on_icon)
         self._radials[page_key] = radial
         lay.addWidget(radial, 1)

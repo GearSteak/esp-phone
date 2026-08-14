@@ -74,26 +74,9 @@ def focusables(root: QWidget) -> List[QWidget]:
 
 
 def _highlight(w: QWidget, on: bool) -> None:
-    """High-contrast Digivice focus: style property + text marker (color-independent)."""
+    """High-contrast Digivice focus via style only — never change button text
+    (that grew keypad keys after the first highlight)."""
     w.setProperty("digiFocus", "1" if on else "0")
-    # Shape/character cue works when color alone fails
-    if isinstance(w, QAbstractButton):
-        if on:
-            base = w.property("digiFocusBase")
-            if base is None:
-                base = w.text()
-                w.setProperty("digiFocusBase", base)
-            else:
-                base = str(base)
-            label = str(base)
-            if not label.startswith("▶ "):
-                w.setText("▶ " + label)
-        else:
-            base = w.property("digiFocusBase")
-            if base is not None:
-                w.setText(str(base))
-                # Keep base so re-focus is stable even if text was ▶ prefixed
-            w.setProperty("digiFocusBase", None)
     w.style().unpolish(w)
     w.style().polish(w)
     w.update()
