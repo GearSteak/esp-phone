@@ -6,16 +6,14 @@ import time
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Set
 
-from PyQt5.QtCore import Qt, QThread, pyqtSignal, QObject, QSize
+from PyQt5.QtCore import Qt, QThread, pyqtSignal, QObject, QSize, QEvent
 from PyQt5.QtGui import QImage, QPixmap, QKeyEvent
 from PyQt5.QtWidgets import (
-    QHBoxLayout,
     QLabel,
     QListWidget,
     QListWidgetItem,
     QPushButton,
     QSizePolicy,
-    QStackedWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -246,7 +244,7 @@ class _EmuWorker(QThread):
 
 
 class GbPlayView(QWidget):
-    """Fullscreen-ish GB screen; receives Digivice pad keys while visible."""
+    """Full-bleed black play surface; GB framebuffer scaled up, letterboxed."""
 
     digi_gamepad = True
 
@@ -255,46 +253,30 @@ class GbPlayView(QWidget):
         self._on_quit = on_quit
         self._worker: Optional[_EmuWorker] = None
         self._held_qt: Dict[int, str] = {}
+        self._last_frame: Optional[QImage] = None
         self.setFocusPolicy(Qt.StrongFocus)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.setObjectName("gbPlayView")
+        self.setAttribute(Qt.WA_OpaquePaintEvent, True)
+        self.setAutoFillBackground(True)
+        pal = self.palette()
+        pal.setColor(self.backgroundRole(), Qt.black)
+        self.setPalette(pal)
+        self.setStyleSheet("background:#000000; color:#9ab;")
 
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
-        lay.setSpacing(2)
+        lay.setSpacing(0)
 
-        self.screen = QLabel("…")
+        self.screen = QLabel("")
         self.screen.setAlignment(Qt.AlignCenter)
-        self.screen.setMinimumHeight(144)
-        self.screen.setStyleSheet("background:#0a0a0a; color:#9ab;")
+        self.screen.setStyleSheet("background:#000000; color:#888;")
         self.screen.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-
-        tip = QLabel("Confirm=A · Select=B · S=Start · Back=quit")
-        tip.setWordWrap(True)
-        tip.setStyleSheet("color:#9ab;font-size:9px;")
-        tip.setAlignment(Qt.AlignCenter)
-
-        row = QHBoxLayout()
-        self.btn_start = QPushButton("Start")
-        self.btn_start.setFixedHeight(24)
-        self.btn_sel = QPushButton("Select")
-        self.btn_sel.setFixedHeight(24)
-        self.btn_quit = QPushButton("Quit")
-        self.btn_quit.setFixedHeight(24)
-        row.addWidget(self.btn_start)
-        row.addWidget(self.btn_sel)
-        row.addWidget(self.btn_quit)
-
+        self.screen.setScaledContents(False)
         lay.addWidget(self.screen, 1)
-        lay.addWidget(tip)
-        lay.addLayout(row)
-
-        self.btn_start.clicked.connect(lambda: self._tap("start"))
-        self.btn_sel.clicked.connect(lambda: self._tap("select"))
-        self.btn_quit.clicked.connect(self.stop)
 
     def sizeHint(self) -> QSize:  # noqa: N802
-        return QSize(240, 220)
+        return QSize(240, 320)
 
     @property
     def playing(self) -> bool:
@@ -302,6 +284,8 @@ class GbPlayView(QWidget):
 
     def start_rom(self, rom: Path) -> None:
         self.stop()
+        self._last_frame = None
+        self.screen.setPixmap(QPixmap())
         self.screen.setText(f"Loading\n{rom.name}")
         w = _EmuWorker(rom, self)
         w.frame.connect(self._on_frame)
@@ -309,11 +293,13 @@ class GbPlayView(QWidget):
         self._worker = w
         w.start()
         self.setFocus(Qt.OtherFocusReason)
+        self.raise_()
 
     def stop(self) -> None:
         w = self._worker
         self._worker = None
         self._held_qt.clear()
+        self._last_frame = None
         if w is not None:
             try:
                 w.frame.disconnect()
@@ -328,29 +314,68 @@ class GbPlayView(QWidget):
                 w.terminate()
                 w.wait(500)
         self.screen.setPixmap(QPixmap())
-        self.screen.setText("Stopped")
+        self.screen.setText("")
 
     def _tap(self, name: str) -> None:
         if self._worker is not None:
             self._worker.button_tap(name)
 
+    def _fit_size(self) -> QSize:
+        """Largest 160×144 box that fits in the play view (integer scale preferred)."""
+        aw = max(self.screen.width(), 1)
+        ah = max(self.screen.height(), 1)
+        # Prefer integer scale for sharp pixels on Digivice
+        sx = max(1, aw // 160)
+        sy = max(1, ah // 144)
+        scale = min(sx, sy)
+        # If we have room for a larger non-integer fit, use that when integer leaves
+        # big empty margins (e.g. 240×290 → int scale 1 is tiny; use full width).
+        iw, ih = 160 * scale, 144 * scale
+        if iw < aw * 0.85 or ih < ah * 0.85:
+            fit_w = aw
+            fit_h = int(round(aw * 144 / 160))
+            if fit_h > ah:
+                fit_h = ah
+                fit_w = int(round(ah * 160 / 144))
+            return QSize(max(fit_w, 1), max(fit_h, 1))
+        return QSize(iw, ih)
+
+    def _paint_frame(self, qimg: QImage) -> None:
+        target = self._fit_size()
+        pix = QPixmap.fromImage(qimg).scaled(
+            target,
+            Qt.IgnoreAspectRatio,  # already computed aspect
+            Qt.FastTransformation,
+        )
+        # Center on black: QLabel AlignCenter + black stylesheet
+        self.screen.setPixmap(pix)
+
     def _on_frame(self, qimg: QImage) -> None:
         if qimg is None or qimg.isNull():
             return
-        pix = QPixmap.fromImage(qimg)
-        self.screen.setPixmap(
-            pix.scaled(
-                self.screen.size(),
-                Qt.KeepAspectRatio,
-                Qt.FastTransformation,
-            )
-        )
+        self._last_frame = qimg
+        self.screen.setText("")
+        self._paint_frame(qimg)
 
     def _on_fail(self, msg: str) -> None:
         self.screen.setText(msg)
 
+    def resizeEvent(self, e) -> None:  # noqa: N802
+        super().resizeEvent(e)
+        if self._last_frame is not None:
+            self._paint_frame(self._last_frame)
+
     def keyPressEvent(self, e: QKeyEvent) -> None:  # noqa: N802
         if e.isAutoRepeat():
+            return
+        # Soft Start/Select without on-screen chrome
+        if e.key() == Qt.Key_S:
+            self._tap("start")
+            e.accept()
+            return
+        if e.key() == Qt.Key_2:
+            self._tap("select")
+            e.accept()
             return
         name = _BTN_MAP.get(e.key())
         if name and self._worker is not None:
@@ -380,13 +405,11 @@ def make_gb_page(
     *,
     on_receive: Optional[Callable[[], None]] = None,
 ) -> QWidget:
-    """Games → Game Boy: ROM list + in-UI PyBoy (SPI stays with Digivice)."""
+    """Games → Game Boy: ROM list + fullscreen black PyBoy overlay."""
     body = QWidget()
     outer = QVBoxLayout(body)
     outer.setContentsMargins(0, 0, 0, 0)
     outer.setSpacing(0)
-    stack = QStackedWidget()
-    outer.addWidget(stack)
 
     # ----- list -----
     list_page = QWidget()
@@ -398,7 +421,7 @@ def make_gb_page(
     tip = QLabel(
         "In Digivice (no RetroArch).\n"
         f"{py_msg}\n"
-        "Confirm=A · Select=B · S=Start"
+        "Confirm=A · Select=B · S=Start · Back=quit"
         if ok_py
         else f"{py_msg}\nROMs: Transfer still works."
     )
@@ -428,15 +451,48 @@ def make_gb_page(
     lay.addWidget(recv)
     lay.addWidget(refresh)
 
+    outer.addWidget(list_page, 1)
+
+    state = {"playing": False}
+
+    def chrome_back() -> None:
+        if state["playing"]:
+            show_list()
+            return
+        on_back()
+
+    chrome = page_chrome("Game Boy", body, chrome_back, scroll=False)
     play_view = GbPlayView(on_quit=lambda: None)
+    play_view.setParent(chrome)
+    play_view.hide()
+
+    def _sync_overlay() -> None:
+        play_view.setGeometry(0, 0, chrome.width(), chrome.height())
+        play_view.raise_()
+
+    class _OverlayFilter(QObject):
+        def eventFilter(self, obj, event):  # noqa: N802
+            if obj is chrome and event.type() == QEvent.Resize:
+                if play_view.isVisible():
+                    _sync_overlay()
+            return False
+
+    _filt = _OverlayFilter(chrome)
+    chrome.installEventFilter(_filt)
 
     def show_list() -> None:
+        state["playing"] = False
         play_view.stop()
-        stack.setCurrentWidget(list_page)
+        play_view.hide()
+        list_page.show()
         refresh_list()
 
     def show_play() -> None:
-        stack.setCurrentWidget(play_view)
+        state["playing"] = True
+        list_page.hide()
+        _sync_overlay()
+        play_view.show()
+        play_view.raise_()
         play_view.setFocus(Qt.OtherFocusReason)
 
     play_view._on_quit = show_list  # type: ignore[method-assign]
@@ -484,14 +540,8 @@ def make_gb_page(
         else:
             status.setText("Open Tools → Transfer · GB ROMs")
 
-    def chrome_back() -> None:
-        if stack.currentWidget() is play_view:
-            show_list()
-            return
-        on_back()
-
     def on_hardware_back() -> bool:
-        if stack.currentWidget() is play_view:
+        if play_view.isVisible():
             show_list()
             return True
         return False
@@ -501,11 +551,6 @@ def make_gb_page(
     refresh.clicked.connect(refresh_list)
     recv.clicked.connect(do_receive)
 
-    stack.addWidget(list_page)
-    stack.addWidget(play_view)
-    stack.setCurrentWidget(list_page)
-
-    chrome = page_chrome("Game Boy", body, chrome_back, scroll=False)
     chrome.on_hardware_back = on_hardware_back  # type: ignore[attr-defined]
     chrome.gb_board = play_view  # type: ignore[attr-defined]
     refresh_list()
