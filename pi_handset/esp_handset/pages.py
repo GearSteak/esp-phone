@@ -2832,7 +2832,7 @@ def make_debug_page(on_back: Callable[[], None]) -> QWidget:
     hw.setFixedHeight(28)
     lay.addWidget(hw)
 
-    status = QLabel("Beep / Mic · YES/NO after")
+    status = QLabel("Beep · LED blink = USB OK\nGreen jack = out (line level)")
     status.setWordWrap(True)
     status.setAlignment(Qt.AlignCenter)
     status.setStyleSheet("font-size:10px; color:#cde;")
@@ -2931,7 +2931,7 @@ def make_debug_page(on_back: Callable[[], None]) -> QWidget:
         no_btn.setEnabled(True)
         if kind == "speaker":
             _set_badge(spk_badge, "SPK", "ask")
-            status.setText("Heard beep? YES / NO")
+            status.setText("Heard it? YES / NO\n(headphones on GREEN if speakers quiet)")
         else:
             _set_badge(mic_badge, "MIC", "ask")
             status.setText("Heard your voice? YES / NO")

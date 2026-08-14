@@ -82,17 +82,54 @@ exclusive_beep() {
   fi
   mkdir -p /etc/esp-handset
   echo "$USB_CARD" >/etc/esp-handset/alsa-card
-  for ctl in Speaker PCM Master Headphone; do
+  # Re-auth often resets mixer to mute/min — crank every simple control
+  while IFS= read -r line; do
+    ctl="${line#Simple mixer control \'}"
+    ctl="${ctl%\',*}"
+    [[ -n "$ctl" ]] || continue
+    amixer -c "$USB_CARD" -q sset "$ctl" 100% unmute 2>/dev/null || true
+  done < <(amixer -c "$USB_CARD" scontrols 2>/dev/null)
+  for ctl in Speaker PCM Master Headphone Playback; do
     amixer -c "$USB_CARD" -q sset "$ctl" 100% unmute 2>/dev/null || true
   done
+  log "mixer after unmute:"
+  amixer -c "$USB_CARD" 2>/dev/null | head -n 40 | while read -r l; do log "  $l"; done
   log "card $USB_CARD · stop PipeWire · exclusive beep"
   as_user systemctl --user stop pipewire-pulse wireplumber pipewire 2>/dev/null || true
   sleep 0.6
   fuser -k "/dev/snd/pcmC${USB_CARD}D0p" 2>/dev/null || true
   sleep 0.15
+  # Unmute again right before play (some sticks reset on open)
+  for ctl in Speaker PCM Master Headphone; do
+    amixer -c "$USB_CARD" -q sset "$ctl" 100% unmute 2>/dev/null || true
+  done
   log ">>> WATCH RED LED — must BLINK <<<"
-  timeout 5 speaker-test -D "plughw:$USB_CARD,0" -c 2 -r 48000 -t sine -f 880 -l 1
+  log "green jack = speakers/headphones (line level — may need amp)"
+  # Longer + mid freq (cuts better on tiny speakers); then full-scale wav
+  timeout 6 speaker-test -D "plughw:$USB_CARD,0" -c 2 -r 48000 -t sine -f 1000 -l 2
   rc=$?
+  BEEP_WAV="/tmp/digivice-beep-full.wav"
+  if command -v python3 >/dev/null; then
+    python3 - <<'PY' 2>/dev/null || true
+import math, struct, wave
+path = "/tmp/digivice-beep-full.wav"
+rate, secs, freq = 48000, 2.0, 880.0
+n = int(rate * secs)
+with wave.open(path, "w") as w:
+    w.setnchannels(2)
+    w.setsampwidth(2)
+    w.setframerate(rate)
+    for i in range(n):
+        # nearly full-scale stereo sine
+        v = int(30000 * math.sin(2 * math.pi * freq * i / rate))
+        w.writeframes(struct.pack("<hh", v, v))
+print(path)
+PY
+    if [[ -f "$BEEP_WAV" ]]; then
+      log "full-scale wav → plughw:$USB_CARD,0"
+      timeout 4 aplay -D "plughw:$USB_CARD,0" -q "$BEEP_WAV" 2>/dev/null || true
+    fi
+  fi
   log "speaker-test exit=$rc"
   trap - EXIT
   _pw_restart

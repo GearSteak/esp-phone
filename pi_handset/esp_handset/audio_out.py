@@ -11,7 +11,7 @@ from pathlib import Path
 from shutil import which
 from typing import List, Optional, Sequence, Tuple
 
-AUDIO_BUILD = "v5-fullfix"
+AUDIO_BUILD = "v6-loud"
 _LOG = Path.home() / ".esp-handset" / "last-beep.txt"
 
 
