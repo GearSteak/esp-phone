@@ -112,7 +112,9 @@ install_live_from_repo() {
     "ensure-buttons.sh:digivice-ensure-buttons" \
     "digivice-audio-doctor.sh:digivice-audio-doctor" \
     "digivice-audio-usb.sh:digivice-audio-usb" \
-    "digivice-audio-fix.sh:digivice-audio-fix"
+    "digivice-audio-fix.sh:digivice-audio-fix" \
+    "digivice-cm108-beep.sh:digivice-cm108-beep" \
+    "digivice-cm108-wake.sh:digivice-cm108-wake"
   do
     src="${pair%%:*}"
     dst="${pair##*:}"
@@ -177,7 +179,9 @@ if [[ -d "$STAGE" && -f "$STAGE/.ready" ]]; then
     full-update.sh:digivice-full-update \
     digivice-audio-doctor.sh:digivice-audio-doctor \
     digivice-audio-usb.sh:digivice-audio-usb \
-    digivice-audio-fix.sh:digivice-audio-fix
+    digivice-audio-fix.sh:digivice-audio-fix \
+    digivice-cm108-beep.sh:digivice-cm108-beep \
+    digivice-cm108-wake.sh:digivice-cm108-wake
   do
     src="${pair%%:*}"
     dst="${pair##*:}"
@@ -255,6 +259,7 @@ $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-modem-doctor
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-audio-doctor
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-audio-usb
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-audio-fix
+$USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-cm108-wake
 $USER_NAME ALL=(root) NOPASSWD: $PREFIX/session/update-handset.sh
 $USER_NAME ALL=(root) NOPASSWD: $PREFIX/session/full-update.sh
 $USER_NAME ALL=(root) NOPASSWD: $PREFIX/session/gui-update.sh
@@ -263,7 +268,26 @@ $USER_NAME ALL=(root) NOPASSWD: $PREFIX/session/power.sh
 $USER_NAME ALL=(root) NOPASSWD: $PREFIX/session/ensure-buttons.sh
 EOF
   chmod 440 /etc/sudoers.d/esp-handset-update
-  log "sudoers restored (incl. digivice-audio-fix)"
+  log "sudoers restored (incl. digivice-audio-fix + cm108-wake)"
+fi
+
+# Sealed-case CM108: keep wake helper + boot unit after GUI apply
+if [[ -f "$PREFIX/session/digivice-cm108-wake.sh" ]]; then
+  install -m 755 "$PREFIX/session/digivice-cm108-wake.sh" /usr/local/bin/digivice-cm108-wake
+fi
+if [[ -f "$PREFIX/session/digivice-cm108-beep.sh" ]]; then
+  install -m 755 "$PREFIX/session/digivice-cm108-beep.sh" /usr/local/bin/digivice-cm108-beep
+fi
+if [[ -f "$PREFIX/session/digivice-cm108-wake.service" ]]; then
+  install -m 644 "$PREFIX/session/digivice-cm108-wake.service" \
+    /etc/systemd/system/digivice-cm108-wake.service
+  systemctl daemon-reload 2>/dev/null || true
+  systemctl enable digivice-cm108-wake.service 2>/dev/null || true
+fi
+if [[ -f "$PREFIX/session/99-digivice-cmedia-nosuspend.rules" ]]; then
+  install -m 644 "$PREFIX/session/99-digivice-cmedia-nosuspend.rules" \
+    /etc/udev/rules.d/99-digivice-cmedia-nosuspend.rules
+  udevadm control --reload-rules 2>/dev/null || true
 fi
 
 AUTH="${XAUTHORITY:-$USER_HOME/.Xauthority}"

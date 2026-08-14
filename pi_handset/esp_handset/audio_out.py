@@ -14,7 +14,7 @@ from pathlib import Path
 from shutil import which
 from typing import List, Optional, Tuple
 
-AUDIO_BUILD = "v15-cm108"
+AUDIO_BUILD = "v16-sealed"
 _LOG = Path.home() / ".esp-handset" / "last-beep.txt"
 _WAV = Path.home() / ".esp-handset" / "beep-loud.wav"
 
@@ -110,6 +110,13 @@ def _unmute_card(card: str) -> None:
         _run(["amixer", "-c", card, "-q", "sset", ctl, "100%", "unmute"], timeout=3)
 
 
+def _wake_bin() -> Optional[str]:
+    p = "/usr/local/bin/digivice-cm108-wake"
+    if os.path.isfile(p):
+        return p
+    return which("digivice-cm108-wake")
+
+
 def wake_usb_audio() -> None:
     """Mini CM108: listing the card + pause is the real wake (first open often -524)."""
     _aplay_cards()
@@ -117,6 +124,20 @@ def wake_usb_audio() -> None:
     card = _usb_card()
     if card:
         _unmute_card(card)
+
+
+def software_wake() -> str:
+    """Sealed-case wake: nosuspend, wait for ALSA, prime first PCM open. No unplug."""
+    wake = _wake_bin()
+    if wake:
+        _log(f"sudo {wake}")
+        code, out = _run(["sudo", "-n", wake], timeout=25.0)
+        _log(f"wake exit={code} {(out or '')[-200:]}")
+        time.sleep(0.5)
+        return (out or f"wake {code}")[-48:]
+    _log("wake helper missing — aplay -l only")
+    wake_usb_audio()
+    return "soft wake"
 
 
 def _is_524(out: str) -> bool:
@@ -128,14 +149,7 @@ def play_test_tone(*, seconds: float = 4.0) -> bool:
     return ok
 
 
-def play_test_tone_detail(*, seconds: float = 4.0) -> Tuple[bool, str]:
-    """Exclusive ALSA for mini CM108. Skip PipeWire (empty sinks = play-to-nowhere)."""
-    _reset_log()
-    secs = max(3.0, float(seconds))
-    wav = _make_loud_wav(secs)
-    _log(f"wav={wav}")
-
-    # Known CM108 quirk: first PCM open after idle fails; aplay -l + delay fixes it
+def _alsa_play(wav: Path, secs: float) -> Tuple[bool, str]:
     cards = _aplay_cards()
     if not cards:
         return False, "no ALSA card"
@@ -168,7 +182,6 @@ def play_test_tone_detail(*, seconds: float = 4.0) -> Tuple[bool, str]:
                 continue
             break
 
-    # speaker-test fallbacks (2ch then 1ch — some mini boards are mono)
     if which("speaker-test"):
         for ch in ("2", "1"):
             cmd = [
@@ -199,6 +212,24 @@ def play_test_tone_detail(*, seconds: float = 4.0) -> Tuple[bool, str]:
                     return True, f"{AUDIO_BUILD} sine retry"
 
     return False, last[:40]
+
+
+def play_test_tone_detail(*, seconds: float = 4.0) -> Tuple[bool, str]:
+    """Exclusive ALSA for mini CM108. Skip PipeWire (empty sinks = play-to-nowhere)."""
+    _reset_log()
+    secs = max(3.0, float(seconds))
+    wav = _make_loud_wav(secs)
+    _log(f"wav={wav}")
+
+    ok, msg = _alsa_play(wav, secs)
+    if ok:
+        return True, msg
+    _log("software wake (sealed case)")
+    software_wake()
+    ok, msg = _alsa_play(wav, secs)
+    if ok:
+        return True, f"{AUDIO_BUILD} after wake"
+    return False, msg[:40]
 
 
 def play_cmd_for_debug() -> List[str]:

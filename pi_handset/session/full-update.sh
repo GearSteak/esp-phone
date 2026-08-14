@@ -325,6 +325,17 @@ if [[ -f "$ROOT/session/digivice-cm108-beep.sh" ]]; then
   install -m 755 "$ROOT/session/digivice-cm108-beep.sh" "$PREFIX/session/digivice-cm108-beep.sh"
   install -m 755 "$ROOT/session/digivice-cm108-beep.sh" /usr/local/bin/digivice-cm108-beep
 fi
+if [[ -f "$ROOT/session/digivice-cm108-wake.sh" ]]; then
+  install -m 755 "$ROOT/session/digivice-cm108-wake.sh" "$PREFIX/session/digivice-cm108-wake.sh"
+  install -m 755 "$ROOT/session/digivice-cm108-wake.sh" /usr/local/bin/digivice-cm108-wake
+fi
+if [[ -f "$ROOT/session/digivice-cm108-wake.service" ]]; then
+  install -m 644 "$ROOT/session/digivice-cm108-wake.service" \
+    /etc/systemd/system/digivice-cm108-wake.service
+  systemctl daemon-reload
+  systemctl enable digivice-cm108-wake.service
+  systemctl start digivice-cm108-wake.service 2>/dev/null || true
+fi
 # Keep C-Media USB audio awake across reboots
 if [[ -f "$ROOT/session/99-digivice-cmedia-nosuspend.rules" ]]; then
   install -m 644 "$ROOT/session/99-digivice-cmedia-nosuspend.rules" \
@@ -380,6 +391,7 @@ $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-modem-doctor
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-audio-doctor
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-audio-usb
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-audio-fix
+$USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-cm108-wake
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-fix-cursor
 $USER_NAME ALL=(root) NOPASSWD: $PREFIX/session/full-update.sh
 $USER_NAME ALL=(root) NOPASSWD: $PREFIX/session/update-handset.sh

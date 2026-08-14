@@ -1,0 +1,13 @@
+[Unit]
+Description=Digivice mini CM108 USB audio wake (no unplug)
+After=sound.target systemd-udev-settle.service
+Wants=sound.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/digivice-cm108-wake
+RemainAfterExit=yes
+TimeoutStartSec=30
+
+[Install]
+WantedBy=multi-user.target

@@ -180,7 +180,8 @@ install_tree() {
       "digivice-gb.sh:digivice-gb" \
       "digivice-stop-gb.sh:digivice-stop-gb" \
       "ensure-gb-wrappers.sh:digivice-ensure-gb" \
-      "ensure-gb-roms.sh:digivice-gb-roms-dir"
+      "ensure-gb-roms.sh:digivice-gb-roms-dir" \
+      "digivice-cm108-wake.sh:digivice-cm108-wake"
     do
       src="${pair%%:*}"
       dst="${pair##*:}"
@@ -221,6 +222,7 @@ install_tree() {
       "digivice-audio-usb.sh:digivice-audio-usb" \
       "digivice-audio-fix.sh:digivice-audio-fix" \
       "digivice-cm108-beep.sh:digivice-cm108-beep" \
+      "digivice-cm108-wake.sh:digivice-cm108-wake" \
       "ensure-gb-roms.sh:digivice-gb-roms-dir" \
       "power.sh:digivice-power" \
       "full-update.sh:digivice-full-update"
@@ -277,6 +279,7 @@ $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-modem-doctor
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-audio-doctor
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-audio-usb
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-audio-fix
+$USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-cm108-wake
 $USER_NAME ALL=(root) NOPASSWD: $PREFIX/session/update-handset.sh
 $USER_NAME ALL=(root) NOPASSWD: $PREFIX/session/full-update.sh
 $USER_NAME ALL=(root) NOPASSWD: $PREFIX/session/gui-update.sh
@@ -285,6 +288,21 @@ $USER_NAME ALL=(root) NOPASSWD: $PREFIX/session/power.sh
 $USER_NAME ALL=(root) NOPASSWD: $PREFIX/session/ensure-buttons.sh
 EOF
     chmod 440 /etc/sudoers.d/esp-handset-update
+  fi
+  # Sealed-case CM108: boot wake + udev (Settings Update used to skip this)
+  if [[ -f "$ROOT/session/digivice-cm108-wake.sh" ]]; then
+    install -m 755 "$ROOT/session/digivice-cm108-wake.sh" /usr/local/bin/digivice-cm108-wake
+  fi
+  if [[ -f "$ROOT/session/digivice-cm108-wake.service" ]]; then
+    install -m 644 "$ROOT/session/digivice-cm108-wake.service" \
+      /etc/systemd/system/digivice-cm108-wake.service
+    systemctl daemon-reload 2>/dev/null || true
+    systemctl enable digivice-cm108-wake.service 2>/dev/null || true
+  fi
+  if [[ -f "$ROOT/session/99-digivice-cmedia-nosuspend.rules" ]]; then
+    install -m 644 "$ROOT/session/99-digivice-cmedia-nosuspend.rules" \
+      /etc/udev/rules.d/99-digivice-cmedia-nosuspend.rules
+    udevadm control --reload-rules 2>/dev/null || true
   fi
   if [[ -f "$ROOT/session/gui-update.sh" ]]; then
     install -m 755 "$ROOT/session/gui-update.sh" "$PREFIX/session/gui-update.sh"

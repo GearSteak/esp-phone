@@ -2912,7 +2912,7 @@ def make_debug_page(on_back: Callable[[], None]) -> QWidget:
 
         from PyQt5.QtCore import QObject, pyqtSignal
 
-        from esp_handset.audio_out import wake_usb_audio
+        from esp_handset.audio_out import software_wake
 
         class _W(QObject):
             done = pyqtSignal(str)
@@ -2931,8 +2931,8 @@ def make_debug_page(on_back: Callable[[], None]) -> QWidget:
 
         def _work() -> None:
             try:
-                wake_usb_audio()
-                sig.done.emit("USB fix done")
+                software_wake()
+                sig.done.emit("USB wake done")
             except Exception as e:
                 sig.done.emit(str(e)[:40])
 
