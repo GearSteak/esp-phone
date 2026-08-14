@@ -217,6 +217,9 @@ install_tree() {
       "ensure-gb-wrappers.sh:digivice-ensure-gb" \
       "digivice-modem-uart.sh:digivice-modem-uart" \
       "digivice-modem-doctor.sh:digivice-modem-doctor" \
+      "digivice-audio-doctor.sh:digivice-audio-doctor" \
+      "digivice-audio-usb.sh:digivice-audio-usb" \
+      "digivice-audio-fix.sh:digivice-audio-fix" \
       "ensure-gb-roms.sh:digivice-gb-roms-dir" \
       "power.sh:digivice-power" \
       "full-update.sh:digivice-full-update"
@@ -259,18 +262,25 @@ EOF
 
   if [[ -d /etc/sudoers.d ]]; then
     cat >/etc/sudoers.d/esp-handset-update <<EOF
-# Digivice Settings → Update / Power (passwordless)
+# Digivice Settings → Update / Power / Audio (passwordless)
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-update
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-full-update
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-gui-update
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-apply-update
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-power
+$USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-ensure-buttons
+$USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-ensure-gb
+$USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-stop-gb
+$USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-modem-uart
+$USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-modem-doctor
+$USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-audio-doctor
+$USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-audio-usb
+$USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-audio-fix
 $USER_NAME ALL=(root) NOPASSWD: $PREFIX/session/update-handset.sh
 $USER_NAME ALL=(root) NOPASSWD: $PREFIX/session/full-update.sh
 $USER_NAME ALL=(root) NOPASSWD: $PREFIX/session/gui-update.sh
 $USER_NAME ALL=(root) NOPASSWD: $PREFIX/session/apply-update.sh
 $USER_NAME ALL=(root) NOPASSWD: $PREFIX/session/power.sh
-$USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-ensure-buttons
 $USER_NAME ALL=(root) NOPASSWD: $PREFIX/session/ensure-buttons.sh
 EOF
     chmod 440 /etc/sudoers.d/esp-handset-update

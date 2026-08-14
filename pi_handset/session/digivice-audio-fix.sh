@@ -53,14 +53,25 @@ find_usb_card() {
 }
 
 exclusive_beep() {
-  # Digivice UI path: stop PipeWire, ALSA exclusive sine, restart PW.
+  # Digivice UI path: hard USB wake + stop PipeWire + ALSA exclusive sine.
   local rc=1
   _pw_restart() {
     as_user systemctl --user start pipewire wireplumber pipewire-pulse 2>/dev/null || true
   }
   trap _pw_restart EXIT
   wake_cmedia
-  sleep 0.3
+  # Same hard re-auth as full fix (soft wake alone often leaves solid LED / silence)
+  for d in /sys/bus/usb/devices/*; do
+    [[ -f "$d/idVendor" ]] || continue
+    [[ "$(cat "$d/idVendor" 2>/dev/null)" == "0d8c" ]] || continue
+    if [[ -f "$d/authorized" ]]; then
+      log "USB re-auth $(basename "$d")"
+      echo 0 >"$d/authorized" 2>/dev/null || true
+      sleep 0.6
+      echo 1 >"$d/authorized" 2>/dev/null || true
+      sleep 1.2
+    fi
+  done
   find_usb_card
   if [[ -z "$USB_CARD" ]]; then
     log "ERROR: no USB playback card"

@@ -2773,11 +2773,17 @@ def make_debug_page(on_back: Callable[[], None]) -> QWidget:
     from PyQt5.QtWidgets import QCheckBox, QComboBox, QSizePolicy
 
     from esp_handset import store
+    from esp_handset.audio_out import AUDIO_BUILD
 
     body = QWidget()
     lay = QVBoxLayout(body)
     lay.setContentsMargins(2, 1, 2, 1)
     lay.setSpacing(2)
+
+    build = QLabel(f"build {AUDIO_BUILD}")
+    build.setAlignment(Qt.AlignCenter)
+    build.setStyleSheet("font-size:9px; color:#678;")
+    lay.addWidget(build)
 
     # --- prefs (was Sounds page) ---
     prefs = store.load("sounds.json", {"profile": "Normal", "enabled": True})

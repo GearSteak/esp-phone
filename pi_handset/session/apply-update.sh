@@ -109,7 +109,10 @@ install_live_from_repo() {
     "full-update.sh:digivice-full-update" \
     "power.sh:digivice-power" \
     "desktop-spi-mirror.sh:digivice-desktop-mirror" \
-    "ensure-buttons.sh:digivice-ensure-buttons"
+    "ensure-buttons.sh:digivice-ensure-buttons" \
+    "digivice-audio-doctor.sh:digivice-audio-doctor" \
+    "digivice-audio-usb.sh:digivice-audio-usb" \
+    "digivice-audio-fix.sh:digivice-audio-fix"
   do
     src="${pair%%:*}"
     dst="${pair##*:}"
@@ -171,7 +174,10 @@ if [[ -d "$STAGE" && -f "$STAGE/.ready" ]]; then
     digivice-gb.sh:digivice-gb \
     digivice-stop-gb.sh:digivice-stop-gb \
     ensure-gb-wrappers.sh:digivice-ensure-gb \
-    full-update.sh:digivice-full-update
+    full-update.sh:digivice-full-update \
+    digivice-audio-doctor.sh:digivice-audio-doctor \
+    digivice-audio-usb.sh:digivice-audio-usb \
+    digivice-audio-fix.sh:digivice-audio-fix
   do
     src="${pair%%:*}"
     dst="${pair##*:}"

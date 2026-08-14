@@ -1,4 +1,4 @@
-"""Digivice playback — exclusive USB beep (stop PipeWire, ALSA plughw)."""
+"""Digivice playback — exclusive USB beep (same as CLI digivice-audio-fix)."""
 
 from __future__ import annotations
 
@@ -6,9 +6,13 @@ import os
 import re
 import subprocess
 import time
+from datetime import datetime
 from pathlib import Path
 from shutil import which
 from typing import List, Optional, Sequence, Tuple
+
+AUDIO_BUILD = "v5-fullfix"
+_LOG = Path.home() / ".esp-handset" / "last-beep.txt"
 
 
 def _usb_card() -> Optional[str]:
@@ -46,42 +50,38 @@ def _fix_bin() -> Optional[str]:
     for p in (
         "/usr/local/bin/digivice-audio-fix",
         "/opt/esp-handset/session/digivice-audio-fix.sh",
+        str(Path(__file__).resolve().parents[1] / "session" / "digivice-audio-fix.sh"),
     ):
         if os.path.isfile(p) and os.access(p, os.X_OK):
             return p
-    return which("digivice-audio-fix")
+    w = which("digivice-audio-fix")
+    return w
+
+
+def _write_log(text: str) -> None:
+    try:
+        _LOG.parent.mkdir(parents=True, exist_ok=True)
+        _LOG.write_text(text, encoding="utf-8")
+    except OSError:
+        pass
 
 
 def wake_usb_audio() -> None:
-    """Best-effort C-Media wake (sudo if NOPASSWD is set)."""
     fix = _fix_bin()
-    if fix:
-        try:
-            subprocess.run(
-                ["sudo", "-n", fix, "--persist-only"],
-                capture_output=True,
-                timeout=8,
-                check=False,
-            )
-            return
-        except Exception:
-            pass
-    # Without sudo: try writing power/control if writable
+    if not fix:
+        return
     try:
-        for d in Path("/sys/bus/usb/devices").iterdir():
-            vend = d / "idVendor"
-            if not vend.is_file():
-                continue
-            if vend.read_text().strip() != "0d8c":
-                continue
-            ctrl = d / "power" / "control"
-            if ctrl.is_file() and os.access(ctrl, os.W_OK):
-                ctrl.write_text("on")
+        subprocess.run(
+            ["sudo", "-n", fix, "--persist-only"],
+            capture_output=True,
+            timeout=8,
+            check=False,
+        )
     except Exception:
         pass
 
 
-def _run(cmd: Sequence[str], timeout: float = 6.0) -> Tuple[bool, str]:
+def _run(cmd: Sequence[str], timeout: float = 6.0) -> Tuple[int, str]:
     try:
         r = subprocess.run(
             list(cmd),
@@ -91,15 +91,23 @@ def _run(cmd: Sequence[str], timeout: float = 6.0) -> Tuple[bool, str]:
             check=False,
         )
         out = ((r.stdout or "") + (r.stderr or "")).strip()
-        return r.returncode in (0, 124), out[-200:] if out else f"exit {r.returncode}"
-    except subprocess.TimeoutExpired:
-        return True, "timeout (tone may have played)"
+        return r.returncode, out
+    except subprocess.TimeoutExpired as e:
+        out = ""
+        if e.stdout:
+            out += e.stdout if isinstance(e.stdout, str) else e.stdout.decode(
+                "utf-8", "replace"
+            )
+        if e.stderr:
+            out += e.stderr if isinstance(e.stderr, str) else e.stderr.decode(
+                "utf-8", "replace"
+            )
+        return 124, (out or "timeout").strip()
     except Exception as e:
-        return False, str(e)
+        return 1, str(e)
 
 
 def _pw(action: str) -> None:
-    """Stop/start user PipeWire so ALSA can own the USB stick."""
     units = ["pipewire-pulse", "wireplumber", "pipewire"]
     if action == "stop":
         subprocess.run(
@@ -133,25 +141,39 @@ def play_test_tone(*, seconds: float = 2.0) -> bool:
 
 
 def play_test_tone_detail(*, seconds: float = 2.0) -> Tuple[bool, str]:
-    """Exclusive beep. Prefer in-process PW stop (no sudo). Fallback: fix --beep.
+    """Run the same root fix that works from SSH (hard USB reset + exclusive ALSA)."""
+    stamp = datetime.now().isoformat(timespec="seconds")
+    lines = [f"build={AUDIO_BUILD}", f"when={stamp}"]
 
-    Returns (ok, short status message).
-    """
-    # 1) Root fix script (same as CLI) if passwordless sudo works
     fix = _fix_bin()
-    if fix:
-        ok, msg = _run(["sudo", "-n", fix, "--beep"], timeout=22.0)
-        if ok:
-            return True, "fix --beep OK"
-        # sudo failed (no NOPASSWD / missing) — fall through to user path
+    lines.append(f"fix_bin={fix or 'MISSING'}")
 
+    if fix:
+        # Prefer --beep (hard re-auth); fall back to full script (no args)
+        for args in (["--beep"], []):
+            cmd = ["sudo", "-n", fix, *args]
+            lines.append(f"try: {' '.join(cmd)}")
+            code, out = _run(cmd, timeout=45.0)
+            lines.append(f"exit={code}")
+            if out:
+                lines.append(out[-1500:])
+            _write_log("\n".join(lines) + "\n")
+            if code in (0, 124):
+                return True, f"{AUDIO_BUILD} OK · watch LED"
+            # sudo password required / missing NOPASSWD
+            if "password" in out.lower() or code == 1 and "sudo" in out.lower():
+                lines.append("sudo failed — need NOPASSWD digivice-audio-fix")
+            # --beep unknown on ancient script still runs full path; if fail try next
+        _write_log("\n".join(lines) + "\n")
+
+    # Last resort without root (often silent on C-Media)
     wake_usb_audio()
-    card = _usb_card()
-    if card is None:
-        # last resort: first non-HDMI card from aplay -l already failed
-        card = "1"
+    card = _usb_card() or "1"
     if not which("speaker-test"):
-        return False, "speaker-test missing (alsa-utils)"
+        msg = "speaker-test missing"
+        lines.append(msg)
+        _write_log("\n".join(lines) + "\n")
+        return False, msg
 
     _pw("stop")
     time.sleep(0.7)
@@ -164,40 +186,11 @@ def play_test_tone_detail(*, seconds: float = 2.0) -> Tuple[bool, str]:
                 timeout=3,
                 check=False,
             )
-            time.sleep(0.15)
     except Exception:
         pass
     _unmute(card)
-    cmd = [
-        "speaker-test",
-        "-D",
-        f"plughw:{card},0",
-        "-c",
-        "2",
-        "-r",
-        "48000",
-        "-t",
-        "sine",
-        "-f",
-        "880",
-        "-l",
-        "1",
-    ]
-    ok, msg = _run(cmd, timeout=max(5.0, seconds + 3.0))
-    _pw("start")
-    if ok:
-        return True, f"plughw:{card},0 OK"
-    return False, f"card {card}: {msg}"
-
-
-def play_cmd_for_debug() -> List[str]:
-    """Deprecated for UI — prefer play_test_tone_detail in a thread."""
-    fix = _fix_bin()
-    if fix:
-        return ["sudo", "-n", fix, "--beep"]
-    card = _usb_card() or "1"
-    if which("speaker-test"):
-        return [
+    code, out = _run(
+        [
             "speaker-test",
             "-D",
             f"plughw:{card},0",
@@ -211,5 +204,21 @@ def play_cmd_for_debug() -> List[str]:
             "880",
             "-l",
             "1",
-        ]
+        ],
+        timeout=max(5.0, seconds + 3.0),
+    )
+    _pw("start")
+    lines.append(f"user_path card={card} exit={code}")
+    if out:
+        lines.append(out[-800:])
+    _write_log("\n".join(lines) + "\n")
+    if code in (0, 124):
+        return True, f"user plughw:{card},0 (no sudo)"
+    return False, f"sudo+user fail · see Transfer last-beep"
+
+
+def play_cmd_for_debug() -> List[str]:
+    fix = _fix_bin()
+    if fix:
+        return ["sudo", "-n", fix, "--beep"]
     return []
