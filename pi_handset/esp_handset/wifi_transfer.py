@@ -341,7 +341,7 @@ def _make_handler(get_dest: Callable[[], str], signals: _UploadSignals):
                 if not beep.is_file():
                     msg = (
                         b"No last-beep.txt yet.\n"
-                        b"Run Settings → Debug → BEEP first.\n"
+                        b"Run Settings -> Debug -> BEEP first.\n"
                     )
                     self.send_response(404)
                     self.send_header("Content-Type", "text/plain; charset=utf-8")
