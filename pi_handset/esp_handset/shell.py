@@ -127,6 +127,28 @@ class PhoneShell(QMainWindow):
         # buttons daemon emits both uinput + xdotool, so one press ≈ two Key_Escape.
         self._esc_exits = 0
         self._esc_last_ms = 0
+        QTimer.singleShot(700, self._prime_nav_clicks)
+
+    def _prime_nav_clicks(self) -> None:
+        import threading
+
+        def _run() -> None:
+            try:
+                from esp_handset.audio_out import prime_nav_click
+
+                prime_nav_click()
+            except Exception:
+                pass
+
+        threading.Thread(target=_run, daemon=True).start()
+
+    def _nav_click(self) -> None:
+        try:
+            from esp_handset.audio_out import play_nav_click
+
+            play_nav_click()
+        except Exception:
+            pass
 
     def showEvent(self, event) -> None:  # noqa: N802
         super().showEvent(event)
@@ -444,18 +466,22 @@ class PhoneShell(QMainWindow):
         if page_key == "home" and self._home:
             if key == Qt.Key_Left:
                 self._home.move_h(-1)
+                self._nav_click()
                 event.accept()
                 return
             if key == Qt.Key_Right:
                 self._home.move_h(1)
+                self._nav_click()
                 event.accept()
                 return
             if key == Qt.Key_Up:
                 self._home.move_v(-1)
+                self._nav_click()
                 event.accept()
                 return
             if key == Qt.Key_Down:
                 self._home.move_v(1)
+                self._nav_click()
                 event.accept()
                 return
             if key in (Qt.Key_Return, Qt.Key_Enter):
@@ -467,18 +493,22 @@ class PhoneShell(QMainWindow):
         if radial and page_key == self._nav[-1]:
             if key == Qt.Key_Left:
                 radial.move_by(-1)
+                self._nav_click()
                 event.accept()
                 return
             if key == Qt.Key_Right:
                 radial.move_by(1)
+                self._nav_click()
                 event.accept()
                 return
             if key == Qt.Key_Up:
                 radial.move_by(-1)
+                self._nav_click()
                 event.accept()
                 return
             if key == Qt.Key_Down:
                 radial.move_by(1)
+                self._nav_click()
                 event.accept()
                 return
             if key in (Qt.Key_Return, Qt.Key_Enter):
@@ -525,18 +555,22 @@ class PhoneShell(QMainWindow):
                 active = getattr(page, "digi_seek_active", None)
                 if callable(seek) and (active() if callable(active) else False):
                     if seek(delta):
+                        self._nav_click()
                         event.accept()
                         return
                 if digi_nav.move_focus(page, delta):
+                    self._nav_click()
                     event.accept()
                     return
             if key in (Qt.Key_Up, Qt.Key_Down):
                 delta = -1 if key == Qt.Key_Up else 1
                 if isinstance(cur, QListWidget):
                     if digi_nav.list_nudge(cur, delta):
+                        self._nav_click()
                         event.accept()
                         return
                 if digi_nav.move_focus(page, delta):
+                    self._nav_click()
                     event.accept()
                     return
             if key in (Qt.Key_Return, Qt.Key_Enter):
