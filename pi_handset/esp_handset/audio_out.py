@@ -1,16 +1,16 @@
-"""Digivice playback — run audio fix detached (no pkill race, no PIPE stall)."""
+"""Digivice playback — soft-beep only, hard timeouts, no UI hang."""
 
 from __future__ import annotations
 
 import os
+import signal
 import subprocess
-import time
 from datetime import datetime
 from pathlib import Path
 from shutil import which
 from typing import List, Optional, Tuple
 
-AUDIO_BUILD = "v8-detach"
+AUDIO_BUILD = "v9"
 _LOG = Path.home() / ".esp-handset" / "last-beep.txt"
 
 
@@ -43,8 +43,22 @@ def wake_usb_audio() -> None:
         pass
 
 
+def _kill_tree(proc: subprocess.Popen) -> None:
+    try:
+        os.killpg(proc.pid, signal.SIGKILL)
+    except Exception:
+        try:
+            proc.kill()
+        except Exception:
+            pass
+    try:
+        proc.wait(timeout=2)
+    except Exception:
+        pass
+
+
 def _run_fix_detached(args: List[str], timeout: float) -> Tuple[int, str]:
-    """Run sudo digivice-audio-fix in its own session; log to file (not PIPE)."""
+    """Run sudo digivice-audio-fix; always return within timeout (kill process group)."""
     fix = _fix_bin()
     if not fix:
         return 1, "digivice-audio-fix missing"
@@ -57,22 +71,29 @@ def _run_fix_detached(args: List[str], timeout: float) -> Tuple[int, str]:
     )
     _LOG.write_text(header, encoding="utf-8")
     cmd = ["sudo", "-n", fix, *args]
+    logf = open(_LOG, "a", encoding="utf-8")
     try:
-        with open(_LOG, "a", encoding="utf-8") as logf:
-            r = subprocess.run(
-                cmd,
-                stdin=subprocess.DEVNULL,
-                stdout=logf,
-                stderr=subprocess.STDOUT,
-                timeout=timeout,
-                check=False,
-                start_new_session=True,  # survive Digivice pkill of process group
-            )
-        code = r.returncode
-    except subprocess.TimeoutExpired:
-        code = 124
+        proc = subprocess.Popen(
+            cmd,
+            stdin=subprocess.DEVNULL,
+            stdout=logf,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
+        try:
+            code = proc.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            _kill_tree(proc)
+            logf.write("\n[timeout — killed]\n")
+            code = 124
     except Exception as e:
+        logf.write(f"\n[error] {e}\n")
         return 1, str(e)
+    finally:
+        try:
+            logf.close()
+        except Exception:
+            pass
     try:
         out = _LOG.read_text(encoding="utf-8", errors="replace")
     except OSError:
@@ -87,35 +108,34 @@ def play_test_tone(*, seconds: float = 2.0) -> bool:
 
 
 def play_test_tone_detail(*, seconds: float = 2.0) -> Tuple[bool, str]:
-    """Prefer soft-beep (no USB yank); then full CLI fix. Never fake OK."""
+    """Soft-beep only (≤12s). Full fix was hanging Digivice on pipewire restart."""
     del seconds
     fix = _fix_bin()
     if not fix:
-        return False, "digivice-audio-fix missing"
+        return False, "fix missing"
 
-    # 1) soft-beep — same exclusive ALSA as terminal, no re-auth
-    code, out = _run_fix_detached(["--soft-beep"], timeout=25.0)
-    if code in (0, 124) and (
-        "speaker-test exit=" in out or "WATCH RED LED" in out or "soft-beep" in out
-    ):
-        return True, f"{AUDIO_BUILD} soft OK · hear?"
-
-    # 2) full terminal command
-    code2, out2 = _run_fix_detached([], timeout=60.0)
-    if code2 in (0, 124) and (
-        "speaker-test" in out2.lower() or "WATCH RED LED" in out2 or "beep:" in out2
-    ):
-        return True, f"{AUDIO_BUILD} full OK · hear?"
-
-    combined = (out + "\n" + out2)[-1200:]
-    if "password" in combined.lower():
-        return False, "sudo blocked — sudo digivice-full-update"
-    # Surface last log line on Digivice
-    for line in reversed(combined.splitlines()):
+    code, out = _run_fix_detached(["--soft-beep"], timeout=12.0)
+    played = (
+        "speaker-test exit=" in out
+        or "WATCH RED LED" in out
+        or "soft-beep" in out
+        or "[timeout" in out
+    )
+    if code in (0, 124) and played:
+        return True, f"{AUDIO_BUILD} done"
+    if "password" in out.lower():
+        return False, "sudo blocked"
+    if "no USB" in out.lower() or "ERROR: no USB" in out:
+        return False, "no USB card"
+    for line in reversed(out.splitlines()):
         line = line.strip()
+        if line.startswith("speaker-test exit="):
+            return code in (0, 124), f"{AUDIO_BUILD} {line}"
         if line and not line.startswith("build=") and line != "---":
-            return False, line[:48]
-    return False, f"fail soft={code} full={code2}"
+            if "mix " in line or "Stopping" in line:
+                continue
+            return False, line[:40]
+    return False, f"fail exit={code}"
 
 
 def play_cmd_for_debug() -> List[str]:

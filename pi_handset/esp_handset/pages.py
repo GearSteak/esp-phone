@@ -3029,12 +3029,20 @@ def make_debug_page(on_back: Callable[[], None]) -> QWidget:
         _set_badge(spk_badge, "SPK", "wait")
         _set_status("Playing… wait")
 
+        from PyQt5.QtCore import QObject, pyqtSignal
+
         from esp_handset.audio_out import play_test_tone_detail
 
-        def _work() -> None:
-            ok, msg = play_test_tone_detail()
+        class _Sig(QObject):
+            done = pyqtSignal(bool, str)
 
-            def _ui() -> None:
+        # Must live on GUI thread — QTimer from worker thread never ran (stuck UI)
+        sig = getattr(body, "_beep_sig", None)
+        if sig is None:
+            sig = _Sig(body)
+            body._beep_sig = sig
+
+            def _on_done(ok: bool, msg: str) -> None:
                 _set_busy(False)
                 short = (msg or "").replace("\n", " ")
                 if "sudo blocked" in short.lower():
@@ -3046,7 +3054,14 @@ def make_debug_page(on_back: Callable[[], None]) -> QWidget:
                 tip.setText(short[:36])
                 _ask_heard("speaker")
 
-            QTimer.singleShot(0, _ui)
+            sig.done.connect(_on_done)
+
+        def _work() -> None:
+            try:
+                ok, msg = play_test_tone_detail()
+            except Exception as e:
+                ok, msg = False, str(e)[:40]
+            sig.done.emit(ok, msg)
 
         threading.Thread(target=_work, daemon=True).start()
 

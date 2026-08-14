@@ -128,7 +128,7 @@ if [[ "${1:-}" == "--beep" ]]; then
 fi
 
 if [[ "${1:-}" == "--soft-beep" ]]; then
-  # No USB re-auth — only exclusive ALSA (use when stick already awake / LED can blink).
+  # No USB re-auth — exclusive ALSA only. Keep under ~10s (Digivice UI waits).
   find_usb_card
   if [[ -z "$USB_CARD" ]]; then
     log "ERROR: no USB card"
@@ -140,20 +140,19 @@ if [[ "${1:-}" == "--soft-beep" ]]; then
   for ctl in Speaker PCM Master Headphone; do
     amixer -c "$USB_CARD" -q sset "$ctl" 100% unmute 2>/dev/null || true
   done
-  amixer -c "$USB_CARD" 2>/dev/null | head -n 25 | while read -r l; do log "mix $l"; done
   log "soft-beep card=$USB_CARD — stop PipeWire"
-  as_user systemctl --user stop pipewire-pulse wireplumber pipewire 2>/dev/null || true
-  sleep 0.8
+  timeout 3 as_user systemctl --user stop pipewire-pulse wireplumber pipewire 2>/dev/null || true
+  sleep 0.4
   fuser -k "/dev/snd/pcmC${USB_CARD}D0p" 2>/dev/null || true
-  sleep 0.2
+  sleep 0.15
   for ctl in Speaker PCM Master Headphone; do
     amixer -c "$USB_CARD" -q sset "$ctl" 100% unmute 2>/dev/null || true
   done
   log ">>> WATCH RED LED / LISTEN (soft-beep) <<<"
-  timeout 6 speaker-test -D "plughw:$USB_CARD,0" -c 2 -r 48000 -t sine -f 880 -l 2
+  timeout 5 speaker-test -D "plughw:$USB_CARD,0" -c 2 -r 48000 -t sine -f 880 -l 1
   rc=$?
   log "speaker-test exit=$rc"
-  as_user systemctl --user start pipewire wireplumber pipewire-pulse 2>/dev/null || true
+  timeout 3 as_user systemctl --user start pipewire wireplumber pipewire-pulse 2>/dev/null || true
   exit "$rc"
 fi
 
