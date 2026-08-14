@@ -100,6 +100,29 @@ run_as_user() {
   done
   echo
 
+  echo "--- amixer FULL card 1 (USB) ---"
+  amixer -c 1 contents 2>&1 | head -n 200
+  echo
+
+  echo "--- exclusive play (stop PW briefly) ---"
+  if [[ "$(id -u)" -eq 0 && -n "${SUDO_USER:-}" && "${SUDO_USER}" != "root" ]]; then
+    sudo -u "$SUDO_USER" -H env XDG_RUNTIME_DIR="/run/user/$(id -u "$SUDO_USER")" \
+      systemctl --user stop pipewire pipewire-pulse wireplumber 2>&1 || true
+  else
+    systemctl --user stop pipewire pipewire-pulse wireplumber 2>&1 || true
+  fi
+  sleep 1
+  echo ">> exclusive speaker-test plughw:1,0 …"
+  timeout 4 speaker-test -D plughw:1,0 -t sine -f 880 -l 1 -c 2 2>&1 | tail -n 12
+  echo "exit=$?"
+  if [[ "$(id -u)" -eq 0 && -n "${SUDO_USER:-}" && "${SUDO_USER}" != "root" ]]; then
+    sudo -u "$SUDO_USER" -H env XDG_RUNTIME_DIR="/run/user/$(id -u "$SUDO_USER")" \
+      systemctl --user start pipewire wireplumber pipewire-pulse 2>&1 || true
+  else
+    systemctl --user start pipewire wireplumber pipewire-pulse 2>&1 || true
+  fi
+  echo
+
   echo "--- play test to each hw:N,0 (1s sine via speaker-test) ---"
   if command -v speaker-test >/dev/null; then
     for c in 0 1 2 3; do
