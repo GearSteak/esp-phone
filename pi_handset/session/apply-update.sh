@@ -237,6 +237,35 @@ echo "ok $(date -Iseconds)" >/etc/esp-handset/last_update 2>/dev/null || true
 # Relaunch like typing handset-phone in a terminal (NOT home-relaunch — that path crashed)
 USER_NAME="$(resolve_gui_user)"
 USER_HOME="$(getent passwd "$USER_NAME" | cut -d: -f6 || echo /home/"$USER_NAME")"
+
+# GUI updates used to wipe audio-fix from sudoers — restore every apply
+if [[ -d /etc/sudoers.d ]]; then
+  cat >/etc/sudoers.d/esp-handset-update <<EOF
+# Digivice (apply-update) — Update / Power / Audio / Modem
+$USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-update
+$USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-full-update
+$USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-gui-update
+$USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-apply-update
+$USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-power
+$USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-ensure-buttons
+$USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-ensure-gb
+$USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-stop-gb
+$USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-modem-uart
+$USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-modem-doctor
+$USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-audio-doctor
+$USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-audio-usb
+$USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-audio-fix
+$USER_NAME ALL=(root) NOPASSWD: $PREFIX/session/update-handset.sh
+$USER_NAME ALL=(root) NOPASSWD: $PREFIX/session/full-update.sh
+$USER_NAME ALL=(root) NOPASSWD: $PREFIX/session/gui-update.sh
+$USER_NAME ALL=(root) NOPASSWD: $PREFIX/session/apply-update.sh
+$USER_NAME ALL=(root) NOPASSWD: $PREFIX/session/power.sh
+$USER_NAME ALL=(root) NOPASSWD: $PREFIX/session/ensure-buttons.sh
+EOF
+  chmod 440 /etc/sudoers.d/esp-handset-update
+  log "sudoers restored (incl. digivice-audio-fix)"
+fi
+
 AUTH="${XAUTHORITY:-$USER_HOME/.Xauthority}"
 [[ -f "$AUTH" ]] || AUTH="$USER_HOME/.Xauthority"
 DISP="${DISPLAY:-:0}"
