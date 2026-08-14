@@ -2764,113 +2764,94 @@ def make_mouse_page(on_back: Callable[[], None]) -> QWidget:
 
 
 def make_debug_page(on_back: Callable[[], None]) -> QWidget:
-    """Single Digivice audio page: profile + USB beep / mic tests (240×320)."""
+    """Digivice Debug — readable on 240×320: big buttons, short status."""
     import struct
+    import threading
     import wave
     from shutil import which
 
     from PyQt5.QtCore import QProcess, QTimer
-    from PyQt5.QtWidgets import QCheckBox, QComboBox, QSizePolicy
+    from PyQt5.QtWidgets import QSizePolicy
 
     from esp_handset import store
     from esp_handset.audio_out import AUDIO_BUILD
 
     body = QWidget()
     lay = QVBoxLayout(body)
-    lay.setContentsMargins(2, 1, 2, 1)
-    lay.setSpacing(2)
+    lay.setContentsMargins(4, 2, 4, 2)
+    lay.setSpacing(4)
 
-    build = QLabel(f"build {AUDIO_BUILD}")
-    build.setAlignment(Qt.AlignCenter)
-    build.setStyleSheet("font-size:9px; color:#678;")
-    lay.addWidget(build)
-
-    # --- prefs (was Sounds page) ---
     prefs = store.load("sounds.json", {"profile": "Normal", "enabled": True})
-    pref_row = QHBoxLayout()
-    pref_row.setSpacing(2)
-    profile = QComboBox()
-    profile.addItems(["Silent", "Normal", "Loud", "Outdoor"])
-    profile.setCurrentText(prefs.get("profile", "Normal"))
-    profile.setFixedHeight(26)
-    profile.setStyleSheet("font-size:11px;")
-    enabled = QCheckBox("On")
-    enabled.setChecked(bool(prefs.get("enabled", True)))
-    enabled.setStyleSheet("font-size:11px;")
-    save_pref = QPushButton("Save")
-    save_pref.setFixedHeight(26)
-    save_pref.setFixedWidth(44)
-    save_pref.setStyleSheet("font-size:11px; font-weight:700;")
-    pref_row.addWidget(profile, 1)
-    pref_row.addWidget(enabled)
-    pref_row.addWidget(save_pref)
-    lay.addLayout(pref_row)
+    profiles = ["Silent", "Normal", "Loud", "Outdoor"]
+    pref_state = {
+        "profile": prefs.get("profile", "Normal"),
+        "enabled": bool(prefs.get("enabled", True)),
+    }
+    if pref_state["profile"] not in profiles:
+        pref_state["profile"] = "Normal"
+
+    status = QLabel("Tap BEEP")
+    status.setAlignment(Qt.AlignCenter)
+    status.setWordWrap(True)
+    status.setFixedHeight(44)
+    status.setStyleSheet(
+        "font-size:14px; font-weight:700; color:#fff;"
+        "background:#152030; padding:4px;"
+    )
+    lay.addWidget(status)
 
     def _badge(title: str) -> QLabel:
         lab = QLabel(f"{title}\n—")
         lab.setAlignment(Qt.AlignCenter)
-        lab.setWordWrap(True)
-        lab.setFixedHeight(36)
+        lab.setFixedHeight(40)
         lab.setStyleSheet(
-            "font-size:11px; font-weight:700; padding:2px;"
+            "font-size:13px; font-weight:700;"
             "background:#1a2230; color:#cde;"
         )
         return lab
 
     spk_badge = _badge("SPK")
     mic_badge = _badge("MIC")
-    row = QHBoxLayout()
-    row.setSpacing(2)
-    row.addWidget(spk_badge, 1)
-    row.addWidget(mic_badge, 1)
-    lay.addLayout(row)
+    badges = QHBoxLayout()
+    badges.setSpacing(4)
+    badges.addWidget(spk_badge, 1)
+    badges.addWidget(mic_badge, 1)
+    lay.addLayout(badges)
 
-    hw = QLabel("…")
-    hw.setWordWrap(True)
-    hw.setAlignment(Qt.AlignCenter)
-    hw.setStyleSheet("font-size:9px; color:#ffd700;")
-    hw.setFixedHeight(28)
-    lay.addWidget(hw)
-
-    status = QLabel("Beep · LED blink = USB OK\nGreen jack = out (line level)")
-    status.setWordWrap(True)
-    status.setAlignment(Qt.AlignCenter)
-    status.setStyleSheet("font-size:10px; color:#cde;")
-    status.setMinimumHeight(32)
-    lay.addWidget(status)
-
-    spk_btn = QPushButton("Beep (USB)")
-    mic_btn = QPushButton("Mic test")
-    wake_btn = QPushButton("Wake USB")
-    for b in (spk_btn, mic_btn, wake_btn):
-        b.setFixedHeight(28)
-        b.setStyleSheet("font-size:12px; font-weight:700;")
+    def _big_btn(text: str) -> QPushButton:
+        b = QPushButton(text)
+        b.setFixedHeight(40)
+        b.setStyleSheet("font-size:15px; font-weight:700;")
         b.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        return b
 
-    btn_row = QHBoxLayout()
-    btn_row.setSpacing(2)
-    btn_row.addWidget(spk_btn, 1)
-    btn_row.addWidget(mic_btn, 1)
-    lay.addLayout(btn_row)
-    lay.addWidget(wake_btn)
+    spk_btn = _big_btn("BEEP")
+    mic_btn = _big_btn("MIC")
+    lay.addWidget(spk_btn)
+    lay.addWidget(mic_btn)
 
-    hear_row = QHBoxLayout()
-    hear_row.setSpacing(2)
-    yes_btn = QPushButton("YES")
-    no_btn = QPushButton("NO")
-    stop_btn = QPushButton("Stop")
-    for b in (yes_btn, no_btn, stop_btn):
-        b.setFixedHeight(26)
-        b.setStyleSheet("font-size:11px; font-weight:700;")
-        b.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-    yes_btn.setStyleSheet("font-size:11px; font-weight:700; background:#1a4a2a;")
-    no_btn.setStyleSheet("font-size:11px; font-weight:700; background:#4a1a1a;")
-    yes_btn.setEnabled(False)
-    no_btn.setEnabled(False)
-    hear_row.addWidget(yes_btn, 1)
-    hear_row.addWidget(no_btn, 1)
-    hear_row.addWidget(stop_btn, 1)
-    lay.addLayout(hear_row)
+    off = " · OFF" if not pref_state["enabled"] else ""
+    sound_btn = QPushButton(f"Sound: {pref_state['profile']}{off}")
+    sound_btn.setFixedHeight(28)
+    sound_btn.setStyleSheet("font-size:11px;")
+    lay.addWidget(sound_btn)
+
+    yes_btn = _big_btn("YES")
+    no_btn = _big_btn("NO")
+    yes_btn.setStyleSheet("font-size:15px; font-weight:700; background:#1a5a2a;")
+    no_btn.setStyleSheet("font-size:15px; font-weight:700; background:#5a1a1a;")
+    hear = QHBoxLayout()
+    hear.setSpacing(4)
+    hear.addWidget(yes_btn, 1)
+    hear.addWidget(no_btn, 1)
+    lay.addLayout(hear)
+    yes_btn.hide()
+    no_btn.hide()
+
+    tip = QLabel(f"{AUDIO_BUILD} · green=out")
+    tip.setAlignment(Qt.AlignCenter)
+    tip.setStyleSheet("font-size:10px; color:#789;")
+    lay.addWidget(tip)
     lay.addStretch(1)
 
     procs: list = []
@@ -2881,6 +2862,9 @@ def make_debug_page(on_back: Callable[[], None]) -> QWidget:
 
     def _which(name: str) -> Optional[str]:
         return which(name)
+
+    def _set_status(msg: str) -> None:
+        status.setText((msg or "")[:42])
 
     def _set_badge(lab: QLabel, title: str, verdict: str) -> None:
         colors = {
@@ -2894,7 +2878,7 @@ def make_debug_page(on_back: Callable[[], None]) -> QWidget:
         bg, fg, word = colors.get(verdict, colors["?"])
         lab.setText(f"{title}\n{word}")
         lab.setStyleSheet(
-            f"font-size:11px; font-weight:700; padding:2px;"
+            f"font-size:13px; font-weight:700;"
             f"background:{bg}; color:{fg}; border:1px solid {fg};"
         )
 
@@ -2907,37 +2891,30 @@ def make_debug_page(on_back: Callable[[], None]) -> QWidget:
             except Exception:
                 pass
         procs.clear()
-        for name in ("speaker-test", "arecord", "aplay", "paplay", "pasuspender"):
-            try:
-                subprocess.run(
-                    ["pkill", "-f", name],
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                    timeout=2,
-                    check=False,
-                )
-            except Exception:
-                pass
 
     def _set_busy(on: bool) -> None:
         busy["on"] = on
         spk_btn.setEnabled(not on)
         mic_btn.setEnabled(not on)
-        wake_btn.setEnabled(not on)
+        sound_btn.setEnabled(not on)
 
     def _ask_heard(kind: str) -> None:
         pending["kind"] = kind
+        yes_btn.show()
+        no_btn.show()
         yes_btn.setEnabled(True)
         no_btn.setEnabled(True)
         if kind == "speaker":
             _set_badge(spk_badge, "SPK", "ask")
-            status.setText("Heard it? YES / NO\n(headphones on GREEN if speakers quiet)")
+            _set_status("Heard beep? YES / NO")
         else:
             _set_badge(mic_badge, "MIC", "ask")
-            status.setText("Heard your voice? YES / NO")
+            _set_status("Heard voice? YES / NO")
 
     def _clear_ask() -> None:
         pending["kind"] = None
+        yes_btn.hide()
+        no_btn.hide()
         yes_btn.setEnabled(False)
         no_btn.setEnabled(False)
 
@@ -2947,11 +2924,11 @@ def make_debug_page(on_back: Callable[[], None]) -> QWidget:
         if kind == "speaker":
             state["spk"] = "ok"
             _set_badge(spk_badge, "SPK", "ok")
-            status.setText("Speaker PASS")
+            _set_status("Speaker PASS")
         elif kind == "mic":
             state["mic"] = "ok"
             _set_badge(mic_badge, "MIC", "ok")
-            status.setText("Mic PASS")
+            _set_status("Mic PASS")
 
     def on_no() -> None:
         kind = pending.get("kind")
@@ -2959,11 +2936,11 @@ def make_debug_page(on_back: Callable[[], None]) -> QWidget:
         if kind == "speaker":
             state["spk"] = "bad"
             _set_badge(spk_badge, "SPK", "bad")
-            status.setText("Speaker FAIL · Wake USB / check green jack")
+            _set_status("Speaker FAIL")
         elif kind == "mic":
             state["mic"] = "bad"
             _set_badge(mic_badge, "MIC", "bad")
-            status.setText("Mic FAIL · check pink jack")
+            _set_status("Mic FAIL")
 
     def _run_cmd(cmd: list, timeout_ms: int = 0) -> QProcess:
         p = QProcess(body)
@@ -3000,21 +2977,12 @@ def make_debug_page(on_back: Callable[[], None]) -> QWidget:
         cap_n = _count_cards("arecord")
         state["spk_dev"] = play_n > 0
         state["mic_dev"] = cap_n > 0
-        card = "?"
-        try:
-            card = Path("/etc/esp-handset/alsa-card").read_text().strip() or "?"
-        except OSError:
-            pass
         if play_n <= 0 and cap_n <= 0:
-            hw.setText("No ALSA cards")
+            _set_status("No USB audio")
             _set_badge(spk_badge, "SPK", "none")
             _set_badge(mic_badge, "MIC", "none")
         else:
-            hw.setText(f"USB card {card} · play {play_n} · cap {cap_n}")
-            if state["spk"] == "?":
-                _set_badge(spk_badge, "SPK", "?")
-            if state["mic"] == "?":
-                _set_badge(mic_badge, "MIC", "?")
+            tip.setText(f"{AUDIO_BUILD} · cards {play_n}/{cap_n}")
 
     def _wav_level(path: Path) -> tuple:
         try:
@@ -3032,26 +3000,22 @@ def make_debug_page(on_back: Callable[[], None]) -> QWidget:
             if not samples:
                 return 0.0, 0.0
             peak = max(abs(s) for s in samples) / 32768.0
-            acc = sum((s / 32768.0) ** 2 for s in samples)
-            rms = (acc / len(samples)) ** 0.5
-            return peak, rms
+            return peak, 0.0
         except Exception:
             return 0.0, 0.0
 
-    def do_save_pref() -> None:
+    def cycle_sound() -> None:
+        i = profiles.index(pref_state["profile"])
+        i = (i + 1) % len(profiles)
+        pref_state["profile"] = profiles[i]
+        pref_state["enabled"] = pref_state["profile"] != "Silent"
         store.save(
             "sounds.json",
-            {"profile": profile.currentText(), "enabled": enabled.isChecked()},
+            {"profile": pref_state["profile"], "enabled": pref_state["enabled"]},
         )
-        status.setText("Sound prefs saved")
-
-    def do_wake() -> None:
-        from esp_handset.audio_out import wake_usb_audio
-
-        status.setText("Waking USB…")
-        wake_usb_audio()
-        scan_hw()
-        status.setText("USB wake done · try Beep")
+        off2 = " · OFF" if not pref_state["enabled"] else ""
+        sound_btn.setText(f"Sound: {pref_state['profile']}{off2}")
+        _set_status(f"Saved {pref_state['profile']}")
 
     def speaker_test() -> None:
         if busy["on"]:
@@ -3059,27 +3023,27 @@ def make_debug_page(on_back: Callable[[], None]) -> QWidget:
         _clear_ask()
         if not state["spk_dev"] and _count_cards("aplay") == 0:
             _set_badge(spk_badge, "SPK", "none")
-            status.setText("No playback device")
+            _set_status("No playback device")
             return
-        # Do NOT pkill speaker-test here — that races sudo digivice-audio-fix
         _set_busy(True)
         _set_badge(spk_badge, "SPK", "wait")
-        from esp_handset.audio_out import AUDIO_BUILD, last_beep_tail, play_test_tone_detail
+        _set_status("Playing… wait")
 
-        status.setText(f"{AUDIO_BUILD}… ~10s · headphones in")
-
-        import threading
+        from esp_handset.audio_out import play_test_tone_detail
 
         def _work() -> None:
             ok, msg = play_test_tone_detail()
-            tail = last_beep_tail(4)
 
             def _ui() -> None:
                 _set_busy(False)
-                if not ok:
-                    status.setText(f"FAIL: {msg}\n{tail[-80:]}")
+                short = (msg or "").replace("\n", " ")
+                if "sudo blocked" in short.lower():
+                    _set_status("Need sudo update")
+                elif not ok:
+                    _set_status("Beep FAIL")
                 else:
-                    status.setText(f"{msg}\n{tail[-60:]}")
+                    _set_status("Done — heard it?")
+                tip.setText(short[:36])
                 _ask_heard("speaker")
 
             QTimer.singleShot(0, _ui)
@@ -3091,11 +3055,11 @@ def make_debug_page(on_back: Callable[[], None]) -> QWidget:
             return
         _clear_ask()
         if not _which("arecord"):
-            status.setText("arecord missing")
+            _set_status("arecord missing")
             return
         if not state["mic_dev"] and _count_cards("arecord") == 0:
             _set_badge(mic_badge, "MIC", "none")
-            status.setText("No capture device")
+            _set_status("No mic device")
             return
         _kill_all()
         DATA.mkdir(parents=True, exist_ok=True)
@@ -3106,7 +3070,7 @@ def make_debug_page(on_back: Callable[[], None]) -> QWidget:
             pass
         _set_busy(True)
         _set_badge(mic_badge, "MIC", "wait")
-        status.setText("Rec 3s · speak now")
+        _set_status("Speak now (3s)")
         card = "1"
         try:
             card = Path("/etc/esp-handset/alsa-card").read_text().strip() or "1"
@@ -3131,13 +3095,13 @@ def make_debug_page(on_back: Callable[[], None]) -> QWidget:
         )
 
         def _after_rec(code: int, _st) -> None:
-            peak, rms = _wav_level(test_wav)
+            peak, _rms = _wav_level(test_wav)
             pct = int(peak * 100)
             if peak < 0.02:
                 _set_busy(False)
                 state["mic"] = "bad"
                 _set_badge(mic_badge, "MIC", "bad")
-                status.setText(f"Mic quiet ({pct}%) · FAIL")
+                _set_status(f"Mic quiet {pct}%")
                 return
             play_cmd = None
             if _which("pasuspender") and _which("aplay"):
@@ -3155,9 +3119,9 @@ def make_debug_page(on_back: Callable[[], None]) -> QWidget:
                 _set_busy(False)
                 state["mic"] = "ok"
                 _set_badge(mic_badge, "MIC", "ok")
-                status.setText(f"Mic {pct}% OK (no play)")
+                _set_status(f"Mic {pct}% OK")
                 return
-            status.setText(f"Mic {pct}% · playing back…")
+            _set_status("Playing mic…")
             play = _run_cmd(play_cmd, timeout_ms=8000)
 
             def _after_play(_c=0, _s=None) -> None:
@@ -3168,22 +3132,13 @@ def make_debug_page(on_back: Callable[[], None]) -> QWidget:
 
         rec.finished.connect(_after_rec)
 
-    def stop_test() -> None:
-        _kill_all()
-        _set_busy(False)
-        _clear_ask()
-        status.setText("Stopped")
-
-    save_pref.clicked.connect(do_save_pref)
-    wake_btn.clicked.connect(do_wake)
+    sound_btn.clicked.connect(cycle_sound)
     spk_btn.clicked.connect(speaker_test)
     mic_btn.clicked.connect(mic_test)
-    stop_btn.clicked.connect(stop_test)
     yes_btn.clicked.connect(on_yes)
     no_btn.clicked.connect(on_no)
     QTimer.singleShot(150, scan_hw)
     return page_chrome("Debug", body, on_back, scroll=False)
-
 
 def make_about_page(modem, on_back) -> QWidget:
     body = QWidget()
