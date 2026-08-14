@@ -13,6 +13,17 @@ fi
 
 echo -1 >/sys/module/usbcore/parameters/autosuspend 2>/dev/null || true
 
+# Drop a bad index=0 pin so snd-usb-audio can take card 1 next to HDMI
+if grep -qs 'index=0' /etc/modprobe.d/digivice-usb-audio.conf 2>/dev/null; then
+  mkdir -p /etc/modprobe.d
+  cat >/etc/modprobe.d/digivice-usb-audio.conf <<'EOF'
+options snd-usb-audio ignore_ctl_error=1
+EOF
+  modprobe -r snd-usb-audio 2>/dev/null || true
+  modprobe snd-usb-audio 2>/dev/null || true
+  sleep 1
+fi
+
 for d in /sys/bus/usb/devices/*; do
   [[ -f "$d/idVendor" ]] || continue
   [[ "$(cat "$d/idVendor" 2>/dev/null)" == "0d8c" ]] || continue

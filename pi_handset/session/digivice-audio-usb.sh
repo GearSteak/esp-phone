@@ -94,11 +94,10 @@ fi
 
 reset_cmedia
 
-# Prefer USB as ALSA card 0 next boot
+# Do not pin USB to card 0 — vc4-hdmi already took it (probe then fails).
 mkdir -p /etc/modprobe.d
 cat >/etc/modprobe.d/digivice-usb-audio.conf <<'EOF'
-# Digivice: put USB audio first
-options snd-usb-audio index=0
+options snd-usb-audio ignore_ctl_error=1
 EOF
 log "wrote /etc/modprobe.d/digivice-usb-audio.conf"
 

@@ -66,6 +66,13 @@ recover_cmedia() {
     echo 1 >"$d/authorized" 2>/dev/null || true
     echo on >"$d/power/control" 2>/dev/null || true
   done
+  # HDMI/vc4 already owns card 0. Pinning USB to index=0 makes probe fail:
+  # lsusb still shows 0d8c, but /proc/asound/cards stays HDMI-only.
+  mkdir -p /etc/modprobe.d
+  cat >/etc/modprobe.d/digivice-usb-audio.conf <<'EOF'
+options snd-usb-audio ignore_ctl_error=1
+EOF
+  modprobe -r snd-usb-audio 2>/dev/null || true
   modprobe snd-usb-audio 2>/dev/null || true
   sleep 1.2
   log "lsusb C-Media:"
@@ -293,7 +300,7 @@ mkdir -p /etc/esp-handset
 echo "$USB_CARD" >/etc/esp-handset/alsa-card
 mkdir -p /etc/modprobe.d
 cat >/etc/modprobe.d/digivice-usb-audio.conf <<'EOF'
-options snd-usb-audio index=0
+options snd-usb-audio ignore_ctl_error=1
 EOF
 cat >/etc/asound.conf <<EOF
 defaults.pcm.card $USB_CARD
