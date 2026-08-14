@@ -14,6 +14,26 @@ if [[ "$(id -u)" -ne 0 ]]; then
   exit 1
 fi
 
+if [[ "${1:-}" == "--persist-only" ]]; then
+  # Install rules + wake devices; no beep
+  mkdir -p /etc/udev/rules.d /etc/modprobe.d
+  if [[ -f /opt/esp-handset/session/99-digivice-cmedia-nosuspend.rules ]]; then
+    install -m 644 /opt/esp-handset/session/99-digivice-cmedia-nosuspend.rules \
+      /etc/udev/rules.d/99-digivice-cmedia-nosuspend.rules
+  fi
+  echo "options usbcore autosuspend=-1" >/etc/modprobe.d/digivice-usb-autosuspend.conf
+  echo -1 >/sys/module/usbcore/parameters/autosuspend 2>/dev/null || true
+  udevadm control --reload-rules 2>/dev/null || true
+  for d in /sys/bus/usb/devices/*; do
+    [[ -f "$d/idVendor" ]] || continue
+    [[ "$(cat "$d/idVendor" 2>/dev/null)" == "0d8c" ]] || continue
+    echo on >"$d/power/control" 2>/dev/null || true
+    echo -1 >"$d/power/autosuspend_delay_ms" 2>/dev/null || true
+  done
+  log "persist OK (no beep)"
+  exit 0
+fi
+
 USER_NAME="${SUDO_USER:-gearsteak}"
 [[ "$USER_NAME" == "root" ]] && USER_NAME=gearsteak
 for u in gearsteak pi isaac; do

@@ -321,6 +321,19 @@ if [[ -f "$ROOT/session/digivice-audio-fix.sh" ]]; then
   install -m 755 "$ROOT/session/digivice-audio-fix.sh" "$PREFIX/session/digivice-audio-fix.sh"
   install -m 755 "$ROOT/session/digivice-audio-fix.sh" /usr/local/bin/digivice-audio-fix
 fi
+# Keep C-Media USB audio awake across reboots
+if [[ -f "$ROOT/session/99-digivice-cmedia-nosuspend.rules" ]]; then
+  install -m 644 "$ROOT/session/99-digivice-cmedia-nosuspend.rules" \
+    "$PREFIX/session/99-digivice-cmedia-nosuspend.rules"
+  install -m 644 "$ROOT/session/99-digivice-cmedia-nosuspend.rules" \
+    /etc/udev/rules.d/99-digivice-cmedia-nosuspend.rules
+  udevadm control --reload-rules 2>/dev/null || true
+fi
+echo "options usbcore autosuspend=-1" >/etc/modprobe.d/digivice-usb-autosuspend.conf
+# Apply nosuspend now if stick is present
+if [[ -x /usr/local/bin/digivice-audio-fix ]]; then
+  bash /usr/local/bin/digivice-audio-fix --persist-only 2>&1 | tee -a "$LOG" || true
+fi
 
 if [[ -d "$ROOT/display" ]]; then
   install -m 755 "$ROOT/display/install-spi-userspace.sh" /usr/local/bin/digivice-install-spi-userspace 2>/dev/null || true
@@ -362,6 +375,7 @@ $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-modem-uart
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-modem-doctor
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-audio-doctor
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-audio-usb
+$USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-audio-fix
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-fix-cursor
 $USER_NAME ALL=(root) NOPASSWD: $PREFIX/session/full-update.sh
 $USER_NAME ALL=(root) NOPASSWD: $PREFIX/session/update-handset.sh
