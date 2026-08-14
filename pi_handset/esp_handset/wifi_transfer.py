@@ -336,6 +336,31 @@ def _make_handler(get_dest: Callable[[], str], signals: _UploadSignals):
             if path in ("/diag/audio", "/diag/audio.txt", "/audio-doctor.txt"):
                 self._serve_audio_report(download=path.endswith(".txt"))
                 return
+            if path in ("/diag/beep", "/diag/beep.txt", "/last-beep.txt"):
+                beep = Path.home() / ".esp-handset" / "last-beep.txt"
+                if not beep.is_file():
+                    msg = (
+                        b"No last-beep.txt yet.\n"
+                        b"Run Settings → Debug → BEEP first.\n"
+                    )
+                    self.send_response(404)
+                    self.send_header("Content-Type", "text/plain; charset=utf-8")
+                    self.send_header("Content-Length", str(len(msg)))
+                    self.end_headers()
+                    self.wfile.write(msg)
+                    return
+                raw = beep.read_bytes()
+                self.send_response(200)
+                self.send_header("Content-Type", "text/plain; charset=utf-8")
+                if path.endswith(".txt"):
+                    self.send_header(
+                        "Content-Disposition",
+                        'attachment; filename="last-beep.txt"',
+                    )
+                self.send_header("Content-Length", str(len(raw)))
+                self.end_headers()
+                self.wfile.write(raw)
+                return
             self.send_error(404)
 
         def _html(self, title: str, inner: str) -> None:
@@ -387,6 +412,7 @@ def _make_handler(get_dest: Callable[[], str], signals: _UploadSignals):
 <a class="btn" style="display:block;" href="/diag/modem.txt">Download modem-doctor.txt</a>
 <a style="display:block;margin-top:8px;" href="/diag/modem">View in browser</a>
 <a class="btn" style="margin-top:10px;display:block;" href="/diag/audio.txt">Download audio-doctor.txt</a>
+<a class="btn" style="margin-top:10px;display:block;" href="/diag/beep.txt">Download last-beep.txt</a>
 </div>
 
 <div class="box">

@@ -14,11 +14,17 @@ if [[ "$(id -u)" -ne 0 ]]; then
   exit 1
 fi
 
-USER_NAME="${SUDO_USER:-gearsteak}"
-[[ "$USER_NAME" == "root" ]] && USER_NAME=gearsteak
-for u in gearsteak pi isaac; do
-  id "$u" >/dev/null 2>&1 && USER_NAME="$u" && break
-done
+USER_NAME="${SUDO_USER:-}"
+if [[ -z "$USER_NAME" || "$USER_NAME" == "root" ]]; then
+  USER_NAME=""
+  for u in gearsteak pi isaac; do
+    if id "$u" >/dev/null 2>&1; then
+      USER_NAME="$u"
+      break
+    fi
+  done
+fi
+[[ -n "$USER_NAME" ]] || USER_NAME=pi
 USER_HOME="$(getent passwd "$USER_NAME" | cut -d: -f6)"
 UID_NUM="$(id -u "$USER_NAME")"
 RUNTIME="/run/user/$UID_NUM"
@@ -26,6 +32,7 @@ as_user() {
   sudo -u "$USER_NAME" -H env XDG_RUNTIME_DIR="$RUNTIME" \
     DBUS_SESSION_BUS_ADDRESS="unix:path=$RUNTIME/bus" "$@"
 }
+log "gui_user=$USER_NAME uid=$UID_NUM"
 
 wake_cmedia() {
   echo -1 >/sys/module/usbcore/parameters/autosuspend 2>/dev/null || true
@@ -127,8 +134,9 @@ if [[ "${1:-}" == "--beep" ]]; then
   exit $?
 fi
 
-if [[ "${1:-}" == "--soft-beep" ]]; then
-  # No USB re-auth — exclusive ALSA only. Keep under ~10s (Digivice UI waits).
+if [[ "${1:-}" == "--soft-beep" || "${1:-}" == "--ui-beep" ]]; then
+  # Digivice Debug BEEP — must match working CLI exclusive path.
+  # Stick: C-Media USB (Amazon green=headphones / pink=mic).
   find_usb_card
   if [[ -z "$USB_CARD" ]]; then
     log "ERROR: no USB card"
@@ -137,22 +145,60 @@ if [[ "${1:-}" == "--soft-beep" ]]; then
   fi
   mkdir -p /etc/esp-handset
   echo "$USB_CARD" >/etc/esp-handset/alsa-card
-  for ctl in Speaker PCM Master Headphone; do
+  log "ui-beep card=$USB_CARD user=$USER_NAME"
+
+  # Crank every playback control (C-Media often resets mute)
+  while IFS= read -r line; do
+    ctl="${line#Simple mixer control \'}"
+    ctl="${ctl%%\',*}"
+    [[ -n "$ctl" ]] || continue
+    case "$ctl" in
+      Mic*|Capture*|Auto*) continue ;;
+    esac
+    amixer -c "$USB_CARD" -q sset "$ctl" 100% unmute 2>/dev/null || true
+  done < <(amixer -c "$USB_CARD" scontrols 2>/dev/null)
+  for ctl in Speaker PCM Master Headphone Playback; do
     amixer -c "$USB_CARD" -q sset "$ctl" 100% unmute 2>/dev/null || true
   done
-  log "soft-beep card=$USB_CARD — stop PipeWire"
-  timeout 3 as_user systemctl --user stop pipewire-pulse wireplumber pipewire 2>/dev/null || true
-  sleep 0.4
+  log "mixer:"
+  amixer -c "$USB_CARD" sget Speaker 2>/dev/null | head -n 8 | while read -r l; do log "  $l"; done
+  amixer -c "$USB_CARD" sget PCM 2>/dev/null | head -n 8 | while read -r l; do log "  $l"; done
+
+  log "stop PipeWire for $USER_NAME"
+  timeout 2 as_user systemctl --user stop pipewire-pulse wireplumber pipewire 2>/dev/null || true
+  sleep 0.5
   fuser -k "/dev/snd/pcmC${USB_CARD}D0p" 2>/dev/null || true
-  sleep 0.15
+  sleep 0.2
   for ctl in Speaker PCM Master Headphone; do
     amixer -c "$USB_CARD" -q sset "$ctl" 100% unmute 2>/dev/null || true
   done
-  log ">>> WATCH RED LED / LISTEN (soft-beep) <<<"
-  timeout 5 speaker-test -D "plughw:$USB_CARD,0" -c 2 -r 48000 -t sine -f 880 -l 1
-  rc=$?
-  log "speaker-test exit=$rc"
-  timeout 3 as_user systemctl --user start pipewire wireplumber pipewire-pulse 2>/dev/null || true
+
+  # Full-scale mono 880Hz 2s — same path CLI uses, clearer than speaker-test
+  BEEP_WAV="/tmp/digivice-ui-beep.wav"
+  python3 - <<'PY'
+import math, struct, wave
+path = "/tmp/digivice-ui-beep.wav"
+rate, secs, freq = 48000, 2.0, 880.0
+n = int(rate * secs)
+with wave.open(path, "w") as w:
+    w.setnchannels(1)
+    w.setsampwidth(2)
+    w.setframerate(rate)
+    for i in range(n):
+        v = int(32000 * math.sin(2 * math.pi * freq * i / rate))
+        w.writeframes(struct.pack("<h", v))
+PY
+  log ">>> LISTEN NOW (green jack) LED should blink ~2s <<<"
+  if [[ -f "$BEEP_WAV" ]]; then
+    timeout 4 aplay -D "plughw:$USB_CARD,0" -q "$BEEP_WAV"
+    rc=$?
+    log "aplay exit=$rc"
+  else
+    timeout 5 speaker-test -D "plughw:$USB_CARD,0" -c 1 -r 48000 -t sine -f 880 -l 1
+    rc=$?
+    log "speaker-test exit=$rc"
+  fi
+  timeout 2 as_user systemctl --user start pipewire wireplumber pipewire-pulse 2>/dev/null || true
   exit "$rc"
 fi
 
