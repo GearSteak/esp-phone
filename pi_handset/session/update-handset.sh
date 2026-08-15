@@ -181,7 +181,8 @@ install_tree() {
       "digivice-stop-gb.sh:digivice-stop-gb" \
       "ensure-gb-wrappers.sh:digivice-ensure-gb" \
       "ensure-gb-roms.sh:digivice-gb-roms-dir" \
-      "digivice-cm108-wake.sh:digivice-cm108-wake"
+      "digivice-cm108-wake.sh:digivice-cm108-wake" \
+      "digivice-start.sh:digivice-start"
     do
       src="${pair%%:*}"
       dst="${pair##*:}"
@@ -223,6 +224,7 @@ install_tree() {
       "digivice-audio-fix.sh:digivice-audio-fix" \
       "digivice-cm108-beep.sh:digivice-cm108-beep" \
       "digivice-cm108-wake.sh:digivice-cm108-wake" \
+      "digivice-start.sh:digivice-start" \
       "ensure-gb-roms.sh:digivice-gb-roms-dir" \
       "power.sh:digivice-power" \
       "full-update.sh:digivice-full-update"
@@ -259,9 +261,34 @@ install_tree() {
 
   cat >/usr/local/bin/handset-phone <<'EOF'
 #!/bin/bash
+export DISPLAY="${DISPLAY:-:0}"
+if [[ -z "${XAUTHORITY:-}" && -f "${HOME}/.Xauthority" ]]; then
+  export XAUTHORITY="${HOME}/.Xauthority"
+fi
 exec /usr/local/bin/handset-session phone
 EOF
   chmod +x /usr/local/bin/handset-phone
+  if [[ -f "$ROOT/session/digivice-start.sh" ]]; then
+    install -m 755 "$ROOT/session/digivice-start.sh" /usr/local/bin/digivice-start
+  fi
+  # Keep Desktop "Return to Phone" working after GUI updates
+  if [[ -f "$ROOT/session/return-to-phone.desktop" ]]; then
+    install -d "$USER_HOME/Desktop" "$USER_HOME/.local/share/applications" \
+      "$USER_HOME/.config/autostart"
+    install -m 644 "$ROOT/session/return-to-phone.desktop" \
+      "$USER_HOME/Desktop/return-to-phone.desktop"
+    install -m 644 "$ROOT/session/return-to-phone.desktop" \
+      "$USER_HOME/.local/share/applications/return-to-phone.desktop"
+    chmod +x "$USER_HOME/Desktop/return-to-phone.desktop" 2>/dev/null || true
+    chown "$USER_NAME:$USER_NAME" "$USER_HOME/Desktop/return-to-phone.desktop" \
+      "$USER_HOME/.local/share/applications/return-to-phone.desktop" 2>/dev/null || true
+  fi
+  if [[ -f "$ROOT/session/autostart-phone.desktop" ]]; then
+    install -m 644 "$ROOT/session/autostart-phone.desktop" \
+      "$USER_HOME/.config/autostart/esp-handset-phone.desktop"
+    chown "$USER_NAME:$USER_NAME" \
+      "$USER_HOME/.config/autostart/esp-handset-phone.desktop" 2>/dev/null || true
+  fi
 
   if [[ -d /etc/sudoers.d ]]; then
     cat >/etc/sudoers.d/esp-handset-update <<EOF

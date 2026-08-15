@@ -2,7 +2,7 @@
 Type=Application
 Name=Return to Phone
 Comment=Fullscreen ESP Digivice UI
-Exec=/usr/local/bin/digivice-start
+Exec=/bin/bash -c 'export DISPLAY="${DISPLAY:-:0}"; export XAUTHORITY="${XAUTHORITY:-$HOME/.Xauthority}"; if [ -x /usr/local/bin/digivice-start ]; then exec /usr/local/bin/digivice-start; fi; echo phone >"$HOME/.esp-handset/session_mode"; mkdir -p "$HOME/.esp-handset"; nohup /usr/local/bin/handset-phone >>"$HOME/.esp-handset/handset.log" 2>&1 &'
 Icon=phone
 Terminal=false
 Categories=Utility;

@@ -2,6 +2,6 @@
 Type=Application
 Name=ESP Handset (phone-first)
 Comment=Start Digivice UI on login
-Exec=/bin/bash -c 'sleep 2; /usr/local/bin/digivice-start'
+Exec=/bin/bash -c 'sleep 2; export DISPLAY="${DISPLAY:-:0}"; export XAUTHORITY="${XAUTHORITY:-$HOME/.Xauthority}"; if [ -x /usr/local/bin/digivice-start ]; then exec /usr/local/bin/digivice-start; fi; echo phone >"$HOME/.esp-handset/session_mode"; mkdir -p "$HOME/.esp-handset"; exec /usr/local/bin/handset-phone'
 X-GNOME-Autostart-enabled=true
 Terminal=false

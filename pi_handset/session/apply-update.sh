@@ -114,7 +114,8 @@ install_live_from_repo() {
     "digivice-audio-usb.sh:digivice-audio-usb" \
     "digivice-audio-fix.sh:digivice-audio-fix" \
     "digivice-cm108-beep.sh:digivice-cm108-beep" \
-    "digivice-cm108-wake.sh:digivice-cm108-wake"
+    "digivice-cm108-wake.sh:digivice-cm108-wake" \
+    "digivice-start.sh:digivice-start"
   do
     src="${pair%%:*}"
     dst="${pair##*:}"
@@ -181,7 +182,8 @@ if [[ -d "$STAGE" && -f "$STAGE/.ready" ]]; then
     digivice-audio-usb.sh:digivice-audio-usb \
     digivice-audio-fix.sh:digivice-audio-fix \
     digivice-cm108-beep.sh:digivice-cm108-beep \
-    digivice-cm108-wake.sh:digivice-cm108-wake
+    digivice-cm108-wake.sh:digivice-cm108-wake \
+    digivice-start.sh:digivice-start
   do
     src="${pair%%:*}"
     dst="${pair##*:}"
@@ -213,9 +215,16 @@ if [[ -d "$STAGE" && -f "$STAGE/.ready" ]]; then
   log "digivice-stop-gb → $(command -v digivice-stop-gb 2>/dev/null || echo MISSING)"
   cat >/usr/local/bin/handset-phone <<'EOF'
 #!/bin/bash
+export DISPLAY="${DISPLAY:-:0}"
+if [[ -z "${XAUTHORITY:-}" && -f "${HOME}/.Xauthority" ]]; then
+  export XAUTHORITY="${HOME}/.Xauthority"
+fi
 exec /usr/local/bin/handset-session phone
 EOF
   chmod +x /usr/local/bin/handset-phone
+  if [[ -f "$PREFIX/session/digivice-start.sh" ]]; then
+    install -m 755 "$PREFIX/session/digivice-start.sh" /usr/local/bin/digivice-start
+  fi
   log "Swap OK"
 else
   log "No staging dir — install from repo while UI is down"
@@ -241,6 +250,24 @@ echo "ok $(date -Iseconds)" >/etc/esp-handset/last_update 2>/dev/null || true
 # Relaunch like typing handset-phone in a terminal (NOT home-relaunch — that path crashed)
 USER_NAME="$(resolve_gui_user)"
 USER_HOME="$(getent passwd "$USER_NAME" | cut -d: -f6 || echo /home/"$USER_NAME")"
+
+if [[ -f "$PREFIX/session/return-to-phone.desktop" ]]; then
+  install -d "$USER_HOME/Desktop" "$USER_HOME/.local/share/applications" 2>/dev/null || true
+  install -m 644 "$PREFIX/session/return-to-phone.desktop" \
+    "$USER_HOME/Desktop/return-to-phone.desktop" 2>/dev/null || true
+  install -m 644 "$PREFIX/session/return-to-phone.desktop" \
+    "$USER_HOME/.local/share/applications/return-to-phone.desktop" 2>/dev/null || true
+  chmod +x "$USER_HOME/Desktop/return-to-phone.desktop" 2>/dev/null || true
+  chown "$USER_NAME:$USER_NAME" "$USER_HOME/Desktop/return-to-phone.desktop" \
+    "$USER_HOME/.local/share/applications/return-to-phone.desktop" 2>/dev/null || true
+fi
+if [[ -f "$PREFIX/session/autostart-phone.desktop" ]]; then
+  install -d "$USER_HOME/.config/autostart" 2>/dev/null || true
+  install -m 644 "$PREFIX/session/autostart-phone.desktop" \
+    "$USER_HOME/.config/autostart/esp-handset-phone.desktop" 2>/dev/null || true
+  chown "$USER_NAME:$USER_NAME" \
+    "$USER_HOME/.config/autostart/esp-handset-phone.desktop" 2>/dev/null || true
+fi
 
 # GUI updates used to wipe audio-fix from sudoers — restore every apply
 if [[ -d /etc/sudoers.d ]]; then
