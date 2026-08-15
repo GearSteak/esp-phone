@@ -48,11 +48,11 @@
 // ---------------------------------------------------------------------------
 // SIP / VoIP
 // ---------------------------------------------------------------------------
-#define SIP_SERVER            "sip.ipcomms.net"
+#define SIP_SERVER            "sip.zadarma.com"
 #define SIP_PORT              5060
-#define SIP_USERNAME          "YOUR_SIP_USER"
-#define SIP_PASSWORD          "YOUR_SIP_PASSWORD"
-#define SIP_DISPLAY_NAME      "ESP Phone"
+#define SIP_USERNAME          "440892"
+#define SIP_PASSWORD          "Ping927Ld"
+#define SIP_DISPLAY_NAME      "SIP"
 #define SIP_LOCAL_PORT        5060
 #define SIP_RTP_PORT          10000
 #define SIP_REGISTER_EXPIRES  300

@@ -2299,6 +2299,161 @@ def make_appearance_page(shell, on_back) -> QWidget:
     return page_chrome("Appearance", body, on_back)
 
 
+def _panel_rotation_degrees() -> str:
+    for path in (
+        Path("/etc/esp-handset/panel-rotation"),
+        Path.home() / ".esp-handset" / "panel-rotation",
+    ):
+        try:
+            if path.is_file():
+                v = path.read_text(encoding="utf-8").strip()
+                if v in ("0", "90", "180", "270"):
+                    return v
+        except OSError:
+            continue
+    return os.environ.get("ESP_PANEL_ROTATION", "0").strip() or "0"
+
+
+def make_orientation_page(on_back: Callable[[], None]) -> QWidget:
+    """Flip Waveshare 2\" panel for different cases (saves + reboot)."""
+    from PyQt5.QtCore import QTimer
+
+    body = QWidget()
+    lay = QVBoxLayout(body)
+    tip = QLabel(
+        "If the Digivice UI is upside-down in the new case,\n"
+        "pick 0° (normal) or 180° (flip).\n"
+        "Apply writes the panel setting; reboot to finish."
+    )
+    tip.setWordWrap(True)
+    tip.setStyleSheet("color:#9ab;font-size:10px;")
+    current = QLabel("")
+    current.setWordWrap(True)
+    status = QLabel("Ready.")
+    status.setWordWrap(True)
+    lay.addWidget(tip)
+    lay.addWidget(current)
+    lay.addWidget(status)
+
+    choices = [
+        ("0", "0° · normal"),
+        ("180", "180° · flip (upside-down fix)"),
+        ("90", "90° · rotate right"),
+        ("270", "270° · rotate left"),
+    ]
+
+    def refresh() -> None:
+        cur = _panel_rotation_degrees()
+        labels = {k: lab for k, lab in choices}
+        current.setText(f"Current: {labels.get(cur, cur)}")
+
+    refresh()
+
+    pending = {"action": None, "ts": 0.0}
+
+    def _rotation_bin(deg: str) -> list:
+        for p in (
+            "/usr/local/bin/digivice-set-rotation",
+            "/opt/esp-handset/display/set-panel-rotation.sh",
+        ):
+            if os.path.isfile(p):
+                return ["sudo", "-n", p, deg]
+        here = Path(__file__).resolve().parents[1] / "display" / "set-panel-rotation.sh"
+        if here.is_file():
+            return ["sudo", "-n", "bash", str(here), deg]
+        return ["sudo", "-n", "/usr/local/bin/digivice-set-rotation", deg]
+
+    def _power_bin(arg: str) -> list:
+        for p in (
+            "/usr/local/bin/digivice-power",
+            "/opt/esp-handset/session/power.sh",
+        ):
+            if os.path.isfile(p):
+                return ["sudo", "-n", p, arg]
+        return ["sudo", "-n", "systemctl", "reboot"]
+
+    def apply_deg(deg: str, label: str) -> None:
+        status.setText(f"Applying {label}…")
+        cmd = _rotation_bin(deg)
+        try:
+            r = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=60,
+                env={
+                    **os.environ,
+                    "PATH": "/usr/local/bin:/usr/sbin:/sbin:/usr/bin:/bin:"
+                    + os.environ.get("PATH", ""),
+                },
+            )
+            out = ((r.stdout or "") + (r.stderr or "")).strip()
+            if r.returncode != 0 and "Panel rotation set" not in out:
+                # Preference may still be written; show warning
+                status.setText(
+                    f"Apply exit {r.returncode}.\n"
+                    f"{out[-180:] if out else 'sudo digivice-full-update once'}\n"
+                    "Try Reboot anyway if upside-down."
+                )
+            else:
+                status.setText(
+                    f"Saved {deg}°.\n"
+                    "Press Reboot (x2) to apply on the panel."
+                )
+        except FileNotFoundError:
+            status.setText("digivice-set-rotation missing — run full-update")
+        except subprocess.TimeoutExpired:
+            status.setText("Timed out applying rotation")
+        except Exception as e:
+            status.setText(f"Failed: {e}")
+        refresh()
+
+    for deg, label in choices:
+        b = QPushButton(label)
+        b.setMinimumHeight(32)
+        b.clicked.connect(lambda _=False, d=deg, lab=label: apply_deg(d, lab))
+        lay.addWidget(b)
+
+    reboot_btn = QPushButton("Reboot to apply (x2)")
+    reboot_btn.setMinimumHeight(36)
+    reboot_btn.setStyleSheet("font-weight:700;")
+    lay.addWidget(reboot_btn)
+    lay.addStretch(1)
+
+    def needs_confirm() -> bool:
+        import time as _t
+
+        now = _t.time()
+        if pending["action"] == "reboot" and now - float(pending["ts"]) < 4.0:
+            pending["action"] = None
+            return False
+        pending["action"] = "reboot"
+        pending["ts"] = now
+        status.setText("Press Reboot again to confirm (4s)")
+        return True
+
+    def do_reboot() -> None:
+        if needs_confirm():
+            return
+        status.setText("Rebooting…")
+        reboot_btn.setEnabled(False)
+        try:
+            subprocess.Popen(
+                _power_bin("reboot"),
+                start_new_session=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        except Exception as e:
+            status.setText(f"Reboot failed: {e}")
+            reboot_btn.setEnabled(True)
+            return
+        QTimer.singleShot(2500, lambda: status.setText("Waiting for reboot…"))
+
+    reboot_btn.clicked.connect(do_reboot)
+    return page_chrome("Orientation", body, on_back)
+
+
 def make_settings_hub(on_back, open_page: Callable[[str], None], on_linux) -> QWidget:
     body = QWidget()
     lay = QVBoxLayout(body)
@@ -2312,6 +2467,7 @@ def make_settings_hub(on_back, open_page: Callable[[str], None], on_linux) -> QW
         ("set_mouse", "Mouse speed"),
         ("set_debug", "Debug · audio"),
         ("set_appearance", "Appearance"),
+        ("set_orientation", "Screen orientation"),
         ("set_network", "Network / modem"),
         ("set_accounts", "Accounts (SIP)"),
         ("set_security", "Security (PIN)"),
@@ -3238,6 +3394,7 @@ def make_help_page(on_back) -> QWidget:
         "Settings → Linux → Exit\n"
         "Settings → Update → software only\n"
         "Settings → Mouse → desktop pointer speed\n"
+        "Settings → Screen → orientation / flip\n"
         "Settings → Debug → Beep / mic\n"
         "Settings → Power → Off/Restart (x2)\n"
         "SSH: digivice-leave\n"

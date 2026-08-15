@@ -66,7 +66,7 @@ mkdir -p /etc/esp-handset
 echo userspace >/etc/esp-handset/spi-userspace
 echo userspace >/etc/esp-handset/spi-backend
 # Default rotation still applies in st7789_spi MADCTL
-[[ -f /etc/esp-handset/panel-rotation ]] || echo 180 >/etc/esp-handset/panel-rotation
+[[ -f /etc/esp-handset/panel-rotation ]] || echo 0 >/etc/esp-handset/panel-rotation
 
 # Session env snippet
 mkdir -p /etc/profile.d

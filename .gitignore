@@ -10,6 +10,8 @@ include/Config.local.h
 .env
 *.pem
 sip.env
+# Seed for digivice-full-update → /etc/esp-handset/sip.env (keep repo private)
+!pi_handset/sip.env
 .esp-handset/
 
 # Pi diagnostic dumps (paste into chat; do not commit)

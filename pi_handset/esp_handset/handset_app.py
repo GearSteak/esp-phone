@@ -407,6 +407,7 @@ def build_app(bridge: Optional[EspBridge], modem: Optional[Sim7600]) -> PhoneShe
     shell.register_page(
         "set_appearance", pages.make_appearance_page(shell, back)
     )
+    shell.register_page("set_orientation", pages.make_orientation_page(back))
 
     def browser_open():
         try:

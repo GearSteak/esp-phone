@@ -41,14 +41,14 @@ def _rotation_madctl() -> int:
         try:
             env = open("/etc/esp-handset/panel-rotation", encoding="utf-8").read().strip()
         except OSError:
-            env = "180"
+            env = "0"
     # ST7789 MADCTL values (common Waveshare mappings)
     return {
         "0": 0x00,
         "90": 0x60,
         "180": 0xC0,
         "270": 0xA0,
-    }.get(env, 0xC0)
+    }.get(env, 0x00)
 
 
 def _gpio_setup(dc: int, rst: int, bl: int) -> bool:

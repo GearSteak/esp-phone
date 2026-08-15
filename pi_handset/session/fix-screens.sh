@@ -79,7 +79,7 @@ cat >/etc/esp-handset/env <<'EOF'
 ESP_HANDSET_SPI_BACKEND=userspace
 ESP_HANDSET_SKIP_LAYOUT=1
 EOF
-[[ -f /etc/esp-handset/panel-rotation ]] || echo 180 >/etc/esp-handset/panel-rotation
+[[ -f /etc/esp-handset/panel-rotation ]] || echo 0 >/etc/esp-handset/panel-rotation
 apt-get install -y python3-spidev python3-rpi.gpio 2>/dev/null \
   || apt-get install -y python3-spidev python3-rpi.lgpio 2>/dev/null || true
 echo "[C] /etc/esp-handset userspace + python spidev"

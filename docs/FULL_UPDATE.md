@@ -28,8 +28,10 @@ After that, `digivice-full-update` is on your PATH forever.
 | Services | `digi-buttons-inputd` + `esp-keyd` enable/start |
 | udev | Digivice keyboard + uinput |
 | Cursor | Xorg software cursor conf |
-| SPI | **left alone** (userspace ST7789 safe) |
-| UI | restarts Digivice when done |
+| UI | Digivice apps + Settings (incl. Screen orientation) |
+| SPI | **left alone** unless `--with-spi-userspace` |
+| Panel | orientation → **0°** for new case (or your saved pick) |
+| UI restart | restarts Digivice when done |
 
 Log: `~/.esp-handset/full-update.log`
 

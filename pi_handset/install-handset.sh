@@ -122,6 +122,7 @@ $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-update
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-gui-update
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-apply-update
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-power
+$USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-set-rotation
 $USER_NAME ALL=(root) NOPASSWD: $PREFIX/session/full-update.sh
 $USER_NAME ALL=(root) NOPASSWD: $PREFIX/session/update-handset.sh
 $USER_NAME ALL=(root) NOPASSWD: $PREFIX/session/gui-update.sh
@@ -175,17 +176,17 @@ if [[ -f "$ROOT/session/digivice-audio-usb.sh" ]]; then
   install -m 755 "$ROOT/session/digivice-audio-usb.sh" /usr/local/bin/digivice-audio-usb
 fi
 
-if [[ ! -f /etc/esp-handset/sip.env ]]; then
+if [[ -f "$ROOT/sip.env" ]]; then
+  install -m 600 "$ROOT/sip.env" /etc/esp-handset/sip.env
+else
   cat >/etc/esp-handset/sip.env <<'EOF'
-SIP_SERVER=sip.example.com
-SIP_USER=YOUR_USER
-SIP_PASS=YOUR_PASS
-SIP_DISPLAY=ESP Digivice
-# Display: Waveshare 2" 240x320 SPI (docs/WAVESHARE_2INCH_LCD.md)
-# Nav: 7 hard buttons → digi-buttons-inputd (docs/DIGI_BUTTONS.md)
-# Cellular: SIM7600G-H USB /dev/sim7600-at
-# LoRa: Heltec USB /dev/esp-bridge
+SIP_SERVER=sip.zadarma.com
+SIP_USER=440892
+SIP_PASS=Ping927Ld
+SIP_DISPLAY=SIP
+SIP_DID=+17788000889
 EOF
+  chmod 600 /etc/esp-handset/sip.env
 fi
 
 # SPI 2" as optional second panel — HDMI stays ON

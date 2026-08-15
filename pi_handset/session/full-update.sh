@@ -180,6 +180,37 @@ echo "$REPO" >/etc/esp-handset/repo.path
 echo "$REPO" >"$USER_HOME/.esp-handset/repo.path" 2>/dev/null || true
 chown "$USER_NAME:$USER_NAME" "$USER_HOME/.esp-handset/repo.path" 2>/dev/null || true
 
+# SIP credentials → /etc (always refresh so old YOUR_USER placeholders get replaced)
+mkdir -p "$USER_HOME/.esp-handset"
+if [[ -f "$ROOT/sip.env" ]]; then
+  install -m 600 "$ROOT/sip.env" /etc/esp-handset/sip.env
+  log "SIP: installed /etc/esp-handset/sip.env from repo seed"
+else
+  cat >/etc/esp-handset/sip.env <<'EOF'
+SIP_SERVER=sip.zadarma.com
+SIP_USER=440892
+SIP_PASS=Ping927Ld
+SIP_DISPLAY=SIP
+SIP_DID=+17788000889
+EOF
+  chmod 600 /etc/esp-handset/sip.env
+  log "SIP: wrote Zadarma defaults to /etc/esp-handset/sip.env"
+fi
+install -m 600 /etc/esp-handset/sip.env "$USER_HOME/.esp-handset/sip.env" 2>/dev/null || true
+chown "$USER_NAME:$USER_NAME" "$USER_HOME/.esp-handset/sip.env" 2>/dev/null || true
+if command -v linphonecsh >/dev/null 2>&1; then
+  # shellcheck disable=SC1091
+  set -a
+  # shellcheck source=/dev/null
+  . /etc/esp-handset/sip.env
+  set +a
+  linphonecsh init >/dev/null 2>&1 || true
+  if [[ -n "${SIP_USER:-}" && -n "${SIP_SERVER:-}" && -n "${SIP_PASS:-}" ]]; then
+    linphonecsh register "sip:${SIP_USER}@${SIP_SERVER}" "$SIP_SERVER" "$SIP_PASS" \
+      >/dev/null 2>&1 || log "WARN: linphonecsh register failed (ok if linphone not running yet)"
+  fi
+fi
+
 # --- install tree (same core as install-handset, no mystery bits) ---
 log "Install → $PREFIX"
 mkdir -p "$PREFIX" "$PREFIX/session" /etc/esp-handset /etc/udev/rules.d /etc/X11/xorg.conf.d
@@ -359,6 +390,35 @@ if [[ -d "$ROOT/display" ]]; then
   install -m 755 "$ROOT/display/spi-doctor.sh" /usr/local/bin/digivice-spi-doctor 2>/dev/null || true
 fi
 
+# Panel orientation (new case = upright 0°; old default 180 flipped the new shell)
+# Settings → Screen orientation / digivice-set-rotation stamps panel-rotation.user.
+mkdir -p /etc/esp-handset
+OLD_ROT="$(tr -d '[:space:]' </etc/esp-handset/panel-rotation 2>/dev/null || true)"
+ROT_DEG="0"
+if [[ -f /etc/esp-handset/panel-rotation.user ]]; then
+  ROT_DEG="$(tr -d '[:space:]' </etc/esp-handset/panel-rotation.user 2>/dev/null || echo 0)"
+elif [[ -n "$OLD_ROT" ]]; then
+  # Migrate legacy seed 180 → 0 (upside-down in new case); keep 90/270
+  if [[ "$OLD_ROT" == "180" ]]; then
+    ROT_DEG="0"
+  else
+    ROT_DEG="$OLD_ROT"
+  fi
+fi
+case "$ROT_DEG" in 0|90|180|270) ;; *) ROT_DEG=0 ;; esac
+echo "$ROT_DEG" >/etc/esp-handset/panel-rotation
+if [[ -x /usr/local/bin/digivice-set-rotation ]]; then
+  log "Screen orientation → ${ROT_DEG}° (digivice-set-rotation)"
+  /usr/local/bin/digivice-set-rotation "$ROT_DEG" 2>&1 | tee -a "$LOG" || \
+    log "WARN: set-rotation ${ROT_DEG}° had errors (preference still saved)"
+else
+  log "WARN: digivice-set-rotation missing — wrote panel-rotation=${ROT_DEG}"
+fi
+if [[ "$OLD_ROT" != "$ROT_DEG" ]]; then
+  NEED_REBOOT=1
+  log "Panel rotation changed (${OLD_ROT:-none} → ${ROT_DEG}) — reboot after update"
+fi
+
 cat >/usr/local/bin/handset-phone <<'EOF'
 #!/bin/bash
 exec /usr/local/bin/handset-session phone
@@ -383,6 +443,7 @@ $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-update
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-gui-update
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-apply-update
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-power
+$USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-set-rotation
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-ensure-buttons
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-ensure-gb
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-stop-gb

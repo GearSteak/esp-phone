@@ -90,6 +90,8 @@ fi
 
 mkdir -p /etc/esp-handset /lib/firmware
 echo "$DEGREES" >/etc/esp-handset/panel-rotation
+# Stamp so digivice-full-update keeps this pick (vs migrating legacy 180→0)
+echo "$DEGREES" >/etc/esp-handset/panel-rotation.user
 
 TMP="$(mktemp)"
 trap 'rm -f "$TMP"' EXIT
@@ -109,13 +111,17 @@ CMD="$ROOT/mipi-dbi-cmd"
 if python3 "$ROOT/mipi-dbi-cmd" /lib/firmware/waveshare2inch.bin "$TMP"; then
   :
 else
-  echo "WARN: mipi-dbi-cmd failed" >&2
-  exit 1
+  echo "WARN: mipi-dbi-cmd failed (DRM firmware)" >&2
+  if [[ -f /etc/esp-handset/spi-userspace ]]; then
+    echo "Userspace SPI: preference saved — reboot Digivice / Pi to apply MADCTL" >&2
+  else
+    echo "Panel preference still saved in /etc/esp-handset/panel-rotation" >&2
+  fi
 fi
-cp -f /lib/firmware/waveshare2inch.bin /lib/firmware/panel.bin
+cp -f /lib/firmware/waveshare2inch.bin /lib/firmware/panel.bin 2>/dev/null || true
 # Keep source tree copy in sync when under /opt
 if [[ -w "$ROOT/waveshare2inch.txt" ]]; then
-  cp -f "$TMP" "$ROOT/waveshare2inch.txt"
+  cp -f "$TMP" "$ROOT/waveshare2inch.txt" 2>/dev/null || true
 fi
 
 BOOTCFG=""

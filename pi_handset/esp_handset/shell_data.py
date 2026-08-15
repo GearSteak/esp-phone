@@ -59,6 +59,7 @@ SETTINGS_APPS = [
     AppEntry("set_mouse", "Mouse", "Desktop pointer speed", "⇔"),
     AppEntry("set_debug", "Debug", "Audio · beep · mic · profile", "⚒"),
     AppEntry("set_appearance", "Look", "Wallpaper", "▣"),
+    AppEntry("set_orientation", "Screen", "Rotation · flip", "↻"),
     AppEntry("set_security", "Security", "PIN", "🔒"),
     AppEntry("set_network", "Network", "Wi‑Fi / LTE", "⌁"),
     AppEntry("set_accounts", "Accounts", "SIP", "@"),
