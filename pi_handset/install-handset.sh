@@ -334,6 +334,11 @@ install -m 644 "$ROOT/session/return-to-phone.desktop" \
   "$USER_HOME/.local/share/applications/return-to-phone.desktop"
 install -m 644 "$ROOT/session/return-to-phone.desktop" \
   "$USER_HOME/Desktop/return-to-phone.desktop" || true
+chmod +x "$USER_HOME/Desktop/return-to-phone.desktop" 2>/dev/null || true
+if command -v gio >/dev/null 2>&1; then
+  sudo -u "$USER_NAME" gio set "$USER_HOME/Desktop/return-to-phone.desktop" \
+    metadata::trusted true 2>/dev/null || true
+fi
 chown -R "$USER_NAME:$USER_NAME" "$USER_HOME/.config" \
   "$USER_HOME/.local" "$USER_HOME/Desktop" || true
 

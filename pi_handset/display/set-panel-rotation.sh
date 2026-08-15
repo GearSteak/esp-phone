@@ -82,16 +82,17 @@ case "$ARG" in
     ;;
 esac
 
-TXT_SRC="$ROOT/waveshare2inch.txt"
-if [[ ! -f "$TXT_SRC" ]]; then
-  echo "Missing $TXT_SRC" >&2
-  exit 1
-fi
-
 mkdir -p /etc/esp-handset /lib/firmware
 echo "$DEGREES" >/etc/esp-handset/panel-rotation
 # Stamp so digivice-full-update keeps this pick (vs migrating legacy 180→0)
 echo "$DEGREES" >/etc/esp-handset/panel-rotation.user
+
+TXT_SRC="$ROOT/waveshare2inch.txt"
+if [[ ! -f "$TXT_SRC" ]]; then
+  echo "WARN: Missing $TXT_SRC — preference saved; DRM firmware not rebuilt" >&2
+  echo "Panel rotation preference: ${DEGREES}°  → sudo reboot (userspace) or re-run after display install"
+  exit 0
+fi
 
 TMP="$(mktemp)"
 trap 'rm -f "$TMP"' EXIT

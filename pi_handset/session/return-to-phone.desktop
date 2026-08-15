@@ -1,9 +1,10 @@
 [Desktop Entry]
 Type=Application
 Name=Return to Phone
-Comment=Fullscreen ESP Handset UI
-Exec=handset-session phone
+Comment=Fullscreen ESP Digivice UI
+Exec=/bin/bash -c 'export DISPLAY=:0; exec /usr/local/bin/handset-phone'
 Icon=phone
 Terminal=false
 Categories=Utility;
+StartupNotify=false
 X-GNOME-Autostart-enabled=false

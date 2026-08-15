@@ -414,9 +414,11 @@ if [[ -x /usr/local/bin/digivice-set-rotation ]]; then
 else
   log "WARN: digivice-set-rotation missing — wrote panel-rotation=${ROT_DEG}"
 fi
-if [[ "$OLD_ROT" != "$ROT_DEG" ]]; then
+if [[ "$OLD_ROT" != "$ROT_DEG" && -n "$OLD_ROT" ]]; then
   NEED_REBOOT=1
-  log "Panel rotation changed (${OLD_ROT:-none} → ${ROT_DEG}) — reboot after update"
+  log "Panel rotation changed (${OLD_ROT} → ${ROT_DEG}) — reboot after update"
+elif [[ -z "$OLD_ROT" ]]; then
+  log "Panel rotation seeded ${ROT_DEG}° (no forced reboot; use --reboot if panel stays flipped)"
 fi
 
 cat >/usr/local/bin/handset-phone <<'EOF'
@@ -637,8 +639,41 @@ log " FULL UPDATE OK  rev=${REV:-?}  → $PREFIX"
 log " Log: $LOG"
 log "════════════════════════════════════════"
 
+# Always reinstall login autostart + Desktop "Return to Phone" (full-update used to skip this)
+mkdir -p "$USER_HOME/.config/autostart" \
+  "$USER_HOME/.local/share/applications" \
+  "$USER_HOME/Desktop" \
+  "$USER_HOME/.esp-handset"
+rm -f "$USER_HOME/.config/autostart/esp-handset.desktop" 2>/dev/null || true
+if [[ -f "$ROOT/session/autostart-phone.desktop" ]]; then
+  install -m 644 "$ROOT/session/autostart-phone.desktop" \
+    "$USER_HOME/.config/autostart/esp-handset-phone.desktop"
+  log "Autostart: esp-handset-phone.desktop"
+fi
+if [[ -f "$ROOT/session/return-to-phone.desktop" ]]; then
+  install -m 644 "$ROOT/session/return-to-phone.desktop" \
+    "$USER_HOME/.local/share/applications/return-to-phone.desktop"
+  install -m 644 "$ROOT/session/return-to-phone.desktop" \
+    "$USER_HOME/Desktop/return-to-phone.desktop" || true
+  # Mark trusted on Pi OS / XFCE so double-click works
+  if command -v gio >/dev/null 2>&1; then
+    sudo -u "$USER_NAME" gio set "$USER_HOME/Desktop/return-to-phone.desktop" \
+      metadata::trusted true 2>/dev/null || true
+  fi
+  chmod +x "$USER_HOME/Desktop/return-to-phone.desktop" 2>/dev/null || true
+  log "Desktop launcher: Return to Phone → /usr/local/bin/handset-phone"
+fi
+# Digivice must come back after reboot / leave-to-desktop
+echo phone >"$USER_HOME/.esp-handset/session_mode"
+echo phone >/etc/esp-handset/ui_mode
+chown -R "$USER_NAME:$USER_NAME" \
+  "$USER_HOME/.config/autostart" \
+  "$USER_HOME/.local/share/applications" \
+  "$USER_HOME/Desktop/return-to-phone.desktop" \
+  "$USER_HOME/.esp-handset/session_mode" 2>/dev/null || true
+
 if [[ "$DO_REBOOT" -eq 1 || "$NEED_REBOOT" -eq 1 ]]; then
-  log "Rebooting in 4s…"
+  log "Rebooting in 4s (session_mode=phone + autostart restored)…"
   sleep 4
   reboot
   exit 0
