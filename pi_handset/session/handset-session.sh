@@ -398,6 +398,9 @@ launch_phone() {
   export ESP_HANDSET_KIOSK=1
   # never carry junk SPEED/SWAP from bad full-update experiments
   unset ESP_ST7789_SPEED ESP_ST7789_SWAP ESP_ST7789_INVERT 2>/dev/null || true
+  # Critical: installed tree is /opt/esp-handset/{handset_app.py,esp_handset/}
+  # Without PYTHONPATH, imports fail and Digivice dies instantly (SPI stays on desktop mirror).
+  export PYTHONPATH="${PREFIX}${PYTHONPATH:+:$PYTHONPATH}"
   local app="$PREFIX/handset_app.py"
   if [[ ! -f "$app" ]]; then
     log "ERROR missing $app"
@@ -407,11 +410,33 @@ launch_phone() {
       app="$alt"
       export PYTHONPATH="$(dirname "$alt")/..:${PYTHONPATH:-}"
     else
-      log "FATAL: no handset_app.py"
-      return 1
+      # Live git tree
+      for hit in \
+        "${HOME}/esp-phone/pi_handset/esp_handset/handset_app.py" \
+        /home/*/esp-phone/pi_handset/esp_handset/handset_app.py
+      do
+        for f in $hit; do
+          if [[ -f "$f" ]]; then
+            app="$f"
+            export PYTHONPATH="$(dirname "$(dirname "$f")"):${PYTHONPATH:-}"
+            break 2
+          fi
+        done
+      done
     fi
   fi
-  log "starting $app DISPLAY=${DISPLAY:-} WAYLAND=${WAYLAND_DISPLAY:-} SPI=$ESP_HANDSET_SPI_BACKEND"
+  if [[ ! -f "$app" ]]; then
+    log "FATAL: no handset_app.py under $PREFIX or git checkout"
+    return 1
+  fi
+  log "starting $app DISPLAY=${DISPLAY:-} XAUTH=${XAUTHORITY:-} PYTHONPATH=$PYTHONPATH SPI=${ESP_HANDSET_SPI_BACKEND:-}"
+  # Preflight: surface ImportError in the log instead of a silent exit
+  if ! /usr/bin/python3 -c "import sys; sys.path.insert(0, r'$PREFIX'); import esp_handset" >>"$LOG" 2>&1; then
+    log "FATAL: cannot import esp_handset — PYTHONPATH=$PYTHONPATH"
+    /usr/bin/python3 -c "import sys; print(sys.path)" >>"$LOG" 2>&1 || true
+    ls -la "$PREFIX" >>"$LOG" 2>&1 || true
+    return 1
+  fi
   exec /usr/bin/python3 "$app" >>"$LOG" 2>&1
 }
 

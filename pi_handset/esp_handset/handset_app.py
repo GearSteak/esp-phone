@@ -204,7 +204,13 @@ class _KioskKeyFilter(QObject):
         return True
 
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# Installed as /opt/esp-handset/handset_app.py next to package esp_handset/
+# OR run from repo as pi_handset/esp_handset/handset_app.py
+_HERE = os.path.dirname(os.path.abspath(__file__))
+if os.path.isdir(os.path.join(_HERE, "esp_handset")):
+    sys.path.insert(0, _HERE)
+else:
+    sys.path.insert(0, os.path.dirname(_HERE))
 
 from esp_handset.bridge import EspBridge  # noqa: E402
 from esp_handset.sim7600 import Sim7600  # noqa: E402

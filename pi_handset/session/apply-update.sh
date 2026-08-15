@@ -126,6 +126,12 @@ install_live_from_repo() {
   done
   cat >/usr/local/bin/handset-phone <<'EOF'
 #!/bin/bash
+export DISPLAY="${DISPLAY:-:0}"
+if [[ -z "${XAUTHORITY:-}" && -f "${HOME}/.Xauthority" ]]; then
+  export XAUTHORITY="${HOME}/.Xauthority"
+fi
+export ESP_HANDSET_PREFIX="${ESP_HANDSET_PREFIX:-/opt/esp-handset}"
+export PYTHONPATH="${ESP_HANDSET_PREFIX}${PYTHONPATH:+:$PYTHONPATH}"
 exec /usr/local/bin/handset-session phone
 EOF
   chmod +x /usr/local/bin/handset-phone
@@ -219,6 +225,8 @@ export DISPLAY="${DISPLAY:-:0}"
 if [[ -z "${XAUTHORITY:-}" && -f "${HOME}/.Xauthority" ]]; then
   export XAUTHORITY="${HOME}/.Xauthority"
 fi
+export ESP_HANDSET_PREFIX="${ESP_HANDSET_PREFIX:-/opt/esp-handset}"
+export PYTHONPATH="${ESP_HANDSET_PREFIX}${PYTHONPATH:+:$PYTHONPATH}"
 exec /usr/local/bin/handset-session phone
 EOF
   chmod +x /usr/local/bin/handset-phone
