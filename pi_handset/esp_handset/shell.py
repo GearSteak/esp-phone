@@ -565,8 +565,15 @@ class PhoneShell(QMainWindow):
                     return
 
             cur = digi_nav.digi_current(page)
+            pad_active = getattr(page, "digi_pad_active", None)
+            pad_on = bool(pad_active()) if callable(pad_active) else False
             if key in (Qt.Key_Left, Qt.Key_Right):
                 delta = -1 if key == Qt.Key_Left else 1
+                move_h = getattr(page, "digi_move_h", None)
+                if pad_on and callable(move_h) and move_h(delta):
+                    self._nav_click()
+                    event.accept()
+                    return
                 # Gallery full-screen viewer: L/R = prev/next photo
                 seek = getattr(page, "digi_seek", None)
                 active = getattr(page, "digi_seek_active", None)
@@ -581,6 +588,11 @@ class PhoneShell(QMainWindow):
                     return
             if key in (Qt.Key_Up, Qt.Key_Down):
                 delta = -1 if key == Qt.Key_Up else 1
+                move_v = getattr(page, "digi_move_v", None)
+                if pad_on and callable(move_v) and move_v(delta):
+                    self._nav_click()
+                    event.accept()
+                    return
                 if isinstance(cur, QListWidget):
                     if digi_nav.list_nudge(cur, delta):
                         self._nav_click()

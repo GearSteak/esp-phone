@@ -862,11 +862,12 @@ def make_contacts_page(
     open_lora: Optional[Callable[[str], None]] = None,
     open_email: Optional[Callable[[str], None]] = None,
 ) -> QWidget:
-    """Contacts for Digivice 320×240: list → edit fields → photo (separate)."""
+    """Contacts: letter×contact radial → actions → edit / photo."""
     from PyQt5.QtGui import QIcon
     from PyQt5.QtWidgets import QSizePolicy
 
     from esp_handset import digi_nav
+    from esp_handset.contacts_radial import ContactsRadial
 
     _ED = (
         "font-size:11px; padding:2px 4px; min-height:22px; max-height:24px;"
@@ -880,26 +881,76 @@ def make_contacts_page(
     outer.setSpacing(0)
     outer.addWidget(stack)
 
-    # ----- LIST -----
+    # ----- LIST (radial + Add) -----
     list_page = QWidget()
     ll = QVBoxLayout(list_page)
     ll.setContentsMargins(2, 1, 2, 1)
     ll.setSpacing(2)
-    conv_list = QListWidget()
-    conv_list.setSpacing(1)
-    conv_list.setStyleSheet(
-        "QListWidget { background: transparent; border: none; outline: none; }"
-        "QListWidget::item { background: #152030; border-radius: 4px; margin: 0; }"
-        "QListWidget::item:selected { background: #243448; border: 2px solid #FFE600; }"
+
+    def _channels_line(c: dict) -> str:
+        bits = []
+        if c.get("phone"):
+            bits.append(str(c["phone"]))
+        if c.get("lora"):
+            bits.append(f"LoRa {c['lora']}")
+        if c.get("email"):
+            bits.append(str(c["email"]))
+        return " · ".join(bits) if bits else "(no channels)"
+
+    def _photo_for(c: dict) -> Optional[str]:
+        p = _contact_photo_file(c)
+        return str(p) if p else None
+
+    radial = ContactsRadial(
+        list_page,
+        channels_line=lambda c: _elide_one_line(_channels_line(c), 28),
+        photo_path=_photo_for,
+        avatar_color=_avatar_color,
     )
     add_btn = QPushButton("＋ Add")
     add_btn.setFixedHeight(26)
     add_btn.setStyleSheet(_BTN)
-    ll.addWidget(conv_list, 1)
+    ll.addWidget(radial, 1)
     ll.addWidget(add_btn)
     stack.addWidget(list_page)
 
-    # ----- EDIT (fields only — fits 320×240) -----
+    # ----- ACTIONS (Call / SMS / LoRa / @ / Edit) — own screen so nothing clips -----
+    actions_page = QWidget()
+    al = QVBoxLayout(actions_page)
+    al.setContentsMargins(4, 4, 4, 4)
+    al.setSpacing(4)
+    act_title = QLabel("Contact")
+    act_title.setAlignment(Qt.AlignCenter)
+    act_title.setStyleSheet("font-size:13px; font-weight:800; color:#e8eef5;")
+    act_sub = QLabel("")
+    act_sub.setAlignment(Qt.AlignCenter)
+    act_sub.setStyleSheet("font-size:9px; color:#8aa;")
+    act_sub.setWordWrap(True)
+    al.addWidget(act_title)
+    al.addWidget(act_sub)
+
+    act_grid = QGridLayout()
+    act_grid.setSpacing(4)
+    btn_call = QPushButton("Call")
+    btn_sms = QPushButton("SMS")
+    btn_lora = QPushButton("LoRa")
+    btn_mail = QPushButton("@")
+    btn_edit = QPushButton("Edit")
+    for b in (btn_call, btn_sms, btn_lora, btn_mail, btn_edit):
+        b.setFixedHeight(36)
+        b.setStyleSheet(_BTN)
+        b.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+    btn_edit.setStyleSheet(_BTN + "background:#243448;")
+    act_grid.addWidget(btn_call, 0, 0)
+    act_grid.addWidget(btn_sms, 0, 1)
+    act_grid.addWidget(btn_lora, 1, 0)
+    act_grid.addWidget(btn_mail, 1, 1)
+    al.addLayout(act_grid)
+    al.addWidget(btn_edit)
+    al.addStretch(1)
+    stack.addWidget(actions_page)
+
+    # ----- EDIT (fields only) -----
     edit_page = QWidget()
     el = QVBoxLayout(edit_page)
     el.setContentsMargins(2, 1, 2, 1)
@@ -955,22 +1006,6 @@ def make_contacts_page(
     row1.addWidget(clear_photo, 1)
     row1.addWidget(save_btn, 1)
     el.addLayout(row1)
-
-    row2 = QHBoxLayout()
-    row2.setSpacing(2)
-    btn_call = QPushButton("Call")
-    btn_sms = QPushButton("SMS")
-    btn_lora = QPushButton("LoRa")
-    btn_mail = QPushButton("@")
-    for b in (btn_call, btn_sms, btn_lora, btn_mail):
-        b.setFixedHeight(24)
-        b.setStyleSheet(_BTN)
-        row2.addWidget(b, 1)
-    act_wrap = QWidget()
-    act_wrap.setLayout(row2)
-    act_wrap.setVisible(False)
-    act_wrap.setFixedHeight(26)
-    el.addWidget(act_wrap)
     el.addStretch(1)
     stack.addWidget(edit_page)
 
@@ -997,16 +1032,6 @@ def make_contacts_page(
     stack.addWidget(photo_page)
 
     state = {"index": -1, "image": "", "mode": "add"}
-
-    def _channels_line(c: dict) -> str:
-        bits = []
-        if c.get("phone"):
-            bits.append(str(c["phone"]))
-        if c.get("lora"):
-            bits.append(f"LoRa {c['lora']}")
-        if c.get("email"):
-            bits.append(str(c["email"]))
-        return " · ".join(bits) if bits else "(no channels)"
 
     def _set_status(msg: str) -> None:
         if msg:
@@ -1049,6 +1074,10 @@ def make_contacts_page(
         refresh_list()
         digi_nav.ensure_page_focus(chrome)
 
+    def show_actions() -> None:
+        stack.setCurrentWidget(actions_page)
+        digi_nav.ensure_page_focus(chrome)
+
     def show_edit() -> None:
         stack.setCurrentWidget(edit_page)
         digi_nav.ensure_page_focus(chrome)
@@ -1057,22 +1086,8 @@ def make_contacts_page(
     def refresh_list() -> None:
         contacts = _load_contacts()
         _save_contacts(contacts)
-        conv_list.clear()
-        if not contacts:
-            empty = QListWidgetItem("No contacts — ＋ Add")
-            empty.setFlags(Qt.NoItemFlags)
-            conv_list.addItem(empty)
-            return
-        for i, c in enumerate(contacts):
-            name = str(c.get("name") or "Unknown")
-            initial = name[:1].upper() if name else "?"
-            if not initial.isalnum():
-                initial = "#"
-            line = _elide_one_line(_channels_line(c), 36)
-            item = QListWidgetItem(f"{initial}  {name}\n{line}")
-            item.setData(Qt.UserRole, i)
-            item.setSizeHint(QSize(300, 34))
-            conv_list.addItem(item)
+        contacts = _load_contacts()
+        radial.set_contacts(contacts)
 
     def load_gallery_photos() -> None:
         photo_list.clear()
@@ -1119,13 +1134,26 @@ def make_contacts_page(
         state["image"] = str(c.get("image") or "")
         _set_status("")
         _refresh_preview()
-        editing = state["mode"] == "edit"
-        act_wrap.setVisible(editing)
-        if editing:
-            btn_call.setEnabled(bool(c.get("phone")))
-            btn_sms.setEnabled(bool(c.get("phone")) and open_sms is not None)
-            btn_lora.setEnabled(bool(c.get("lora")) and open_lora is not None)
-            btn_mail.setEnabled(bool(c.get("email")) and open_email is not None)
+
+    def _refresh_actions(c: Optional[dict]) -> None:
+        c = c or {}
+        name = str(c.get("name") or "Contact")
+        act_title.setText(name)
+        act_sub.setText(_channels_line(c))
+        btn_call.setEnabled(bool(c.get("phone")))
+        btn_sms.setEnabled(bool(c.get("phone")) and open_sms is not None)
+        btn_lora.setEnabled(bool(c.get("lora")) and open_lora is not None)
+        btn_mail.setEnabled(bool(c.get("email")) and open_email is not None)
+
+    def open_actions(index: int) -> None:
+        contacts = _load_contacts()
+        if index < 0 or index >= len(contacts):
+            return
+        state["mode"] = "edit"
+        state["index"] = index
+        fill_form(contacts[index])
+        _refresh_actions(contacts[index])
+        show_actions()
 
     def open_editor(index: int = -1) -> None:
         contacts = _load_contacts()
@@ -1138,15 +1166,6 @@ def make_contacts_page(
             state["index"] = -1
             fill_form(None)
         show_edit()
-
-    def open_selected() -> None:
-        item = conv_list.currentItem()
-        if item is None:
-            return
-        idx = item.data(Qt.UserRole)
-        if idx is None:
-            return
-        open_editor(int(idx))
 
     def open_photo_picker() -> None:
         load_gallery_photos()
@@ -1229,6 +1248,12 @@ def make_contacts_page(
         if cur is photo_page:
             show_edit()
         elif cur is edit_page:
+            if state["mode"] == "edit" and state["index"] >= 0:
+                _refresh_actions(current_contact())
+                show_actions()
+            else:
+                show_list()
+        elif cur is actions_page:
             show_list()
         else:
             on_back()
@@ -1239,14 +1264,33 @@ def make_contacts_page(
             show_edit()
             return True
         if cur is edit_page:
+            if state["mode"] == "edit" and state["index"] >= 0:
+                _refresh_actions(current_contact())
+                show_actions()
+            else:
+                show_list()
+            return True
+        if cur is actions_page:
             show_list()
             return True
         return False
 
+    def digi_pad_active() -> bool:
+        if stack.currentWidget() is not list_page:
+            return False
+        return digi_nav.digi_current(chrome) is radial
+
+    def digi_move_h(delta: int) -> bool:
+        return bool(radial.move_h(delta)) if digi_pad_active() else False
+
+    def digi_move_v(delta: int) -> bool:
+        # No letter wrap so Down past last letter can focus ＋ Add
+        return bool(radial.move_v(delta, wrap=False)) if digi_pad_active() else False
+
     name_ed.textChanged.connect(lambda _t: _refresh_preview())
-    conv_list.itemActivated.connect(lambda _i: open_selected())
-    conv_list.itemClicked.connect(lambda _i: open_selected())
+    radial.activated.connect(open_actions)
     add_btn.clicked.connect(lambda: open_editor(-1))
+    btn_edit.clicked.connect(lambda: open_editor(state["index"]))
     photo_btn.clicked.connect(open_photo_picker)
     photo_list.itemActivated.connect(lambda _i: on_photo_chosen())
     photo_list.itemClicked.connect(lambda _i: on_photo_chosen())
@@ -1261,6 +1305,9 @@ def make_contacts_page(
     chrome = page_chrome("Contacts", root, chrome_back, scroll=False)
     chrome.on_hardware_back = on_hardware_back  # type: ignore[attr-defined]
     chrome.refresh_contacts = show_list  # type: ignore[attr-defined]
+    chrome.digi_pad_active = digi_pad_active  # type: ignore[attr-defined]
+    chrome.digi_move_h = digi_move_h  # type: ignore[attr-defined]
+    chrome.digi_move_v = digi_move_v  # type: ignore[attr-defined]
     show_list()
     return chrome
 

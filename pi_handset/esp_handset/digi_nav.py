@@ -35,7 +35,10 @@ _FOCUS_TYPES = (
 
 
 def _usable(w: QWidget) -> bool:
-    if w is None or not isinstance(w, _FOCUS_TYPES):
+    if w is None:
+        return False
+    digi_pad = bool(w.property("digiPad"))
+    if not digi_pad and not isinstance(w, _FOCUS_TYPES):
         return False
     if not w.isVisible() or not w.isEnabled():
         return False
@@ -178,6 +181,12 @@ def activate_focused(w: Optional[QWidget], focus_text=None) -> bool:
     """Confirm on current widget. Text fields → focus for CardKB / BT typing."""
     if w is None:
         return False
+    digi_confirm = getattr(w, "digi_confirm", None)
+    if callable(digi_confirm):
+        try:
+            return bool(digi_confirm())
+        except Exception:
+            return False
     if isinstance(w, (QLineEdit, QTextEdit, QPlainTextEdit)):
         w.setFocus(Qt.OtherFocusReason)
         ensure_visible(w)
