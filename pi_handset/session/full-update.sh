@@ -579,12 +579,25 @@ RestartSec=2
 WantedBy=multi-user.target
 EOF
 
+# CardKB on Pi Zero: slower I2C avoids clock-stretch hangs after the first key
+for cfg in /boot/firmware/config.txt /boot/config.txt; do
+  if [[ -f "$cfg" ]]; then
+    if ! grep -q 'i2c_arm_baudrate' "$cfg" 2>/dev/null; then
+      echo "" >>"$cfg"
+      echo "# Digivice CardKB — avoid I2C hang after first key" >>"$cfg"
+      echo "dtparam=i2c_arm_baudrate=50000" >>"$cfg"
+      log "Added i2c_arm_baudrate=50000 to $cfg (reboot once for CardKB)"
+    fi
+    break
+  fi
+done
+
 systemctl daemon-reload
 systemctl enable digi-buttons-inputd.service
 systemctl restart digi-buttons-inputd.service || true
 systemctl enable esp-keyd.service
 systemctl restart esp-keyd.service || true
-# CardKB (I2C) — enable; retries if unplugged
+# CardKB (I2C) — enable; retries quietly if unplugged
 systemctl enable cardkb-inputd.service 2>/dev/null || true
 systemctl restart cardkb-inputd.service || true
 systemctl disable t9-keypad-inputd.service hat-inputd.service 2>/dev/null || true

@@ -296,6 +296,16 @@ RestartSec=2
 WantedBy=multi-user.target
 EOF
 
+# Slower I2C helps CardKB on Pi Zero (clock stretch after first key)
+for cfg in /boot/firmware/config.txt /boot/config.txt; do
+  if [[ -f "$cfg" ]] && ! grep -q 'i2c_arm_baudrate' "$cfg" 2>/dev/null; then
+    echo "" >>"$cfg"
+    echo "# Digivice CardKB" >>"$cfg"
+    echo "dtparam=i2c_arm_baudrate=50000" >>"$cfg"
+    break
+  fi
+done
+
 cat >/etc/systemd/system/hat-inputd.service <<EOF
 [Unit]
 Description=Optional LCD HAT joystick/keys
