@@ -44,6 +44,7 @@ class RadialMenu(QWidget):
         self._anim: Optional[QPropertyAnimation] = None
         self.setMinimumSize(200, 160)
         self.setFocusPolicy(Qt.StrongFocus)
+        self.setProperty("digiPad", True)
         if on_activate:
             self.activated.connect(on_activate)
 
@@ -67,9 +68,9 @@ class RadialMenu(QWidget):
             return None
         return self._entries[self._index]
 
-    def move_by(self, delta: int) -> None:
+    def move_by(self, delta: int) -> bool:
         if not self._entries or delta == 0:
-            return
+            return False
         n = len(self._entries)
         # finish any in-flight anim
         if self._anim is not None:
@@ -92,11 +93,25 @@ class RadialMenu(QWidget):
 
         self._anim.finished.connect(_done)
         self._anim.start()
+        return True
+
+    def move_h(self, delta: int) -> bool:
+        """1D carousel: left/right (and digi pad)."""
+        return self.move_by(delta)
+
+    def move_v(self, delta: int) -> bool:
+        """Same axis as horizontal — nested radials share one ring."""
+        return self.move_by(delta)
 
     def activate(self) -> None:
+        self.digi_confirm()
+
+    def digi_confirm(self) -> bool:
         cur = self.current()
-        if cur:
-            self.activated.emit(cur.key)
+        if not cur:
+            return False
+        self.activated.emit(cur.key)
+        return True
 
     def keyPressEvent(self, event) -> None:  # noqa: N802
         w = self.window()

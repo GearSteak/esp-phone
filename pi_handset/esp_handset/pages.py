@@ -909,45 +909,33 @@ def make_contacts_page(
     )
     add_btn = QPushButton("＋ Add")
     add_btn.setFixedHeight(26)
-    add_btn.setStyleSheet(_BTN)
+    # No per-button background — let shell digiFocus yellow work
+    add_btn.setStyleSheet("font-size:11px; font-weight:700; padding:2px 4px;")
     ll.addWidget(radial, 1)
     ll.addWidget(add_btn)
     stack.addWidget(list_page)
 
-    # ----- ACTIONS (Call / SMS / LoRa / @ / Edit) — own screen so nothing clips -----
+    # ----- ACTIONS (radial: Call / SMS / LoRa / @ / Edit) -----
+    from esp_handset.radial_menu import RadialMenu
+    from esp_handset.shell_data import AppEntry
+
     actions_page = QWidget()
     al = QVBoxLayout(actions_page)
-    al.setContentsMargins(4, 4, 4, 4)
-    al.setSpacing(4)
+    al.setContentsMargins(2, 0, 2, 0)
+    al.setSpacing(0)
     act_title = QLabel("Contact")
     act_title.setAlignment(Qt.AlignCenter)
-    act_title.setStyleSheet("font-size:13px; font-weight:800; color:#e8eef5;")
+    act_title.setFixedHeight(16)
+    act_title.setStyleSheet("font-size:11px; font-weight:800; color:#e8eef5;")
     act_sub = QLabel("")
     act_sub.setAlignment(Qt.AlignCenter)
-    act_sub.setStyleSheet("font-size:9px; color:#8aa;")
-    act_sub.setWordWrap(True)
+    act_sub.setFixedHeight(14)
+    act_sub.setStyleSheet("font-size:8px; color:#8aa;")
+    act_sub.setWordWrap(False)
     al.addWidget(act_title)
     al.addWidget(act_sub)
-
-    act_grid = QGridLayout()
-    act_grid.setSpacing(4)
-    btn_call = QPushButton("Call")
-    btn_sms = QPushButton("SMS")
-    btn_lora = QPushButton("LoRa")
-    btn_mail = QPushButton("@")
-    btn_edit = QPushButton("Edit")
-    for b in (btn_call, btn_sms, btn_lora, btn_mail, btn_edit):
-        b.setFixedHeight(36)
-        b.setStyleSheet(_BTN)
-        b.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-    btn_edit.setStyleSheet(_BTN + "background:#243448;")
-    act_grid.addWidget(btn_call, 0, 0)
-    act_grid.addWidget(btn_sms, 0, 1)
-    act_grid.addWidget(btn_lora, 1, 0)
-    act_grid.addWidget(btn_mail, 1, 1)
-    al.addLayout(act_grid)
-    al.addWidget(btn_edit)
-    al.addStretch(1)
+    actions_radial = RadialMenu([], actions_page)
+    al.addWidget(actions_radial, 1)
     stack.addWidget(actions_page)
 
     # ----- EDIT (fields only) -----
@@ -999,9 +987,17 @@ def make_contacts_page(
     save_btn = QPushButton("Save")
     for b in (photo_btn, clear_photo, save_btn):
         b.setFixedHeight(26)
-        b.setStyleSheet(_BTN)
+        b.setStyleSheet(
+            "font-size:11px; font-weight:700; padding:2px 4px;"
+            'QPushButton[digiFocus="1"] { background:#FFE600; color:#000;'
+            "border:2px solid #000; }"
+        )
         b.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-    save_btn.setStyleSheet(_BTN + "background:#1a7a3a;")
+    save_btn.setStyleSheet(
+        "font-size:11px; font-weight:700; padding:2px 4px; background:#1a7a3a;"
+        'QPushButton[digiFocus="1"] { background:#FFE600; color:#000;'
+        "border:2px solid #000; }"
+    )
     row1.addWidget(photo_btn, 1)
     row1.addWidget(clear_photo, 1)
     row1.addWidget(save_btn, 1)
@@ -1139,11 +1135,30 @@ def make_contacts_page(
         c = c or {}
         name = str(c.get("name") or "Contact")
         act_title.setText(name)
-        act_sub.setText(_channels_line(c))
-        btn_call.setEnabled(bool(c.get("phone")))
-        btn_sms.setEnabled(bool(c.get("phone")) and open_sms is not None)
-        btn_lora.setEnabled(bool(c.get("lora")) and open_lora is not None)
-        btn_mail.setEnabled(bool(c.get("email")) and open_email is not None)
+        act_sub.setText(_elide_one_line(_channels_line(c), 40))
+        entries: List[AppEntry] = []
+        if c.get("phone"):
+            entries.append(AppEntry("act_call", "Call", str(c.get("phone") or ""), "☎"))
+            if open_sms is not None:
+                entries.append(AppEntry("act_sms", "SMS", "Text message", "✉"))
+        if c.get("lora") and open_lora is not None:
+            entries.append(AppEntry("act_lora", "LoRa", str(c.get("lora") or ""), "⌁"))
+        if c.get("email") and open_email is not None:
+            entries.append(AppEntry("act_mail", "Email", str(c.get("email") or ""), "@"))
+        entries.append(AppEntry("act_edit", "Edit", "Name · photo · channels", "✎"))
+        actions_radial.set_entries(entries, 0)
+
+    def on_action_key(key: str) -> None:
+        if key == "act_call":
+            do_call()
+        elif key == "act_sms":
+            do_sms()
+        elif key == "act_lora":
+            do_lora()
+        elif key == "act_mail":
+            do_email()
+        elif key == "act_edit":
+            open_editor(state["index"])
 
     def open_actions(index: int) -> None:
         contacts = _load_contacts()
@@ -1275,39 +1290,20 @@ def make_contacts_page(
             return True
         return False
 
-    def digi_pad_active() -> bool:
-        if stack.currentWidget() is not list_page:
-            return False
-        return digi_nav.digi_current(chrome) is radial
-
-    def digi_move_h(delta: int) -> bool:
-        return bool(radial.move_h(delta)) if digi_pad_active() else False
-
-    def digi_move_v(delta: int) -> bool:
-        # No letter wrap so Down past last letter can focus ＋ Add
-        return bool(radial.move_v(delta, wrap=False)) if digi_pad_active() else False
-
     name_ed.textChanged.connect(lambda _t: _refresh_preview())
     radial.activated.connect(open_actions)
+    actions_radial.activated.connect(on_action_key)
     add_btn.clicked.connect(lambda: open_editor(-1))
-    btn_edit.clicked.connect(lambda: open_editor(state["index"]))
     photo_btn.clicked.connect(open_photo_picker)
     photo_list.itemActivated.connect(lambda _i: on_photo_chosen())
     photo_list.itemClicked.connect(lambda _i: on_photo_chosen())
     photo_done.clicked.connect(show_edit)
     clear_photo.clicked.connect(do_clear_photo)
     save_btn.clicked.connect(do_save)
-    btn_call.clicked.connect(do_call)
-    btn_sms.clicked.connect(do_sms)
-    btn_lora.clicked.connect(do_lora)
-    btn_mail.clicked.connect(do_email)
 
     chrome = page_chrome("Contacts", root, chrome_back, scroll=False)
     chrome.on_hardware_back = on_hardware_back  # type: ignore[attr-defined]
     chrome.refresh_contacts = show_list  # type: ignore[attr-defined]
-    chrome.digi_pad_active = digi_pad_active  # type: ignore[attr-defined]
-    chrome.digi_move_h = digi_move_h  # type: ignore[attr-defined]
-    chrome.digi_move_v = digi_move_v  # type: ignore[attr-defined]
     show_list()
     return chrome
 
@@ -2378,37 +2374,41 @@ def make_orientation_page(on_back: Callable[[], None]) -> QWidget:
     """Flip Waveshare 2\" panel for different cases (saves + reboot)."""
     from PyQt5.QtCore import QTimer
 
+    from esp_handset.radial_menu import RadialMenu
+    from esp_handset.shell_data import AppEntry
+
     body = QWidget()
     lay = QVBoxLayout(body)
-    tip = QLabel(
-        "If the Digivice UI is upside-down in the new case,\n"
-        "pick 0° (normal) or 180° (flip).\n"
-        "Apply writes the panel setting; reboot to finish."
-    )
+    lay.setContentsMargins(2, 0, 2, 0)
+    lay.setSpacing(2)
+    tip = QLabel("Pick rotation · Confirm applies · Reboot finishes")
     tip.setWordWrap(True)
-    tip.setStyleSheet("color:#9ab;font-size:10px;")
+    tip.setStyleSheet("color:#9ab;font-size:9px;")
+    tip.setFixedHeight(28)
     current = QLabel("")
-    current.setWordWrap(True)
+    current.setStyleSheet("font-size:10px; font-weight:700;")
     status = QLabel("Ready.")
     status.setWordWrap(True)
+    status.setStyleSheet("color:#8aa;font-size:9px;")
+    status.setFixedHeight(36)
     lay.addWidget(tip)
     lay.addWidget(current)
     lay.addWidget(status)
 
     choices = [
-        ("0", "0° · normal"),
-        ("180", "180° · flip (upside-down fix)"),
-        ("90", "90° · rotate right"),
-        ("270", "270° · rotate left"),
+        AppEntry("0", "0°", "Normal", "0"),
+        AppEntry("180", "180°", "Flip (upside-down fix)", "↻"),
+        AppEntry("90", "90°", "Rotate right", "↷"),
+        AppEntry("270", "270°", "Rotate left", "↶"),
+        AppEntry("reboot", "Reboot", "Press twice to confirm", "⏻"),
     ]
 
     def refresh() -> None:
         cur = _panel_rotation_degrees()
-        labels = {k: lab for k, lab in choices}
+        labels = {e.key: e.title for e in choices if e.key != "reboot"}
         current.setText(f"Current: {labels.get(cur, cur)}")
 
     refresh()
-
     pending = {"action": None, "ts": 0.0}
 
     def _rotation_bin(deg: str) -> list:
@@ -2449,17 +2449,12 @@ def make_orientation_page(on_back: Callable[[], None]) -> QWidget:
             )
             out = ((r.stdout or "") + (r.stderr or "")).strip()
             if r.returncode != 0 and "Panel rotation set" not in out:
-                # Preference may still be written; show warning
                 status.setText(
                     f"Apply exit {r.returncode}.\n"
-                    f"{out[-180:] if out else 'sudo digivice-full-update once'}\n"
-                    "Try Reboot anyway if upside-down."
+                    f"{out[-120:] if out else 'sudo digivice-full-update once'}"
                 )
             else:
-                status.setText(
-                    f"Saved {deg}°.\n"
-                    "Press Reboot (x2) to apply on the panel."
-                )
+                status.setText(f"Saved {deg}°. Reboot (x2) to apply.")
         except FileNotFoundError:
             status.setText("digivice-set-rotation missing — run full-update")
         except subprocess.TimeoutExpired:
@@ -2467,18 +2462,6 @@ def make_orientation_page(on_back: Callable[[], None]) -> QWidget:
         except Exception as e:
             status.setText(f"Failed: {e}")
         refresh()
-
-    for deg, label in choices:
-        b = QPushButton(label)
-        b.setMinimumHeight(32)
-        b.clicked.connect(lambda _=False, d=deg, lab=label: apply_deg(d, lab))
-        lay.addWidget(b)
-
-    reboot_btn = QPushButton("Reboot to apply (x2)")
-    reboot_btn.setMinimumHeight(36)
-    reboot_btn.setStyleSheet("font-weight:700;")
-    lay.addWidget(reboot_btn)
-    lay.addStretch(1)
 
     def needs_confirm() -> bool:
         import time as _t
@@ -2489,14 +2472,13 @@ def make_orientation_page(on_back: Callable[[], None]) -> QWidget:
             return False
         pending["action"] = "reboot"
         pending["ts"] = now
-        status.setText("Press Reboot again to confirm (4s)")
+        status.setText("Confirm again within 4s")
         return True
 
     def do_reboot() -> None:
         if needs_confirm():
             return
         status.setText("Rebooting…")
-        reboot_btn.setEnabled(False)
         try:
             subprocess.Popen(
                 _power_bin("reboot"),
@@ -2506,73 +2488,68 @@ def make_orientation_page(on_back: Callable[[], None]) -> QWidget:
             )
         except Exception as e:
             status.setText(f"Reboot failed: {e}")
-            reboot_btn.setEnabled(True)
             return
         QTimer.singleShot(2500, lambda: status.setText("Waiting for reboot…"))
 
-    reboot_btn.clicked.connect(do_reboot)
-    return page_chrome("Orientation", body, on_back)
+    def on_pick(key: str) -> None:
+        if key == "reboot":
+            do_reboot()
+            return
+        lab = next((e.title for e in choices if e.key == key), key)
+        apply_deg(key, lab)
+
+    radial = RadialMenu(choices, body, on_activate=on_pick)
+    lay.addWidget(radial, 1)
+    chrome = page_chrome("Orientation", body, on_back, scroll=False)
+    return chrome
 
 
 def make_settings_hub(on_back, open_page: Callable[[str], None], on_linux) -> QWidget:
+    from esp_handset.radial_menu import RadialMenu
+    from esp_handset.shell_data import SETTINGS_APPS
+
     body = QWidget()
     lay = QVBoxLayout(body)
-    lay.setSpacing(4)
-    lay.setContentsMargins(2, 2, 2, 2)
-    tip = QLabel("↓ scroll · D-pad moves focus")
-    tip.setStyleSheet("color:#9ab;font-size:10px;")
-    lay.addWidget(tip)
-    for key, label in [
-        ("set_update", "★ Update Digivice"),
-        ("set_mouse", "Mouse speed"),
-        ("set_debug", "Debug · audio"),
-        ("set_appearance", "Appearance"),
-        ("set_orientation", "Screen orientation"),
-        ("set_network", "Network / modem"),
-        ("set_accounts", "Accounts (SIP)"),
-        ("set_security", "Security (PIN)"),
-        ("set_power", "Power · Off / Restart"),
-        ("set_about", "About"),
-        ("help", "Help / Keys"),
-    ]:
-        b = QPushButton(label)
-        b.setMinimumHeight(30)
-        b.clicked.connect(lambda _=False, k=key: open_page(k))
-        lay.addWidget(b)
-    desk = QPushButton("Exit to Linux Desktop")
-    desk.setMinimumHeight(30)
-    desk.clicked.connect(on_linux)
-    lay.addWidget(desk)
-    lay.addStretch(1)
-    return page_chrome("Settings", body, on_back)
+    lay.setContentsMargins(2, 0, 2, 0)
+    entries = list(SETTINGS_APPS)
+
+    def on_pick(key: str) -> None:
+        if key == "linux":
+            on_linux()
+            return
+        open_page(key)
+
+    radial = RadialMenu(entries, body, on_activate=on_pick)
+    lay.addWidget(radial, 1)
+    return page_chrome("Settings", body, on_back, scroll=False)
 
 
 def make_power_page(on_back: Callable[[], None]) -> QWidget:
     """Power off / restart. Double-press confirm (no Yes/No dialog)."""
     from PyQt5.QtCore import QTimer
 
+    from esp_handset.radial_menu import RadialMenu
+    from esp_handset.shell_data import AppEntry
+
     body = QWidget()
     lay = QVBoxLayout(body)
-    tip = QLabel(
-        "Shutdown or restart the Pi.\n"
-        "Press the SAME button twice within 4s to confirm."
-    )
+    lay.setContentsMargins(2, 0, 2, 0)
+    lay.setSpacing(2)
+    tip = QLabel("Confirm the same action twice within 4s")
     tip.setWordWrap(True)
-    tip.setStyleSheet("color:#9ab;font-size:10px;")
+    tip.setStyleSheet("color:#9ab;font-size:9px;")
     status = QLabel("Ready.")
     status.setWordWrap(True)
-    off_btn = QPushButton("Power off (x2)")
-    off_btn.setMinimumHeight(36)
-    off_btn.setStyleSheet("font-weight:700;")
-    reboot_btn = QPushButton("Restart (x2)")
-    reboot_btn.setMinimumHeight(36)
+    status.setStyleSheet("font-size:10px; font-weight:700;")
     lay.addWidget(tip)
     lay.addWidget(status)
-    lay.addWidget(off_btn)
-    lay.addWidget(reboot_btn)
-    lay.addStretch(1)
 
+    entries = [
+        AppEntry("poweroff", "Power off", "Press twice", "⏻"),
+        AppEntry("reboot", "Restart", "Press twice", "↻"),
+    ]
     pending = {"action": None, "ts": 0.0}
+    busy = {"on": False}
 
     def _power_bin(arg: str) -> list:
         for p in (
@@ -2584,7 +2561,6 @@ def make_power_page(on_back: Callable[[], None]) -> QWidget:
         here = Path(__file__).resolve().parents[1] / "session" / "power.sh"
         if here.is_file():
             return ["sudo", "-n", "bash", str(here), arg]
-        # Fallback to common paths (need NOPASSWD for these if used)
         if arg == "poweroff":
             return ["sudo", "-n", "systemctl", "poweroff"]
         return ["sudo", "-n", "systemctl", "reboot"]
@@ -2599,18 +2575,18 @@ def make_power_page(on_back: Callable[[], None]) -> QWidget:
         pending["action"] = action
         pending["ts"] = now
         label = "Power off" if action == "poweroff" else "Restart"
-        status.setText(f"Press {label} again to confirm (4s)")
+        status.setText(f"Confirm {label} again (4s)")
         return True
 
     def run_power(arg: str, label: str) -> None:
+        if busy["on"]:
+            return
         if needs_confirm(arg):
             return
         cmd = _power_bin(arg)
         status.setText(f"{label}…")
-        off_btn.setEnabled(False)
-        reboot_btn.setEnabled(False)
+        busy["on"] = True
         try:
-            # Detach so UI can show status before system dies
             env = os.environ.copy()
             env.setdefault("PATH", "/usr/local/bin:/usr/sbin:/sbin:/usr/bin:/bin")
             subprocess.Popen(
@@ -2620,18 +2596,22 @@ def make_power_page(on_back: Callable[[], None]) -> QWidget:
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
             )
-            status.setText(f"{label} commanded.\nIf nothing happens, seed:\n  sudo digivice-full-update")
+            status.setText(f"{label} commanded.")
         except Exception as e:
             status.setText(f"Failed: {e}")
-            off_btn.setEnabled(True)
-            reboot_btn.setEnabled(True)
+            busy["on"] = False
             return
-        # Soft blank after a moment (process may still be running)
         QTimer.singleShot(2500, lambda: status.setText(f"Waiting for {label.lower()}…"))
 
-    off_btn.clicked.connect(lambda: run_power("poweroff", "Power off"))
-    reboot_btn.clicked.connect(lambda: run_power("reboot", "Restart"))
-    return page_chrome("Power", body, on_back)
+    def on_pick(key: str) -> None:
+        if key == "poweroff":
+            run_power("poweroff", "Power off")
+        elif key == "reboot":
+            run_power("reboot", "Restart")
+
+    radial = RadialMenu(entries, body, on_activate=on_pick)
+    lay.addWidget(radial, 1)
+    return page_chrome("Power", body, on_back, scroll=False)
 
 
 def make_update_page(on_back: Callable[[], None]) -> QWidget:
@@ -2901,29 +2881,27 @@ def make_update_page(on_back: Callable[[], None]) -> QWidget:
 
 def make_mouse_page(on_back: Callable[[], None]) -> QWidget:
     """Desktop d-pad mouse speed (buttons daemon reads ~/.esp-handset/mouse_step)."""
-    from PyQt5.QtWidgets import QSizePolicy
+    from esp_handset.radial_menu import RadialMenu
+    from esp_handset.shell_data import AppEntry
 
     PRESETS = [
-        ("Very slow", 3),
-        ("Slow", 6),
-        ("Normal", 10),
-        ("Fast", 16),
-        ("Turbo", 24),
+        ("very_slow", "Very slow", 3),
+        ("slow", "Slow", 6),
+        ("normal", "Normal", 10),
+        ("fast", "Fast", 16),
+        ("turbo", "Turbo", 24),
     ]
     step_path = DATA / "mouse_step"
     etc_path = Path("/etc/esp-handset/mouse_step")
 
     body = QWidget()
     lay = QVBoxLayout(body)
-    tip = QLabel(
-        "D-pad mouse speed on Linux desktop.\n"
-        "(Phone Digivice UI uses keys, not the mouse.)"
-    )
+    lay.setContentsMargins(2, 0, 2, 0)
+    tip = QLabel("Desktop pointer speed · Confirm to set")
     tip.setWordWrap(True)
-    tip.setStyleSheet("color:#9ab;font-size:10px;")
+    tip.setStyleSheet("color:#9ab;font-size:9px;")
     cur = QLabel("")
-    cur.setWordWrap(True)
-    cur.setStyleSheet("font-weight:700;")
+    cur.setStyleSheet("font-size:10px; font-weight:700;")
     lay.addWidget(tip)
     lay.addWidget(cur)
 
@@ -2939,7 +2917,7 @@ def make_mouse_page(on_back: Callable[[], None]) -> QWidget:
         return 10
 
     def _label_for(v: int) -> str:
-        for name, n in PRESETS:
+        for _k, name, n in PRESETS:
             if n == v:
                 return name
         return f"Custom ({v})"
@@ -2964,16 +2942,26 @@ def make_mouse_page(on_back: Callable[[], None]) -> QWidget:
             pass
         refresh()
 
-    for name, n in PRESETS:
-        b = QPushButton(f"{name}  ({n})")
-        b.setMinimumHeight(28)
-        b.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        b.clicked.connect(lambda _=False, v=n: set_step(v))
-        lay.addWidget(b)
+    entries = [
+        AppEntry(key, name, f"step {n}", str(n) if n < 10 else "»")
+        for key, name, n in PRESETS
+    ]
+    steps = {key: n for key, _name, n in PRESETS}
 
-    lay.addStretch(1)
+    def on_pick(key: str) -> None:
+        if key in steps:
+            set_step(steps[key])
+
+    radial = RadialMenu(entries, body, on_activate=on_pick)
+    # Start on current preset when possible
+    v = _read_step()
+    for i, (_k, _name, n) in enumerate(PRESETS):
+        if n == v:
+            radial.set_entries(entries, i)
+            break
+    lay.addWidget(radial, 1)
     refresh()
-    return page_chrome("Mouse speed", body, on_back)
+    return page_chrome("Mouse speed", body, on_back, scroll=False)
 
 
 def make_debug_page(on_back: Callable[[], None]) -> QWidget:

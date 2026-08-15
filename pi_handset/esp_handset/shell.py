@@ -567,8 +567,22 @@ class PhoneShell(QMainWindow):
             cur = digi_nav.digi_current(page)
             pad_active = getattr(page, "digi_pad_active", None)
             pad_on = bool(pad_active()) if callable(pad_active) else False
+            # Nested RadialMenu / ContactsRadial: route pad when focused
+            digi_pad = (
+                cur
+                if cur is not None and bool(cur.property("digiPad"))
+                else None
+            )
             if key in (Qt.Key_Left, Qt.Key_Right):
                 delta = -1 if key == Qt.Key_Left else 1
+                if digi_pad is not None:
+                    move_h = getattr(digi_pad, "move_h", None) or getattr(
+                        digi_pad, "move_by", None
+                    )
+                    if callable(move_h) and move_h(delta):
+                        self._nav_click()
+                        event.accept()
+                        return
                 move_h = getattr(page, "digi_move_h", None)
                 if pad_on and callable(move_h) and move_h(delta):
                     self._nav_click()
@@ -588,6 +602,16 @@ class PhoneShell(QMainWindow):
                     return
             if key in (Qt.Key_Up, Qt.Key_Down):
                 delta = -1 if key == Qt.Key_Up else 1
+                if digi_pad is not None:
+                    move_v = getattr(digi_pad, "move_v", None) or getattr(
+                        digi_pad, "move_by", None
+                    )
+                    if callable(move_v):
+                        if move_v(delta):
+                            self._nav_click()
+                            event.accept()
+                            return
+                        # Edge (e.g. contacts letter axis) → fall through to Add
                 move_v = getattr(page, "digi_move_v", None)
                 if pad_on and callable(move_v) and move_v(delta):
                     self._nav_click()

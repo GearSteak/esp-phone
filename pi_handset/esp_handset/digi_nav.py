@@ -231,10 +231,16 @@ def ensure_page_focus(root: QWidget) -> None:
     if not items:
         return
     clear_highlights(root)
-    # Prefer first non-Back control when chrome Back is first (sorted top-left)
+    # Prefer digi pad carousels (RadialMenu / ContactsRadial)
     w = items[0]
-    if len(items) > 1 and isinstance(w, QAbstractButton) and (w.text() or "") in ("←", "← ", "<"):
-        w = items[1]
+    for cand in items:
+        if bool(cand.property("digiPad")):
+            w = cand
+            break
+    else:
+        # Prefer first non-Back control when chrome Back is first (sorted top-left)
+        if len(items) > 1 and isinstance(w, QAbstractButton) and (w.text() or "") in ("←", "← ", "<"):
+            w = items[1]
     w.setFocus(Qt.OtherFocusReason)
     _highlight(w, True)
     if isinstance(w, QListWidget) and w.count() > 0:

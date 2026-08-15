@@ -156,7 +156,7 @@ class ContactsRadial(QWidget):
         self._anim.start()
         return True
 
-    def move_v(self, delta: int, *, wrap: bool = True) -> bool:
+    def move_v(self, delta: int, *, wrap: bool = False) -> bool:
         if not self._letters or delta == 0:
             return False
         if self._anim is not None:
