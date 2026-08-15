@@ -391,12 +391,20 @@ chmod +x /usr/local/bin/esp-handset
 
 cat >/usr/local/bin/handset-phone <<'EOF'
 #!/bin/bash
+export DISPLAY="${DISPLAY:-:0}"
+if [[ -z "${XAUTHORITY:-}" && -f "${HOME}/.Xauthority" ]]; then
+  export XAUTHORITY="${HOME}/.Xauthority"
+fi
 exec /usr/local/bin/handset-session phone
 EOF
 chmod +x /usr/local/bin/handset-phone
 
 cat >/usr/local/bin/handset-desktop <<'EOF'
 #!/bin/bash
+export DISPLAY="${DISPLAY:-:0}"
+if [[ -z "${XAUTHORITY:-}" && -f "${HOME}/.Xauthority" ]]; then
+  export XAUTHORITY="${HOME}/.Xauthority"
+fi
 exec /usr/local/bin/handset-session desktop
 EOF
 chmod +x /usr/local/bin/handset-desktop
@@ -405,9 +413,14 @@ cat >/usr/local/bin/digivice-leave <<'EOF'
 #!/bin/bash
 # Emergency: leave Digivice from SSH or a TTY when the UI is stuck.
 export DISPLAY="${DISPLAY:-:0}"
+if [[ -z "${XAUTHORITY:-}" && -f "${HOME}/.Xauthority" ]]; then
+  export XAUTHORITY="${HOME}/.Xauthority"
+fi
 exec /usr/local/bin/handset-session force-desktop
 EOF
 chmod +x /usr/local/bin/digivice-leave
+install -m 755 "$ROOT/session/digivice-start.sh" /usr/local/bin/digivice-start
+install -m 755 "$ROOT/session/digivice-start.sh" "$PREFIX/session/digivice-start.sh"
 
 cat <<EOF
 

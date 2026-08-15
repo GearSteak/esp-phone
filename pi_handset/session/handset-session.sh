@@ -211,6 +211,15 @@ digivice_display_env() {
     export DISPLAY=:0
   fi
 
+  # Desktop / .desktop launches often omit this — Qt then silently fails
+  if [[ -n "${DISPLAY:-}" && -z "${XAUTHORITY:-}" ]]; then
+    if [[ -f "${HOME}/.Xauthority" ]]; then
+      export XAUTHORITY="${HOME}/.Xauthority"
+    elif [[ -n "${SUDO_USER:-}" && -f "/home/${SUDO_USER}/.Xauthority" ]]; then
+      export XAUTHORITY="/home/${SUDO_USER}/.Xauthority"
+    fi
+  fi
+
   if [[ -n "${DISPLAY:-}" || -n "${WAYLAND_DISPLAY:-}" ]]; then
     if [[ -n "${DISPLAY:-}" && -z "${WAYLAND_DISPLAY:-}" ]]; then
       export QT_QPA_PLATFORM="${QT_QPA_PLATFORM:-xcb}"

@@ -423,20 +423,38 @@ fi
 
 cat >/usr/local/bin/handset-phone <<'EOF'
 #!/bin/bash
+export DISPLAY="${DISPLAY:-:0}"
+if [[ -z "${XAUTHORITY:-}" && -f "${HOME}/.Xauthority" ]]; then
+  export XAUTHORITY="${HOME}/.Xauthority"
+fi
 exec /usr/local/bin/handset-session phone
 EOF
 cat >/usr/local/bin/handset-desktop <<'EOF'
 #!/bin/bash
+export DISPLAY="${DISPLAY:-:0}"
+if [[ -z "${XAUTHORITY:-}" && -f "${HOME}/.Xauthority" ]]; then
+  export XAUTHORITY="${HOME}/.Xauthority"
+fi
 exec /usr/local/bin/handset-session desktop
 EOF
 cat >/usr/local/bin/digivice-leave <<'EOF'
 #!/bin/bash
 export DISPLAY="${DISPLAY:-:0}"
+if [[ -z "${XAUTHORITY:-}" && -f "${HOME}/.Xauthority" ]]; then
+  export XAUTHORITY="${HOME}/.Xauthority"
+fi
 exec /usr/local/bin/handset-session force-desktop
 EOF
+install -m 755 "$ROOT/session/digivice-start.sh" /usr/local/bin/digivice-start 2>/dev/null || true
+install -m 755 "$ROOT/session/digivice-start.sh" "$PREFIX/session/digivice-start.sh" 2>/dev/null || true
 chmod +x /usr/local/bin/handset-phone /usr/local/bin/handset-desktop /usr/local/bin/digivice-leave \
   /usr/local/bin/digivice-full-update /usr/local/bin/digivice-stop-gb /usr/local/bin/digivice-ensure-gb \
+  /usr/local/bin/digivice-start \
   2>/dev/null || true
+
+# Clear recovery flag that blocks Digivice forever
+rm -f /boot/firmware/digivice-desktop /boot/digivice-desktop \
+  /boot/firmware/DIGIVICE-DESKTOP /boot/DIGIVICE-DESKTOP 2>/dev/null || true
 
 # Sudoers for later GUI / terminal updates
 cat >/etc/sudoers.d/esp-handset-update <<EOF
@@ -663,7 +681,7 @@ if [[ -f "$ROOT/session/return-to-phone.desktop" ]]; then
   chmod +x "$USER_HOME/Desktop/return-to-phone.desktop" 2>/dev/null || true
   log "Desktop launcher: Return to Phone → /usr/local/bin/handset-phone"
 fi
-# Digivice must come back after reboot / leave-to-desktop
+  # Digivice must come back after reboot / leave-to-desktop
 echo phone >"$USER_HOME/.esp-handset/session_mode"
 echo phone >/etc/esp-handset/ui_mode
 chown -R "$USER_NAME:$USER_NAME" \
@@ -680,6 +698,14 @@ if [[ "$DO_REBOOT" -eq 1 || "$NEED_REBOOT" -eq 1 ]]; then
 fi
 
 if [[ "$DO_RESTART" -eq 1 ]]; then
+  log "Hard-starting Digivice (digivice-start)…"
+  if [[ -x /usr/local/bin/digivice-start ]]; then
+    sudo -u "$USER_NAME" -H env \
+      DISPLAY="${DISPLAY:-:0}" \
+      XAUTHORITY="${XAUTHORITY:-$USER_HOME/.Xauthority}" \
+      HOME="$USER_HOME" \
+      /usr/local/bin/digivice-start 2>&1 | tee -a "$LOG" || true
+  else
   log "Restarting Digivice (single instance only)…"
   pkill -9 -f handset_app.py 2>/dev/null || true
   pkill -9 -f desktop_spi_mirror.py 2>/dev/null || true
@@ -708,10 +734,12 @@ if [[ "$DO_RESTART" -eq 1 ]]; then
       ESP_HANDSET_SPI_BACKEND=userspace PYTHONPATH="$PREFIX" \
       nohup /usr/local/bin/handset-phone >>"$USER_HOME/.esp-handset/handset.log" 2>&1 &
   fi
+  fi
 fi
 
 echo ""
 echo "Done.  sudo digivice-full-update"
-echo "If 2\" still static:  tail -50 ~/.esp-handset/handset.log | grep -i spi"
+echo "If Digivice blank:  digivice-start"
+echo "If 2\" still static:  tail -50 ~/.esp-handset/handset.log"
 echo ""
 exit 0

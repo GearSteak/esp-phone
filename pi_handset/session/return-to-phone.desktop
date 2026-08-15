@@ -2,7 +2,7 @@
 Type=Application
 Name=Return to Phone
 Comment=Fullscreen ESP Digivice UI
-Exec=/bin/bash -c 'export DISPLAY=:0; exec /usr/local/bin/handset-phone'
+Exec=/usr/local/bin/digivice-start
 Icon=phone
 Terminal=false
 Categories=Utility;
