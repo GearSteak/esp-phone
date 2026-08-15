@@ -188,6 +188,9 @@ SIP_DID=+17788000889
 EOF
   chmod 600 /etc/esp-handset/sip.env
 fi
+install -m 600 /etc/esp-handset/sip.env "$USER_HOME/.esp-handset/sip.env" 2>/dev/null || true
+chown "$USER_NAME:$USER_NAME" /etc/esp-handset/sip.env "$USER_HOME/.esp-handset/sip.env" 2>/dev/null || true
+chown -R "$USER_NAME:$USER_NAME" "$USER_HOME/.esp-handset" 2>/dev/null || true
 
 # SPI 2" as optional second panel — HDMI stays ON
 cp -a "$ROOT/display" "$PREFIX/display"

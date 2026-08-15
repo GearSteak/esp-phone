@@ -197,7 +197,12 @@ EOF
   log "SIP: wrote Zadarma defaults to /etc/esp-handset/sip.env"
 fi
 install -m 600 /etc/esp-handset/sip.env "$USER_HOME/.esp-handset/sip.env" 2>/dev/null || true
+# Digivice runs as the desktop user — root-only 600 on /etc caused PermissionError
 chown "$USER_NAME:$USER_NAME" "$USER_HOME/.esp-handset/sip.env" 2>/dev/null || true
+chown "$USER_NAME:$USER_NAME" /etc/esp-handset/sip.env 2>/dev/null || true
+chmod 600 /etc/esp-handset/sip.env "$USER_HOME/.esp-handset/sip.env" 2>/dev/null || true
+# Ensure log/dir are writable by Digivice (full-update as root can leave them root-owned)
+chown -R "$USER_NAME:$USER_NAME" "$USER_HOME/.esp-handset" 2>/dev/null || true
 if command -v linphonecsh >/dev/null 2>&1; then
   # shellcheck disable=SC1091
   set -a

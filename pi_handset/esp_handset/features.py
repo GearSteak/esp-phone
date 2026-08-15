@@ -651,14 +651,22 @@ def make_accounts_page(on_back: Callable[[], None]) -> QWidget:
     email_pass = QLineEdit()
     email_pass.setEchoMode(QLineEdit.Password)
     save = QPushButton("Save SIP + email prefs")
-    # load sip.env
+    # load sip.env (must be readable — root-only /etc breaks Digivice)
     vals = {"SIP_SERVER": "", "SIP_USER": "", "SIP_PASS": "", "SIP_DISPLAY": ""}
-    path = CONFIG if CONFIG.exists() else store.DATA / "sip.env"
-    if path.exists():
-        for line in path.read_text().splitlines():
-            if "=" in line and not line.strip().startswith("#"):
-                k, v = line.split("=", 1)
-                vals[k.strip()] = v.strip()
+    path = CONFIG
+    try:
+        if not path.is_file() or not os.access(path, os.R_OK):
+            path = store.DATA / "sip.env"
+    except OSError:
+        path = store.DATA / "sip.env"
+    if path.is_file() and os.access(path, os.R_OK):
+        try:
+            for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+                if "=" in line and not line.strip().startswith("#"):
+                    k, v = line.split("=", 1)
+                    vals[k.strip()] = v.strip()
+        except OSError:
+            pass
     server.setText(vals.get("SIP_SERVER", ""))
     user.setText(vals.get("SIP_USER", ""))
     password.setText(vals.get("SIP_PASS", ""))

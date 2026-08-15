@@ -41,9 +41,22 @@ NOTES = DATA / "notes.json"
 TODOS = DATA / "todos.json"
 CALL_LOG = DATA / "call_log.json"
 PHOTOS = Path.home() / "Pictures" / "phone"
-CONFIG = Path("/etc/esp-handset/sip.env")
-if not CONFIG.exists():
-    CONFIG = DATA / "sip.env"
+
+
+def _sip_config_path() -> Path:
+    """Prefer a sip.env the Digivice user can actually read (not root-only /etc)."""
+    home = DATA / "sip.env"
+    etc = Path("/etc/esp-handset/sip.env")
+    for p in (home, etc):
+        try:
+            if p.is_file() and os.access(p, os.R_OK):
+                return p
+        except OSError:
+            continue
+    return home
+
+
+CONFIG = _sip_config_path()
 
 
 def _load_json(path: Path, default):
