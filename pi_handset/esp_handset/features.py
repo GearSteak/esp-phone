@@ -34,11 +34,11 @@ from esp_handset import store
 from esp_handset.pages import page_chrome, CONFIG
 
 
-# ----- Alarms (hub lives in clock_ui) -----
+# ----- Alarms -----
 def make_alarms_page(on_back: Callable[[], None]) -> QWidget:
-    from esp_handset.clock_ui import make_clock_hub
+    from esp_handset.clock_ui import make_alarms_page as _make
 
-    return make_clock_hub(on_back, start_tool="alarms")
+    return _make(on_back)
 
 
 def check_alarms_tick() -> Optional[str]:

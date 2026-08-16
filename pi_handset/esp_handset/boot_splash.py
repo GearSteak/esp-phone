@@ -1,7 +1,6 @@
-"""Cute Digivice boot splash + lightweight update check.
+"""Digivice boot splash + lightweight update check.
 
-Important: do NOT attach ST7789/SPI kiosk to this window — that stole the panel
-and left Digivice looking frozen on the egg after the real UI started.
+Important: do NOT attach ST7789/SPI kiosk to this window — that stole the panel.
 Splash is a short X11/Qt overlay; the phone canvas owns SPI after build_app.
 """
 
@@ -16,7 +15,7 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from PyQt5.QtCore import Qt, QTimer, pyqtSignal
-from PyQt5.QtGui import QColor, QFont, QPainter, QPen
+from PyQt5.QtGui import QColor, QFont, QPainter, QPixmap
 from PyQt5.QtWidgets import QApplication, QWidget
 
 
@@ -60,7 +59,6 @@ def find_git_repo() -> Optional[Path]:
 
 
 def check_for_updates(*, timeout_s: float = 6.0) -> UpdateCheck:
-    """Fetch origin and compare HEAD to origin/main (best-effort, never raises)."""
     if os.environ.get("ESP_HANDSET_SKIP_BOOT_UPDATE", "").strip() in (
         "1",
         "true",
@@ -116,14 +114,30 @@ def check_for_updates(*, timeout_s: float = 6.0) -> UpdateCheck:
         return UpdateCheck("error", str(e)[:60])
 
 
+def _splash_logo_path() -> Optional[Path]:
+    here = Path(__file__).resolve().parent
+    for p in (
+        here / "assets" / "splash_logo.png",
+        Path("/opt/esp-handset/esp_handset/assets/splash_logo.png"),
+        Path.home()
+        / "esp-phone"
+        / "pi_handset"
+        / "esp_handset"
+        / "assets"
+        / "splash_logo.png",
+    ):
+        if p.is_file():
+            return p
+    return None
+
+
 class BootSplash(QWidget):
-    """Short overlay: Digivice egg + status. Not an SPI kiosk source."""
+    """Brand logo + status. Not an SPI kiosk source."""
 
     finished = pyqtSignal(object)
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        # Tool + topmost for HDMI glance; SPI panel uses PhoneShell kiosk only
         self.setWindowFlags(
             Qt.FramelessWindowHint | Qt.Tool | Qt.WindowStaysOnTopHint
         )
@@ -136,10 +150,15 @@ class BootSplash(QWidget):
         self._done = False
         self._awaiting_choice = False
         self._finish_cb: Optional[Callable[[UpdateCheck, bool], None]] = None
-
+        self._logo = QPixmap()
+        path = _splash_logo_path()
+        if path is not None:
+            pm = QPixmap(str(path))
+            if not pm.isNull():
+                self._logo = pm
         self._tick = QTimer(self)
         self._tick.timeout.connect(self._on_pulse)
-        self._tick.start(80)
+        self._tick.start(120)
 
     def set_finish_callback(self, cb: Callable[[UpdateCheck, bool], None]) -> None:
         self._finish_cb = cb
@@ -204,45 +223,42 @@ class BootSplash(QWidget):
     def paintEvent(self, _event) -> None:  # noqa: N802
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
+        p.setRenderHint(QPainter.SmoothPixmapTransform)
         w, h = self.width(), self.height()
+        p.fillRect(self.rect(), QColor("#000000"))
 
-        p.fillRect(self.rect(), QColor("#0a121c"))
+        glow = 8 + (self._pulse % 16)
         p.setPen(Qt.NoPen)
-        p.setBrush(QColor(30, 55, 80, 40))
-        p.drawEllipse(int(w * 0.1), int(h * 0.05), int(w * 0.8), int(h * 0.55))
+        p.setBrush(QColor(160, 50, 45, glow))
+        p.drawEllipse(int(w * 0.18), int(h * 0.1), int(w * 0.64), int(h * 0.5))
 
-        egg_w, egg_h = min(120, w - 40), min(150, h - 70)
-        cx, cy = w // 2, h // 2 - 8
-        egg = (cx - egg_w // 2, cy - egg_h // 2, egg_w, egg_h)
-        p.setBrush(QColor("#1a2838"))
-        p.setPen(QPen(QColor("#3a5a7a"), 2))
-        p.drawRoundedRect(*egg, egg_w // 2, egg_h // 2)
-
-        inset = (egg[0] + 18, egg[1] + 28, egg_w - 36, int(egg_h * 0.42))
-        p.setBrush(QColor("#0e1a14"))
-        p.setPen(QPen(QColor("#2a4a3a"), 1))
-        p.drawRoundedRect(*inset, 8, 8)
-
-        blink = self._pulse < 36
-        p.setPen(QPen(QColor("#7CFC9A" if blink else "#1a3a28"), 2))
-        p.setBrush(Qt.NoBrush)
-        eye_y = inset[1] + inset[3] // 2
-        p.drawEllipse(cx - 14, eye_y - 6, 10, 10 if blink else 3)
-        p.drawEllipse(cx + 4, eye_y - 6, 10, 10 if blink else 3)
-        p.drawArc(cx - 10, eye_y + 2, 20, 12, 200 * 16, 140 * 16)
-
-        led = QColor("#FFE600") if (self._pulse // 5) % 2 == 0 else QColor("#8a7040")
-        p.setBrush(led)
-        p.setPen(QPen(QColor("#000000"), 1))
-        p.drawEllipse(cx - 5, egg[1] - 6, 10, 10)
+        logo_bottom = h // 2
+        if not self._logo.isNull():
+            scaled = self._logo.scaled(
+                max(48, w - 40),
+                max(48, h - 64),
+                Qt.KeepAspectRatio,
+                Qt.SmoothTransformation,
+            )
+            x = (w - scaled.width()) // 2
+            y = max(2, (h - 52 - scaled.height()) // 2)
+            p.drawPixmap(x, y, scaled)
+            logo_bottom = y + scaled.height()
+        else:
+            p.setPen(QColor("#c44"))
+            p.setFont(QFont("DejaVu Sans", 16, QFont.Bold))
+            p.drawText(0, h // 2 - 16, w, 24, Qt.AlignHCenter, "DIGIVICE")
 
         p.setPen(QColor("#e8eef5"))
-        p.setFont(QFont("DejaVu Sans", 11, QFont.Bold))
-        p.drawText(0, egg[1] + egg_h + 4, w, 16, Qt.AlignHCenter, "DIGIVICE")
-
-        p.setPen(QColor("#9ab"))
         p.setFont(QFont("DejaVu Sans", 10))
-        p.drawText(8, h - 36, w - 16, 14, Qt.AlignHCenter, self._line)
+        p.drawText(
+            8,
+            max(logo_bottom + 4, h - 36),
+            w - 16,
+            14,
+            Qt.AlignHCenter,
+            self._line,
+        )
         if self._sub:
             p.setPen(QColor("#6a7a8a"))
             p.setFont(QFont("DejaVu Sans", 8))
@@ -257,10 +273,7 @@ def _pump(app: QApplication, seconds: float) -> None:
 
 
 def run_boot_splash(app: QApplication) -> tuple:
-    """Show splash, check updates (capped), return (UpdateCheck, want_update).
-
-    Does not open modem/SPI — callers do that after so the panel never sticks.
-    """
+    """Show splash, check updates (capped), return (UpdateCheck, want_update)."""
     try:
         from esp_handset import display_geom as geom
 
@@ -287,11 +300,9 @@ def run_boot_splash(app: QApplication) -> tuple:
     th = threading.Thread(target=_check, daemon=True)
     th.start()
 
-    # Hard cap so we never sit here forever (git/DNS hang, etc.)
     t0 = time.time()
     while th.is_alive() and (time.time() - t0) < 8.0:
-        elapsed = time.time() - t0
-        if elapsed > 2.5:
+        if time.time() - t0 > 2.5:
             splash.set_line("looking around ·", "wifi · git")
         app.processEvents()
         time.sleep(0.04)
@@ -323,7 +334,6 @@ def run_boot_splash(app: QApplication) -> tuple:
         if not outcome["done"]:
             splash.request_finish(want_update=False)
 
-    # Ensure we never block on the callback
     guard = time.time() + 1.0
     while not outcome["done"] and time.time() < guard:
         app.processEvents()
@@ -335,7 +345,6 @@ def run_boot_splash(app: QApplication) -> tuple:
     try:
         splash.hide()
         splash.close()
-        # Do not deleteLater immediately — SPI/hosts can still grab a dying widget
     except Exception:
         pass
     app.processEvents()

@@ -788,14 +788,17 @@ class PhoneShell(QMainWindow):
                     self._nav_click()
                     event.accept()
                     return
-                # Gallery full-screen viewer: L/R = prev/next photo
-                seek = getattr(page, "digi_seek", None)
-                active = getattr(page, "digi_seek_active", None)
-                if callable(seek) and (active() if callable(active) else False):
-                    if seek(delta):
-                        self._nav_click()
-                        event.accept()
-                        return
+                # Gallery / etc.: L/R seek — never for Alarms/Timer isolation
+                if page.property("timeTool"):
+                    pass
+                else:
+                    seek = getattr(page, "digi_seek", None)
+                    active = getattr(page, "digi_seek_active", None)
+                    if callable(seek) and (active() if callable(active) else False):
+                        if seek(delta):
+                            self._nav_click()
+                            event.accept()
+                            return
                 if digi_nav.move_focus_xy(page, delta, 0):
                     self._nav_click()
                     event.accept()

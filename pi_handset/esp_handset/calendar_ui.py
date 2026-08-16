@@ -1,12 +1,12 @@
-"""Calendar — calm month glance + day events for Digivice."""
+"""Google Calendar–style month + agenda for Digivice (dark Material)."""
 
 from __future__ import annotations
 
 import calendar as pycal
 from datetime import date, timedelta
-from typing import Callable, List
+from typing import Callable, Dict, List, Tuple
 
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, QRectF
 from PyQt5.QtGui import QColor, QFont, QPainter, QPen
 from PyQt5.QtWidgets import (
     QFrame,
@@ -23,54 +23,77 @@ from PyQt5.QtWidgets import (
 from esp_handset import store
 from esp_handset.pages import page_chrome
 
+# Google Calendar–ish dark palette
+_BG = "#202124"
+_SURFACE = "#303134"
+_TEXT = "#e8eaed"
+_MUTED = "#9aa0a6"
+_BLUE = "#8ab4f8"
+_BLUE_DIM = "#394457"
+_EVENT_COLORS = ("#7986cb", "#33b679", "#8e24aa", "#e67c73", "#f6bf26", "#039be5")
 
-def _btn(text: str, *, primary: bool = False) -> QPushButton:
+
+def _btn(text: str, *, primary: bool = False, fab: bool = False) -> QPushButton:
     b = QPushButton(text)
     b.setFocusPolicy(Qt.StrongFocus)
     b.setCursor(Qt.PointingHandCursor)
-    if primary:
+    if fab:
+        b.setFixedSize(36, 36)
         b.setStyleSheet(
-            "QPushButton { font-size: 11px; font-weight: 700; padding: 3px 8px;"
-            " background:#2a6a4a; border:1px solid #3a8a5a; border-radius:4px; }"
+            "QPushButton { font-size: 18px; font-weight: 700; color:#202124;"
+            " background:#8ab4f8; border:none; border-radius:18px; }"
+            'QPushButton[digiFocus="1"] { border:2px solid #FFE600; }'
+        )
+    elif primary:
+        b.setStyleSheet(
+            "QPushButton { font-size: 11px; font-weight: 700; padding: 4px 10px;"
+            " color:#202124; background:#8ab4f8; border:none; border-radius:14px; }"
             'QPushButton[digiFocus="1"] { border:2px solid #FFE600; }'
         )
     else:
         b.setStyleSheet(
-            "QPushButton { font-size: 11px; font-weight: 600; padding: 3px 8px;"
-            " background:#1a2430; border:1px solid #2a3a4a; border-radius:4px; }"
+            "QPushButton { font-size: 11px; font-weight: 600; padding: 4px 10px;"
+            " color:#e8eaed; background:#3c4043; border:none; border-radius:14px; }"
             'QPushButton[digiFocus="1"] { border:2px solid #FFE600; }'
         )
     return b
 
 
-class MonthGrid(QWidget):
+def _color_for(title: str) -> str:
+    return _EVENT_COLORS[sum(ord(c) for c in (title or "")) % len(_EVENT_COLORS)]
+
+
+class GCalMonth(QWidget):
+    """Month grid: Sunday-first, today blue disc, selected ring, event dots."""
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self._year = date.today().year
         self._month = date.today().month
         self._selected = date.today()
-        self._event_days: set = set()
-        self.setFixedHeight(112)
+        self._by_day: Dict[int, List[dict]] = {}
+        self.setMinimumHeight(128)
         self.setFocusPolicy(Qt.NoFocus)
+        self.setStyleSheet(f"background:{_BG};")
 
     def set_month(self, year: int, month: int) -> None:
         self._year = year
         self._month = month
-        d = min(self._selected.day, pycal.monthrange(year, month)[1])
+        last = pycal.monthrange(year, month)[1]
+        d = min(self._selected.day, last)
         self._selected = date(year, month, d)
         self.update()
 
     def set_selected(self, d: date) -> None:
         self._selected = d
-        self._year = d.year
-        self._month = d.month
+        self._year, self._month = d.year, d.month
         self.update()
 
     def selected(self) -> date:
         return self._selected
 
-    def set_event_days(self, days: set) -> None:
-        self._event_days = set(days)
+    def set_events_for_month(self, by_day: Dict[int, List[dict]]) -> None:
+        self._by_day = dict(by_day)
         self.update()
 
     def shift_day(self, delta: int) -> None:
@@ -78,123 +101,150 @@ class MonthGrid(QWidget):
 
     def paintEvent(self, _event) -> None:  # noqa: N802
         try:
-            self._paint_month()
+            self._paint()
         except Exception:
             pass
 
-    def _paint_month(self) -> None:
+    def _paint(self) -> None:
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
-        w, h = self.width(), self.height()
-        p.fillRect(self.rect(), QColor("#121820"))
+        w, h = max(1, self.width()), max(1, self.height())
+        p.fillRect(self.rect(), QColor(_BG))
 
+        # Weekday headers (Google US: Sun first)
         p.setFont(QFont("DejaVu Sans", 7, QFont.Bold))
-        p.setPen(QColor("#5a6a7a"))
-        labels = ("M", "T", "W", "T", "F", "S", "S")
+        p.setPen(QColor(_MUTED))
+        labels = ("S", "M", "T", "W", "T", "F", "S")
         cell_w = w / 7.0
-        head_h = 12
+        head_h = 14
         for i, lab in enumerate(labels):
             p.drawText(int(i * cell_w), 0, int(cell_w), head_h, Qt.AlignCenter, lab)
 
-        weeks = pycal.Calendar(firstweekday=0).monthdayscalendar(
-            self._year, self._month
-        )
+        cal = pycal.Calendar(firstweekday=6)  # Sunday
+        weeks = cal.monthdayscalendar(self._year, self._month)
         rows = max(len(weeks), 1)
-        cell_h = max(14, (h - head_h) / rows)
+        cell_h = max(16.0, (h - head_h) / rows)
         today = date.today()
 
         for r, week in enumerate(weeks):
             for c, day in enumerate(week):
                 if day == 0:
                     continue
-                x = int(c * cell_w)
-                y = int(head_h + r * cell_h)
-                cw, ch = int(cell_w), int(cell_h)
+                x = c * cell_w
+                y = head_h + r * cell_h
                 d = date(self._year, self._month, day)
                 sel = d == self._selected
                 is_today = d == today
-                has = day in self._event_days
+                evs = self._by_day.get(day, [])
 
-                if sel:
-                    p.setBrush(QColor("#FFE600"))
-                    p.setPen(QPen(QColor("#000000"), 1))
-                    p.drawRoundedRect(x + 1, y + 1, cw - 3, ch - 3, 3, 3)
-                    p.setPen(QColor("#000000"))
-                elif is_today:
-                    p.setBrush(QColor("#243848"))
-                    p.setPen(QPen(QColor("#5a8aaa"), 1))
-                    p.drawRoundedRect(x + 1, y + 1, cw - 3, ch - 3, 3, 3)
-                    p.setPen(QColor("#e8eef5"))
+                cx = x + cell_w / 2
+                cy = y + 10
+
+                # Today / selected disc (Google style)
+                if is_today or sel:
+                    disc = QRectF(cx - 9, cy - 9, 18, 18)
+                    if is_today and sel:
+                        p.setBrush(QColor(_BLUE))
+                        p.setPen(Qt.NoPen)
+                        p.drawEllipse(disc)
+                        p.setPen(QColor("#202124"))
+                    elif is_today:
+                        p.setBrush(QColor(_BLUE))
+                        p.setPen(Qt.NoPen)
+                        p.drawEllipse(disc)
+                        p.setPen(QColor("#202124"))
+                    else:
+                        p.setBrush(Qt.NoBrush)
+                        p.setPen(QPen(QColor(_BLUE), 1.5))
+                        p.drawEllipse(disc)
+                        p.setPen(QColor(_TEXT))
                 else:
-                    p.setPen(QColor("#c8d0d8"))
+                    p.setPen(QColor(_TEXT))
 
-                p.setFont(QFont("DejaVu Sans", 8, QFont.Bold if sel else QFont.Normal))
-                p.drawText(x, y, cw, ch - 4, Qt.AlignCenter, str(day))
-                if has:
-                    p.setBrush(QColor("#000000" if sel else "#5aaa7a"))
-                    p.setPen(Qt.NoPen)
-                    p.drawEllipse(x + cw // 2 - 2, y + ch - 7, 4, 4)
+                p.setFont(QFont("DejaVu Sans", 8, QFont.DemiBold))
+                p.drawText(
+                    int(x),
+                    int(y),
+                    int(cell_w),
+                    20,
+                    Qt.AlignHCenter | Qt.AlignVCenter,
+                    str(day),
+                )
+
+                # Event chips / dots under the number
+                if evs:
+                    dot_y = y + cell_h - 7
+                    n = min(3, len(evs))
+                    total = n * 5 + (n - 1) * 2
+                    start = cx - total / 2
+                    for i in range(n):
+                        col = QColor(_color_for(str(evs[i].get("title", ""))))
+                        p.setBrush(col)
+                        p.setPen(Qt.NoPen)
+                        p.drawRoundedRect(
+                            QRectF(start + i * 7, dot_y, 5, 3), 1.0, 1.0
+                        )
 
 
 def make_calendar_page(on_back: Callable[[], None]) -> QWidget:
     del on_back
     body = QWidget()
+    body.setStyleSheet(f"background:{_BG}; color:{_TEXT};")
     root = QVBoxLayout(body)
-    root.setContentsMargins(2, 0, 2, 0)
-    root.setSpacing(2)
+    root.setContentsMargins(4, 2, 4, 2)
+    root.setSpacing(3)
 
+    # Month chrome
     head = QHBoxLayout()
-    head.setSpacing(4)
+    head.setSpacing(2)
     prev_btn = _btn("‹")
-    prev_btn.setFixedWidth(28)
+    prev_btn.setFixedWidth(30)
     next_btn = _btn("›")
-    next_btn.setFixedWidth(28)
+    next_btn.setFixedWidth(30)
     month_lab = QLabel("")
     month_lab.setAlignment(Qt.AlignCenter)
-    month_lab.setStyleSheet("font-size:12px; font-weight:700; color:#e8eef5;")
+    month_lab.setStyleSheet(
+        f"font-size:14px; font-weight:700; color:{_TEXT}; letter-spacing:0.3px;"
+    )
     head.addWidget(prev_btn)
     head.addWidget(month_lab, 1)
     head.addWidget(next_btn)
     root.addLayout(head)
 
-    grid = MonthGrid()
-    root.addWidget(grid)
+    grid = GCalMonth()
+    root.addWidget(grid, 0)
 
-    day_nav = QHBoxLayout()
-    day_nav.setSpacing(4)
-    day_prev = _btn("←")
-    day_prev.setFixedWidth(28)
-    day_next = _btn("→")
-    day_next.setFixedWidth(28)
-    day_lab = QLabel("")
-    day_lab.setAlignment(Qt.AlignCenter)
-    day_lab.setStyleSheet("font-size:10px; color:#8a9aaa; font-weight:600;")
-    day_nav.addWidget(day_prev)
-    day_nav.addWidget(day_lab, 1)
-    day_nav.addWidget(day_next)
-    root.addLayout(day_nav)
+    # Agenda header (selected day)
+    agenda_head = QLabel("")
+    agenda_head.setStyleSheet(
+        f"font-size:11px; font-weight:700; color:{_BLUE}; padding:2px 2px 0 2px;"
+    )
+    root.addWidget(agenda_head)
 
     lst = QListWidget()
     lst.setFocusPolicy(Qt.StrongFocus)
     lst.setStyleSheet(
-        "QListWidget { background:#121820; border:1px solid #1e2a38; border-radius:4px;"
-        " font-size:11px; outline:none; }"
-        "QListWidget::item { padding:4px 6px; border-bottom:1px solid #1a2430; }"
-        "QListWidget::item:selected { background:#243848; color:#e8eef5; }"
+        f"QListWidget {{ background:{_SURFACE}; border:none; border-radius:8px;"
+        f" font-size:11px; outline:none; color:{_TEXT}; }}"
+        "QListWidget::item { padding:6px 8px; border-bottom:1px solid #3c4043; }"
+        f"QListWidget::item:selected {{ background:{_BLUE_DIM}; color:{_TEXT}; }}"
         'QListWidget[digiFocus="1"] { border:2px solid #FFE600; }'
     )
     root.addWidget(lst, 1)
 
     editor = QFrame()
     editor.setStyleSheet(
-        "QFrame { background:#182028; border:1px solid #2a3a4a; border-radius:4px; }"
+        f"QFrame {{ background:{_SURFACE}; border-radius:8px; }}"
     )
     e_lay = QVBoxLayout(editor)
-    e_lay.setContentsMargins(5, 3, 5, 3)
-    e_lay.setSpacing(2)
+    e_lay.setContentsMargins(8, 6, 8, 6)
+    e_lay.setSpacing(4)
     title_in = QLineEdit()
-    title_in.setPlaceholderText("Event title")
-    title_in.setStyleSheet("font-size:11px; padding:3px;")
+    title_in.setPlaceholderText("Add title")
+    title_in.setStyleSheet(
+        f"font-size:12px; padding:6px; background:#3c4043; color:{_TEXT};"
+        " border:none; border-radius:6px;"
+    )
     e_lay.addWidget(title_in)
     e_row = QHBoxLayout()
     save_btn = _btn("Save", primary=True)
@@ -205,15 +255,23 @@ def make_calendar_page(on_back: Callable[[], None]) -> QWidget:
     editor.hide()
     root.addWidget(editor)
 
-    row = QHBoxLayout()
-    row.setSpacing(4)
-    add_btn = _btn("＋ Add", primary=True)
-    del_btn = _btn("Del")
+    # Bottom bar: day step + actions (Google-ish)
+    bar = QHBoxLayout()
+    bar.setSpacing(4)
+    day_prev = _btn("←")
+    day_prev.setFixedWidth(30)
+    day_next = _btn("→")
+    day_next.setFixedWidth(30)
     today_btn = _btn("Today")
-    row.addWidget(add_btn)
-    row.addWidget(del_btn)
-    row.addWidget(today_btn)
-    root.addLayout(row)
+    del_btn = _btn("Del")
+    add_btn = _btn("＋", fab=True)
+    bar.addWidget(day_prev)
+    bar.addWidget(day_next)
+    bar.addWidget(today_btn)
+    bar.addWidget(del_btn)
+    bar.addStretch(1)
+    bar.addWidget(add_btn)
+    root.addLayout(bar)
 
     state = {"edit": False}
 
@@ -223,14 +281,9 @@ def make_calendar_page(on_back: Callable[[], None]) -> QWidget:
     def _iso(d: date) -> str:
         return d.isoformat()
 
-    def _refresh_labels() -> None:
-        d = grid.selected()
-        month_lab.setText(d.strftime("%b %Y"))
-        day_lab.setText(d.strftime("%a") + f" {d.day}")
-
-    def _event_days_in_month() -> set:
+    def _month_events() -> Dict[int, List[dict]]:
         y, m = grid._year, grid._month
-        days = set()
+        out: Dict[int, List[dict]] = {}
         for e in _events():
             raw = str(e.get("date", ""))
             try:
@@ -238,35 +291,41 @@ def make_calendar_page(on_back: Callable[[], None]) -> QWidget:
             except ValueError:
                 continue
             if ed.year == y and ed.month == m:
-                days.add(ed.day)
-        return days
+                out.setdefault(ed.day, []).append(e)
+        return out
 
-    def refresh_list() -> None:
+    def refresh() -> None:
         d = grid.selected()
+        month_lab.setText(d.strftime("%B %Y"))
+        agenda_head.setText(d.strftime("%a, %b ") + str(d.day))
         key = _iso(d)
         lst.clear()
         found = False
-        for e in sorted(_events(), key=lambda x: (x.get("title") or "").lower()):
-            if str(e.get("date", ""))[:10] == key:
-                item = QListWidgetItem(e.get("title") or "Event")
-                item.setData(Qt.UserRole, e)
-                lst.addItem(item)
-                found = True
+        for e in sorted(
+            _events(), key=lambda x: (x.get("title") or "").lower()
+        ):
+            if str(e.get("date", ""))[:10] != key:
+                continue
+            title = e.get("title") or "Event"
+            item = QListWidgetItem(f"  {title}")
+            item.setData(Qt.UserRole, e)
+            item.setForeground(QColor(_color_for(title)))
+            lst.addItem(item)
+            found = True
         if not found:
             empty = QListWidgetItem("No events")
-            empty.setForeground(QColor("#5a6a7a"))
+            empty.setForeground(QColor(_MUTED))
             empty.setFlags(Qt.NoItemFlags)
             lst.addItem(empty)
-        grid.set_event_days(_event_days_in_month())
-        _refresh_labels()
+        grid.set_events_for_month(_month_events())
 
     def show_editor(show: bool) -> None:
         state["edit"] = show
         editor.setVisible(show)
         lst.setVisible(not show)
-        add_btn.setVisible(not show)
-        del_btn.setVisible(not show)
-        today_btn.setVisible(not show)
+        agenda_head.setVisible(not show)
+        for w in (day_prev, day_next, today_btn, del_btn, add_btn):
+            w.setVisible(not show)
         if show:
             title_in.clear()
             title_in.setFocus(Qt.OtherFocusReason)
@@ -277,7 +336,7 @@ def make_calendar_page(on_back: Callable[[], None]) -> QWidget:
         events.append({"date": _iso(grid.selected()), "title": title})
         store.save("calendar.json", events)
         show_editor(False)
-        refresh_list()
+        refresh()
 
     def do_del() -> None:
         item = lst.currentItem()
@@ -287,7 +346,7 @@ def make_calendar_page(on_back: Callable[[], None]) -> QWidget:
         if not isinstance(target, dict):
             return
         store.save("calendar.json", [e for e in _events() if e != target])
-        refresh_list()
+        refresh()
 
     def shift_month(delta: int) -> None:
         y, m = grid._year, grid._month + delta
@@ -298,17 +357,26 @@ def make_calendar_page(on_back: Callable[[], None]) -> QWidget:
             m -= 12
             y += 1
         grid.set_month(y, m)
-        refresh_list()
+        refresh()
+
+    def nudge(delta: int) -> None:
+        grid.shift_day(delta)
+        refresh()
 
     prev_btn.clicked.connect(lambda: shift_month(-1))
     next_btn.clicked.connect(lambda: shift_month(1))
-    day_prev.clicked.connect(lambda: (grid.shift_day(-1), refresh_list()))
-    day_next.clicked.connect(lambda: (grid.shift_day(1), refresh_list()))
+    day_prev.clicked.connect(lambda: nudge(-1))
+    day_next.clicked.connect(lambda: nudge(1))
+    today_btn.clicked.connect(
+        lambda: (grid.set_selected(date.today()), refresh())
+    )
     add_btn.clicked.connect(lambda: show_editor(True))
     cancel_btn.clicked.connect(lambda: show_editor(False))
     save_btn.clicked.connect(do_save)
     del_btn.clicked.connect(do_del)
-    today_btn.clicked.connect(lambda: (grid.set_selected(date.today()), refresh_list()))
 
-    refresh_list()
-    return page_chrome("Calendar", body, None, scroll=False)
+    page = page_chrome("Calendar", body, None, scroll=False)
+    page.digi_seek = lambda _d: False  # type: ignore[attr-defined]
+    page.digi_seek_active = lambda: False  # type: ignore[attr-defined]
+    refresh()
+    return page

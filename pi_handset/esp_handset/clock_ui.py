@@ -275,11 +275,16 @@ def make_alarms_page(on_back: Callable[[], None]) -> QWidget:
     tick.timeout.connect(lambda: next_lab.setText(_next_alarm_hint()))
     tick.start()
     refresh()
-    return page_chrome("Alarms", body, None, scroll=False)
+    page = page_chrome("Alarms", body, None, scroll=False)
+    # Hard block any ←→ "tool flip" leftover from older hub builds
+    page.digi_seek = lambda _d: False  # type: ignore[attr-defined]
+    page.digi_seek_active = lambda: False  # type: ignore[attr-defined]
+    page.setProperty("timeTool", "alarms")
+    return page
 
 
 def make_timer_page(on_back: Callable[[], None]) -> QWidget:
-    """Kitchen timer only."""
+    """Kitchen timer only — no Alarms tab, no tool flip."""
     del on_back
     body = QWidget()
     root = QVBoxLayout(body)
@@ -399,10 +404,13 @@ def make_timer_page(on_back: Callable[[], None]) -> QWidget:
     tick.timeout.connect(paint)
     tick.start()
     paint()
-    return page_chrome("Timer", body, None, scroll=False)
+    page = page_chrome("Timer", body, None, scroll=False)
+    page.digi_seek = lambda _d: False  # type: ignore[attr-defined]
+    page.digi_seek_active = lambda: False  # type: ignore[attr-defined]
+    page.setProperty("timeTool", "timer")
+    return page
 
 
-# Back-compat aliases
 def make_clock_hub(on_back: Callable[[], None], *, start_tool: str = "alarms") -> QWidget:
     if start_tool == "timer":
         return make_timer_page(on_back)
