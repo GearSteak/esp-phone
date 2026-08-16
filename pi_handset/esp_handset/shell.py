@@ -428,6 +428,20 @@ class PhoneShell(QMainWindow):
         widget.setFocus(Qt.OtherFocusReason)
         digi_nav.ensure_visible(widget)
 
+    def _gb_play_board(self):
+        """In-UI PyBoy surface when a ROM is running, else None."""
+        if (self._nav[-1] if self._nav else "") != "gb":
+            return None
+        page = self.pages.get("gb")
+        board = getattr(page, "gb_board", None) if page else None
+        if (
+            board is not None
+            and board.isVisible()
+            and getattr(board, "playing", False)
+        ):
+            return board
+        return None
+
     def keyPressEvent(self, event) -> None:  # noqa: N802
         key = event.key()
         # Desktop escapes (must work with hard buttons)
@@ -448,6 +462,26 @@ class PhoneShell(QMainWindow):
             self._request_desktop()
             event.accept()
             return
+
+        # In-UI PyBoy: pad stays in game (Back=B, Home=Start); exit = combo on board
+        gb_board = self._gb_play_board()
+        if gb_board is not None and key in (
+            Qt.Key_Escape,
+            Qt.Key_Home,
+            Qt.Key_Return,
+            Qt.Key_Enter,
+            Qt.Key_Tab,
+            Qt.Key_Left,
+            Qt.Key_Right,
+            Qt.Key_Up,
+            Qt.Key_Down,
+        ):
+            gb_board.keyPressEvent(event)
+            if not gb_board.hasFocus():
+                gb_board.setFocus(Qt.OtherFocusReason)
+            event.accept()
+            return
+
         # Back / Escape
         if key == Qt.Key_Escape:
             import time as _time
@@ -489,22 +523,7 @@ class PhoneShell(QMainWindow):
                 self._esc_exits = 0
 
         # Home = Digivice home screen only (never exit to Linux desktop)
-        # Exception: in-UI PyBoy — Home is Start (buttons daemon stays in phone mode)
         if key == Qt.Key_Home:
-            page_key = self._nav[-1] if self._nav else "home"
-            if page_key == "gb":
-                page = self.pages.get("gb")
-                board = getattr(page, "gb_board", None) if page else None
-                if (
-                    board is not None
-                    and board.isVisible()
-                    and getattr(board, "playing", False)
-                ):
-                    tap = getattr(board, "_tap", None)
-                    if callable(tap):
-                        tap("start")
-                    event.accept()
-                    return
             self.home()
             event.accept()
             return
@@ -678,6 +697,11 @@ class PhoneShell(QMainWindow):
         super().keyPressEvent(event)
 
     def keyReleaseEvent(self, event) -> None:  # noqa: N802
+        gb_board = self._gb_play_board()
+        if gb_board is not None:
+            gb_board.keyReleaseEvent(event)
+            event.accept()
+            return
         page_key = self._nav[-1] if self._nav else "home"
         if page_key == "gb":
             page = self.pages.get("gb")

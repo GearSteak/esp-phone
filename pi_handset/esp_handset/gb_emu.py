@@ -6,7 +6,7 @@ import time
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Set
 
-from PyQt5.QtCore import Qt, QThread, pyqtSignal, QObject, QSize, QEvent
+from PyQt5.QtCore import Qt, QThread, pyqtSignal, QObject, QSize, QEvent, QTimer
 from PyQt5.QtGui import QImage, QPixmap, QKeyEvent
 from PyQt5.QtWidgets import (
     QLabel,
@@ -29,7 +29,8 @@ ROM_DIRS = [
     Path("/opt/esp-handset/roms/gb"),
 ]
 
-# Digivice pad + RetroArch-ish keyboard (x/z) + CardKB
+# Digivice pad while Digivice UI owns the stick (phone mode):
+# Confirm=A, Back=B, Home=Start, Select=Select — exit = hold Confirm+Back+Home
 _BTN_MAP = {
     Qt.Key_Up: "up",
     Qt.Key_Down: "down",
@@ -40,10 +41,12 @@ _BTN_MAP = {
     Qt.Key_X: "a",
     Qt.Key_Space: "a",
     Qt.Key_Z: "b",
-    Qt.Key_Tab: "b",  # Digivice Select
+    Qt.Key_Escape: "b",  # Digivice Back
+    Qt.Key_Tab: "select",  # Digivice Select
     Qt.Key_Shift: "select",
     Qt.Key_S: "start",
     Qt.Key_1: "start",
+    Qt.Key_Home: "start",  # Digivice Home
     Qt.Key_2: "select",
 }
 
@@ -328,6 +331,11 @@ class GbPlayView(QWidget):
         self._worker: Optional[_EmuWorker] = None
         self._held_qt: Dict[int, str] = {}
         self._last_frame: Optional[QImage] = None
+        self._exit_since: Optional[float] = None
+        self._exit_armed = True
+        self._exit_timer = QTimer(self)
+        self._exit_timer.setInterval(50)
+        self._exit_timer.timeout.connect(self._poll_exit_combo)
         self.setFocusPolicy(Qt.StrongFocus)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.setObjectName("gbPlayView")
@@ -359,6 +367,8 @@ class GbPlayView(QWidget):
     def start_rom(self, rom: Path) -> None:
         self.stop()
         self._last_frame = None
+        self._exit_since = None
+        self._exit_armed = True
         self.screen.setPixmap(QPixmap())
         self.screen.setText(f"Loading\n{rom.name}")
         w = _EmuWorker(rom, self)
@@ -366,10 +376,13 @@ class GbPlayView(QWidget):
         w.failed.connect(self._on_fail)
         self._worker = w
         w.start()
+        self._exit_timer.start()
         self.setFocus(Qt.OtherFocusReason)
         self.raise_()
 
     def stop(self) -> None:
+        self._exit_timer.stop()
+        self._exit_since = None
         w = self._worker
         self._worker = None
         self._held_qt.clear()
@@ -389,6 +402,36 @@ class GbPlayView(QWidget):
                 w.wait(500)
         self.screen.setPixmap(QPixmap())
         self.screen.setText("")
+
+    def _exit_combo_held(self) -> bool:
+        keys = self._held_qt
+        confirm = Qt.Key_Return in keys or Qt.Key_Enter in keys
+        back = Qt.Key_Escape in keys
+        home = Qt.Key_Home in keys
+        return confirm and back and home
+
+    def _poll_exit_combo(self) -> None:
+        if not self.playing:
+            self._exit_since = None
+            return
+        if self._exit_combo_held():
+            now = time.monotonic()
+            if self._exit_since is None:
+                self._exit_since = now
+            elif self._exit_armed and (now - self._exit_since) >= 0.45:
+                self._exit_armed = False
+                self._exit_since = None
+                # Release emu buttons then quit to ROM list
+                if self._worker is not None:
+                    for name in list(set(self._held_qt.values())):
+                        self._worker.button_up(name)
+                self._held_qt.clear()
+                cb = self._on_quit
+                if callable(cb):
+                    cb()
+        else:
+            self._exit_since = None
+            self._exit_armed = True
 
     def _tap(self, name: str) -> None:
         if self._worker is not None:
@@ -455,6 +498,7 @@ class GbPlayView(QWidget):
         if name and self._worker is not None:
             self._held_qt[e.key()] = name
             self._worker.button_down(name)
+            self._poll_exit_combo()
             e.accept()
             return
         super().keyPressEvent(e)
@@ -465,6 +509,7 @@ class GbPlayView(QWidget):
         name = self._held_qt.pop(e.key(), None) or _BTN_MAP.get(e.key())
         if name and self._worker is not None:
             self._worker.button_up(name)
+            self._poll_exit_combo()
             e.accept()
             return
         super().keyReleaseEvent(e)
@@ -493,9 +538,11 @@ def make_gb_page(
 
     ok_py, py_msg = _pyboy_available()
     tip = QLabel(
-        "In Digivice (no RetroArch).\n"
-        f"{py_msg}\n"
-        "Sound → USB headphones. Confirm=A · Select=B · Home=Start · Back=quit"
+        (
+            f"{py_msg}\n"
+            "Confirm=A · Back=B · Home=Start · Select=Select\n"
+            "Hold Confirm+Back+Home (~0.5s) to quit"
+        )
         if ok_py
         else f"{py_msg}\nROMs: Transfer still works."
     )
@@ -530,6 +577,9 @@ def make_gb_page(
     state = {"playing": False}
 
     def chrome_back() -> None:
+        if state["playing"] and play_view.playing:
+            # Soft chrome back ignored in play — use Confirm+Back+Home
+            return
         if state["playing"]:
             show_list()
             return
@@ -615,8 +665,8 @@ def make_gb_page(
             status.setText("Open Tools → Transfer · GB ROMs")
 
     def on_hardware_back() -> bool:
-        if play_view.isVisible():
-            show_list()
+        # While playing, Back is B — exit is Confirm+Back+Home on the board
+        if play_view.isVisible() and play_view.playing:
             return True
         return False
 
