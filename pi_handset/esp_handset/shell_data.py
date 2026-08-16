@@ -36,7 +36,6 @@ CALLS_APPS = [
 SMS_APPS = [
     AppEntry("messages", "Messages", "Conversations", "✉"),
     AppEntry("lora", "LoRa", "Mesh chats · SOS", "⌁"),
-    AppEntry("notifs", "Notifs", "Alert history", "⚑"),
 ]
 
 CLOCK_APPS = [
