@@ -225,7 +225,6 @@ from esp_handset import store  # noqa: E402
 from esp_handset import display_geom as geom  # noqa: E402
 from esp_handset.shell import (  # noqa: E402
     CALLS_APPS,
-    CLOCK_APPS,
     DEBUG_APPS,
     GAMES_APPS,
     MEDIA_APPS,
@@ -297,10 +296,7 @@ def build_app(bridge: Optional[EspBridge], modem: Optional[Sim7600]) -> PhoneShe
         "folder_sms",
         shell.build_folder_keyed("folder_sms", "SMS", SMS_APPS),
     )
-    shell.register_page(
-        "folder_clock",
-        shell.build_folder_keyed("folder_clock", "Clock", CLOCK_APPS),
-    )
+    # Clock hub opens directly from home (no folder_clock)
     shell.register_page(
         "folder_tools",
         shell.build_folder_keyed("folder_tools", "Tools", TOOLS_APPS),
@@ -389,7 +385,12 @@ def build_app(bridge: Optional[EspBridge], modem: Optional[Sim7600]) -> PhoneShe
     shell.register_page("gps", pages.make_gps_page(modem, back, status, get_modem=get_modem))
     shell.register_page("notes", pages.make_notes_page(back))
     shell.register_page("todos", pages.make_todos_page(back))
-    shell.register_page("clock_face", pages.make_clock_page(back))
+    from esp_handset.clock_ui import make_clock_hub, make_timer_page
+
+    clock_page = make_clock_hub(back, start_tool="alarms")
+    shell.register_page("clock", clock_page)
+    shell.register_page("clock_face", clock_page)  # legacy key
+    shell.register_page("timer", make_timer_page(back))
     shell.register_page("calc", pages.make_calc_page(back))
     shell.register_page("ai", ollama_chat.make_ollama_page(back))
     shell.register_page(
@@ -606,6 +607,8 @@ def build_app(bridge: Optional[EspBridge], modem: Optional[Sim7600]) -> PhoneShe
     from PyQt5.QtCore import QTimer
 
     def _alarm_poll():
+        from esp_handset.clock_ui import check_timer_tick, play_alert
+
         label = features.check_alarms_tick()
         if label:
             store.push_notif("Alarm", label, "alarm")
@@ -613,11 +616,19 @@ def build_app(bridge: Optional[EspBridge], modem: Optional[Sim7600]) -> PhoneShe
             if callable(ref):
                 ref()
             status(f"Alarm: {label}")
-            # Toast already shown via push_notif; no modal dialog
+            play_alert()
+        done = check_timer_tick()
+        if done:
+            store.push_notif("Timer", done, "timer")
+            ref = getattr(notifs_page, "refresh_notifs", None)
+            if callable(ref):
+                ref()
+            status(done)
+            play_alert()
 
     atimer = QTimer(shell)
     atimer.timeout.connect(_alarm_poll)
-    atimer.start(15_000)
+    atimer.start(2_000)
 
     return shell
 

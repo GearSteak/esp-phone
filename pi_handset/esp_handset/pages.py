@@ -2233,19 +2233,9 @@ def make_todos_page(on_back) -> QWidget:
 
 
 def make_clock_page(on_back) -> QWidget:
-    body = QWidget()
-    lay = QVBoxLayout(body)
-    big = QLabel(datetime.now().strftime("%H:%M:%S"))
-    big.setAlignment(Qt.AlignCenter)
-    big.setStyleSheet("font-size: 48px; font-weight: 700;")
-    date = QLabel(datetime.now().strftime("%A, %d %B %Y"))
-    date.setAlignment(Qt.AlignCenter)
-    date.setStyleSheet("color:#9ab;")
-    lay.addStretch(1)
-    lay.addWidget(big)
-    lay.addWidget(date)
-    lay.addStretch(1)
-    return page_chrome("Clock", body, on_back)
+    from esp_handset.clock_ui import make_clock_hub
+
+    return make_clock_hub(on_back, start_tool="alarms")
 
 
 def make_calc_page(on_back) -> QWidget:

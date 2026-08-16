@@ -18,7 +18,7 @@ class AppEntry:
 HOME_APPS: List[AppEntry] = [
     AppEntry("calls", "Calls", "Phone · contacts", "☎"),
     AppEntry("sms", "SMS", "Texts · LoRa", "✉"),
-    AppEntry("clock", "Clock", "Time & alarms", "⏱"),
+    AppEntry("clock", "Clock", "Alarms · timer", "⏱"),
     AppEntry("calendar", "Calendar", "Events", "▦"),
     AppEntry("browser", "Browser", "Light web", "⎋"),
     AppEntry("media", "Media", "Cam · notes · GPS", "▶"),
@@ -39,8 +39,8 @@ SMS_APPS = [
 ]
 
 CLOCK_APPS = [
-    AppEntry("clock_face", "Clock", "", "⏱"),
-    AppEntry("alarms", "Alarms", "", "⚑"),
+    AppEntry("clock", "Alarms", "Wake · reminders", "⚑"),
+    AppEntry("timer", "Timer", "Kitchen · chores", "⌛"),
 ]
 
 TOOLS_APPS = [
@@ -102,7 +102,7 @@ SETUP_APPS = TOOLS_APPS + SETTINGS_APPS  # legacy alias
 FOLDER_MAP = {
     "calls": ("folder_calls", "Calls", CALLS_APPS),
     "sms": ("folder_sms", "SMS", SMS_APPS),
-    "clock": ("folder_clock", "Clock", CLOCK_APPS),
+    # Clock opens the hub directly (alarms + timer flip) — no nested folder
     "tools": ("folder_tools", "Tools", TOOLS_APPS),
     "settings": ("folder_settings", "Settings", SETTINGS_APPS),
     "media": ("folder_media", "Media", MEDIA_APPS),

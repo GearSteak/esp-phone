@@ -25,7 +25,6 @@ from PyQt5.QtWidgets import (
     QPushButton,
     QSpinBox,
     QTextEdit,
-    QTimeEdit,
     QVBoxLayout,
     QWidget,
     QFileDialog,
@@ -35,58 +34,11 @@ from esp_handset import store
 from esp_handset.pages import page_chrome, CONFIG
 
 
-# ----- Alarms -----
+# ----- Alarms (hub lives in clock_ui) -----
 def make_alarms_page(on_back: Callable[[], None]) -> QWidget:
-    body = QWidget()
-    lay = QVBoxLayout(body)
-    lst = QListWidget()
-    time_edit = QTimeEdit()
-    time_edit.setDisplayFormat("HH:mm")
-    label_in = QLineEdit()
-    label_in.setPlaceholderText("Label")
-    row = QHBoxLayout()
-    add = QPushButton("Add alarm")
-    rem = QPushButton("Remove selected")
-    row.addWidget(add)
-    row.addWidget(rem)
-    lay.addWidget(lst, 1)
-    lay.addWidget(QLabel("Time"))
-    lay.addWidget(time_edit)
-    lay.addWidget(label_in)
-    lay.addLayout(row)
-    tip = QLabel("In-app check while handset is open (full systemd timers later).")
-    tip.setWordWrap(True)
-    tip.setStyleSheet("color:#9ab;font-size:11px;")
-    lay.addWidget(tip)
+    from esp_handset.clock_ui import make_clock_hub
 
-    def refresh():
-        lst.clear()
-        for a in store.load("alarms.json", []):
-            on = "ON" if a.get("enabled", True) else "off"
-            lst.addItem(f"{a.get('time','??:??')}  {a.get('label','')}  [{on}]")
-
-    def do_add():
-        t = time_edit.time().toString("HH:mm")
-        items = store.load("alarms.json", [])
-        items.append(
-            {"time": t, "label": label_in.text().strip() or "Alarm", "enabled": True}
-        )
-        store.save("alarms.json", items)
-        label_in.clear()
-        refresh()
-
-    def do_rem():
-        row_i = lst.currentRow()
-        items = store.load("alarms.json", [])
-        if 0 <= row_i < len(items):
-            items.pop(row_i)
-            store.save("alarms.json", items)
-            refresh()
-
-    add.clicked.connect(do_add)
-    rem.clicked.connect(do_rem)
-    refresh()
-    return page_chrome("Alarms", body, on_back)
+    return make_clock_hub(on_back, start_tool="alarms")
 
 
 def check_alarms_tick() -> Optional[str]:
