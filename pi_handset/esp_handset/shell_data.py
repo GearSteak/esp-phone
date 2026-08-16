@@ -18,10 +18,10 @@ class AppEntry:
 HOME_APPS: List[AppEntry] = [
     AppEntry("calls", "Calls", "Phone · contacts", "☎"),
     AppEntry("sms", "SMS", "Texts · LoRa", "✉"),
-    AppEntry("clock", "Clock", "Alarms · timer", "⏱"),
-    AppEntry("calendar", "Calendar", "Events", "▦"),
+    AppEntry("time", "Time", "Alarms · calendar", "⏱"),
+    AppEntry("camera", "Camera", "Snap · preview", "◉"),
     AppEntry("browser", "Browser", "Light web", "⎋"),
-    AppEntry("media", "Media", "Cam · notes · GPS", "▶"),
+    AppEntry("media", "Media", "Gallery · notes · GPS", "▶"),
     AppEntry("games", "Games", "GB · built-ins", "♠"),
     AppEntry("tools", "Tools", "Calc · steps", "⚒"),
     AppEntry("settings", "Settings", "Device · Linux", "⚙"),
@@ -38,10 +38,13 @@ SMS_APPS = [
     AppEntry("lora", "LoRa", "Mesh chats · SOS", "⌁"),
 ]
 
+# Time folder (home → Time): alarms/timer hub + calendar
 CLOCK_APPS = [
     AppEntry("clock", "Alarms", "Wake · reminders", "⚑"),
     AppEntry("timer", "Timer", "Kitchen · chores", "⌛"),
+    AppEntry("calendar", "Calendar", "Events", "▦"),
 ]
+TIME_APPS = CLOCK_APPS
 
 TOOLS_APPS = [
     AppEntry("wifi_transfer", "Transfer", "Send & get · Wi‑Fi", "⇅"),
@@ -102,7 +105,7 @@ SETUP_APPS = TOOLS_APPS + SETTINGS_APPS  # legacy alias
 FOLDER_MAP = {
     "calls": ("folder_calls", "Calls", CALLS_APPS),
     "sms": ("folder_sms", "SMS", SMS_APPS),
-    # Clock opens the hub directly (alarms + timer flip) — no nested folder
+    "time": ("folder_time", "Time", TIME_APPS),
     "tools": ("folder_tools", "Tools", TOOLS_APPS),
     "settings": ("folder_settings", "Settings", SETTINGS_APPS),
     "media": ("folder_media", "Media", MEDIA_APPS),

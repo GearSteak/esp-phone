@@ -225,6 +225,7 @@ from esp_handset import store  # noqa: E402
 from esp_handset import display_geom as geom  # noqa: E402
 from esp_handset.shell import (  # noqa: E402
     CALLS_APPS,
+    CLOCK_APPS,
     DEBUG_APPS,
     GAMES_APPS,
     MEDIA_APPS,
@@ -296,7 +297,10 @@ def build_app(bridge: Optional[EspBridge], modem: Optional[Sim7600]) -> PhoneShe
         "folder_sms",
         shell.build_folder_keyed("folder_sms", "SMS", SMS_APPS),
     )
-    # Clock hub opens directly from home (no folder_clock)
+    shell.register_page(
+        "folder_time",
+        shell.build_folder_keyed("folder_time", "Time", CLOCK_APPS),
+    )
     shell.register_page(
         "folder_tools",
         shell.build_folder_keyed("folder_tools", "Tools", TOOLS_APPS),
@@ -657,20 +661,49 @@ def main() -> int:
     store.ensure()
     bridge: Optional[EspBridge] = None
     modem: Optional[Sim7600] = None
-    try:
-        bridge = EspBridge()
-        bridge.open()
-    except Exception as e:
-        print(f"[handset] LoRa ESP offline ({e})", flush=True)
-        bridge = None
-    try:
-        modem = Sim7600()
-        # Modem USB often enumerates 10–25s after boot — wait & probe AT
-        modem.open(retries=12, retry_s=2.5)
-        print(f"[handset] SIM7600 on {modem.port}", flush=True)
-    except Exception as e:
-        print(f"[handset] SIM7600 offline ({e})", flush=True)
-        modem = None
+    want_update = False
+
+    def _prepare(status_cb) -> None:
+        nonlocal bridge, modem
+        status_cb("hello ·", "LoRa bridge")
+        try:
+            bridge = EspBridge()
+            bridge.open()
+        except Exception as e:
+            print(f"[handset] LoRa ESP offline ({e})", flush=True)
+            bridge = None
+        status_cb("hello ·", "cellular modem")
+        try:
+            modem = Sim7600()
+            # Modem USB often enumerates 10–25s after boot — wait & probe AT
+            modem.open(retries=12, retry_s=2.5)
+            print(f"[handset] SIM7600 on {modem.port}", flush=True)
+        except Exception as e:
+            print(f"[handset] SIM7600 offline ({e})", flush=True)
+            modem = None
+        status_cb("almost ·", "building UI")
+
+    # Cute splash + update check (ESP_HANDSET_SKIP_BOOT_SPLASH=1 to skip)
+    skip_splash = os.environ.get("ESP_HANDSET_SKIP_BOOT_SPLASH", "").strip() in (
+        "1",
+        "true",
+        "yes",
+    )
+    if not skip_splash:
+        try:
+            from esp_handset.boot_splash import run_boot_splash
+
+            _check, want_update = run_boot_splash(app, prepare=_prepare)
+            print(
+                f"[handset] boot check: {_check.status} {_check.detail!r} "
+                f"want_update={want_update}",
+                flush=True,
+            )
+        except Exception as e:
+            print(f"[handset] boot splash failed ({e}) — continuing", flush=True)
+            _prepare(lambda *_a, **_k: None)
+    else:
+        _prepare(lambda *_a, **_k: None)
 
     win = build_app(bridge, modem)
     app.installEventFilter(_KioskKeyFilter(win))
@@ -707,6 +740,18 @@ def main() -> int:
         win.raise_()
         win.activateWindow()
         win.setFocus()
+    if want_update:
+        try:
+            from PyQt5.QtCore import QTimer
+
+            QTimer.singleShot(400, lambda: win.go("set_update"))
+            store.push_notif(
+                "Update",
+                "New Digivice build available — install from Update",
+                "update",
+            )
+        except Exception:
+            pass
     print("[handset] event loop starting", flush=True)
     code = app.exec_()
     if hasattr(win, "_spi_mirror") and win._spi_mirror:
