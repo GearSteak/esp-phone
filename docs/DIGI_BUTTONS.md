@@ -12,8 +12,10 @@ Eight tactile buttons (Select is optional). Each switch: one side on the listed 
 | **Home** | Home | Relaunch Digivice | Start |
 | **Select** (8th) | Tab | Middle click | Select |
 
+**Exit Game Boy (in-UI PyBoy or RetroArch):** hold **Confirm + Back + Home** (~0.5s).
+
 Mode is `phone` while Digivice runs and `desktop` after `handset-desktop`.
-Buttons read `/etc/esp-handset/ui_mode` and `~/.esp-handset/session_mode`.
+In-UI PyBoy remaps the phone keys itself (Back→B, Home→Start) so you don’t need `gb` mode.
 
 Typing: **CardKB** (I2C) or on-screen keyboard — see [`CARDKB_PI.md`](CARDKB_PI.md).
 
