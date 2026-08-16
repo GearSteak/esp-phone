@@ -389,11 +389,10 @@ def build_app(bridge: Optional[EspBridge], modem: Optional[Sim7600]) -> PhoneShe
     shell.register_page("gps", pages.make_gps_page(modem, back, status, get_modem=get_modem))
     shell.register_page("notes", pages.make_notes_page(back))
     shell.register_page("todos", pages.make_todos_page(back))
-    from esp_handset.clock_ui import make_clock_hub, make_timer_page
+    from esp_handset.clock_ui import make_alarms_page, make_timer_page
 
-    clock_page = make_clock_hub(back, start_tool="alarms")
-    shell.register_page("clock", clock_page)
-    shell.register_page("clock_face", clock_page)  # legacy key
+    shell.register_page("clock", make_alarms_page(back))
+    shell.register_page("clock_face", make_alarms_page(back))  # legacy key
     shell.register_page("timer", make_timer_page(back))
     shell.register_page("calc", pages.make_calc_page(back))
     shell.register_page("ai", ollama_chat.make_ollama_page(back))

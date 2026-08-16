@@ -89,52 +89,9 @@ def make_notifs_page(on_back: Callable[[], None]) -> QWidget:
 
 # ----- Calendar -----
 def make_calendar_page(on_back: Callable[[], None]) -> QWidget:
-    body = QWidget()
-    lay = QVBoxLayout(body)
-    lst = QListWidget()
-    title = QLineEdit()
-    title.setPlaceholderText("Event title")
-    day = QLineEdit(date.today().isoformat())
-    day.setPlaceholderText("YYYY-MM-DD")
-    add = QPushButton("Add event")
-    rem = QPushButton("Remove selected")
-    lay.addWidget(QLabel(date.today().strftime("%A %d %B %Y")))
-    lay.addWidget(lst, 1)
-    lay.addWidget(day)
-    lay.addWidget(title)
-    row = QHBoxLayout()
-    row.addWidget(add)
-    row.addWidget(rem)
-    lay.addLayout(row)
+    from esp_handset.calendar_ui import make_calendar_page as _make
 
-    def refresh():
-        lst.clear()
-        events = sorted(store.load("calendar.json", []), key=lambda e: e.get("date", ""))
-        for e in events:
-            lst.addItem(f"{e.get('date','')}  {e.get('title','')}")
-
-    def do_add():
-        events = store.load("calendar.json", [])
-        events.append({"date": day.text().strip(), "title": title.text().strip() or "Event"})
-        store.save("calendar.json", events)
-        title.clear()
-        refresh()
-
-    def do_rem():
-        i = lst.currentRow()
-        events = sorted(store.load("calendar.json", []), key=lambda e: e.get("date", ""))
-        if 0 <= i < len(events):
-            # remove matching
-            target = events[i]
-            all_e = store.load("calendar.json", [])
-            all_e = [e for e in all_e if e != target]
-            store.save("calendar.json", all_e)
-            refresh()
-
-    add.clicked.connect(do_add)
-    rem.clicked.connect(do_rem)
-    refresh()
-    return page_chrome("Calendar", body, on_back)
+    return _make(on_back)
 
 
 # ----- Security PIN -----

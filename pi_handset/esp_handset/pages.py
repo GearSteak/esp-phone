@@ -2233,9 +2233,9 @@ def make_todos_page(on_back) -> QWidget:
 
 
 def make_clock_page(on_back) -> QWidget:
-    from esp_handset.clock_ui import make_clock_hub
+    from esp_handset.clock_ui import make_alarms_page
 
-    return make_clock_hub(on_back, start_tool="alarms")
+    return make_alarms_page(on_back)
 
 
 def make_calc_page(on_back) -> QWidget:
