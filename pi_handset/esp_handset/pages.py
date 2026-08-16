@@ -3655,19 +3655,40 @@ def make_network_page(
     from pathlib import Path
 
     body = QWidget()
+    body.setStyleSheet("background:#0e1620; color:#e8eef5;")
     lay = QVBoxLayout(body)
+    lay.setContentsMargins(6, 4, 6, 6)
+    lay.setSpacing(6)
+    title = QLabel("Network")
+    title.setStyleSheet("font-size:15px; font-weight:700;")
+    tip = QLabel("SIM7600 modem · Wi‑Fi is system-managed")
+    tip.setWordWrap(True)
+    tip.setStyleSheet("font-size:10px; color:#7a8a9a;")
+    lay.addWidget(title)
+    lay.addWidget(tip)
     lab = QLabel("Tap refresh for modem")
     lab.setWordWrap(True)
-    lab.setStyleSheet("font-size:11px;")
+    lab.setStyleSheet(
+        "font-size:11px; padding:8px; background:#16202c; border-radius:8px;"
+    )
+    _btn_ss = (
+        "QPushButton { font-size:12px; font-weight:700; padding:6px;"
+        " background:#1e2a38; color:#e8eef5; border:1px solid #243040;"
+        " border-radius:10px; }"
+        'QPushButton[digiFocus="1"] { border:2px solid #FFE600; }'
+    )
     btn = QPushButton("Refresh status")
-    btn.setMinimumHeight(28)
     scan = QPushButton("Scan ports")
-    scan.setMinimumHeight(28)
     recon = QPushButton("Reconnect modem")
-    recon.setMinimumHeight(30)
-    recon.setStyleSheet("font-weight:700;")
     uart_btn = QPushButton("Use GPIO UART")
-    uart_btn.setMinimumHeight(28)
+    for b in (btn, scan, recon, uart_btn):
+        b.setMinimumHeight(32)
+        b.setStyleSheet(_btn_ss)
+    recon.setStyleSheet(
+        "QPushButton { font-size:12px; font-weight:700; color:#0a1218;"
+        " background:#5ec4a8; border:none; border-radius:10px; }"
+        'QPushButton[digiFocus="1"] { border:2px solid #FFE600; }'
+    )
     lay.addWidget(lab)
     lay.addWidget(btn)
     lay.addWidget(scan)

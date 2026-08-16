@@ -31,7 +31,7 @@ from PyQt5.QtWidgets import (
 )
 
 from esp_handset import store
-from esp_handset.pages import page_chrome, CONFIG
+from esp_handset.pages import page_chrome
 
 
 # ----- Alarms -----
@@ -97,14 +97,46 @@ def make_calendar_page(on_back: Callable[[], None]) -> QWidget:
 # ----- Security PIN -----
 def make_security_page(on_back: Callable[[], None]) -> QWidget:
     body = QWidget()
+    body.setStyleSheet("background:#0e1620; color:#e8eef5;")
     lay = QVBoxLayout(body)
+    lay.setContentsMargins(6, 4, 6, 6)
+    lay.setSpacing(6)
+    title = QLabel("Security")
+    title.setStyleSheet("font-size:15px; font-weight:700;")
+    tip = QLabel("Optional lock PIN when Digivice starts")
+    tip.setWordWrap(True)
+    tip.setStyleSheet("font-size:10px; color:#7a8a9a;")
+    lay.addWidget(title)
+    lay.addWidget(tip)
     sec = store.load("security.json", {"pin": "", "lock_timeout_min": 0})
-    status = QLabel("PIN is set" if sec.get("pin") else "PIN disabled")
+    status = QLabel("PIN is on" if sec.get("pin") else "PIN is off")
+    status.setStyleSheet(
+        "font-size:12px; font-weight:700; padding:8px;"
+        " background:#16202c; border-radius:8px;"
+    )
     pin = QLineEdit()
     pin.setEchoMode(QLineEdit.Password)
-    pin.setPlaceholderText("New PIN (digits)")
+    pin.setPlaceholderText("New PIN (4+ digits)")
+    pin.setMinimumHeight(32)
+    pin.setStyleSheet(
+        "font-size:12px; padding:8px; background:#16202c; color:#e8eef5;"
+        " border:1px solid #243040; border-radius:8px;"
+    )
     save = QPushButton("Set PIN")
     clear = QPushButton("Clear PIN")
+    for b in (save, clear):
+        b.setMinimumHeight(32)
+        b.setStyleSheet(
+            "QPushButton { font-size:12px; font-weight:700; padding:6px;"
+            " background:#1e2a38; color:#e8eef5; border:1px solid #243040;"
+            " border-radius:10px; }"
+            'QPushButton[digiFocus="1"] { border:2px solid #FFE600; }'
+        )
+    save.setStyleSheet(
+        "QPushButton { font-size:12px; font-weight:700; color:#0a1218;"
+        " background:#5ec4a8; border:none; border-radius:10px; }"
+        'QPushButton[digiFocus="1"] { border:2px solid #FFE600; }'
+    )
     lay.addWidget(status)
     lay.addWidget(pin)
     lay.addWidget(save)
@@ -113,22 +145,22 @@ def make_security_page(on_back: Callable[[], None]) -> QWidget:
 
     def do_save():
         p = pin.text().strip()
-        if len(p) < 4:
-            QMessageBox.warning(body, "PIN", "Use at least 4 digits")
+        if len(p) < 4 or not p.isdigit():
+            status.setText("Need 4+ digits")
             return
         store.save("security.json", {"pin": p, "lock_timeout_min": 0})
-        status.setText("PIN is set")
+        status.setText("PIN is on")
         pin.clear()
         store.push_notif("Security", "PIN updated", "security")
 
     def do_clear():
         store.save("security.json", {"pin": "", "lock_timeout_min": 0})
-        status.setText("PIN disabled")
+        status.setText("PIN is off")
         pin.clear()
 
     save.clicked.connect(do_save)
     clear.clicked.connect(do_clear)
-    return page_chrome("Security", body, on_back)
+    return page_chrome("Security", body, on_back, scroll=False)
 
 
 def verify_pin_dialog(parent) -> bool:
@@ -567,85 +599,9 @@ def make_sounds_page(on_back: Callable[[], None]) -> QWidget:
 
 
 def make_accounts_page(on_back: Callable[[], None]) -> QWidget:
-    body = QWidget()
-    lay = QVBoxLayout(body)
-    server = QLineEdit()
-    user = QLineEdit()
-    password = QLineEdit()
-    password.setEchoMode(QLineEdit.Password)
-    display = QLineEdit()
-    email_user = QLineEdit()
-    email_pass = QLineEdit()
-    email_pass.setEchoMode(QLineEdit.Password)
-    save = QPushButton("Save SIP + email prefs")
-    # load sip.env (must be readable — root-only /etc breaks Digivice)
-    vals = {"SIP_SERVER": "", "SIP_USER": "", "SIP_PASS": "", "SIP_DISPLAY": ""}
-    path = CONFIG
-    try:
-        if not path.is_file() or not os.access(path, os.R_OK):
-            path = store.DATA / "sip.env"
-    except OSError:
-        path = store.DATA / "sip.env"
-    if path.is_file() and os.access(path, os.R_OK):
-        try:
-            for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
-                if "=" in line and not line.strip().startswith("#"):
-                    k, v = line.split("=", 1)
-                    vals[k.strip()] = v.strip()
-        except OSError:
-            pass
-    server.setText(vals.get("SIP_SERVER", ""))
-    user.setText(vals.get("SIP_USER", ""))
-    password.setText(vals.get("SIP_PASS", ""))
-    display.setText(vals.get("SIP_DISPLAY", ""))
-    em = store.load("email.json", {"user": "", "pass": "", "host": "imap.gmail.com"})
-    email_user.setText(em.get("user", ""))
-    email_pass.setText(em.get("pass", ""))
+    from esp_handset.accounts_ui import make_sip_account_page
 
-    for lab, w in [
-        ("SIP server", server),
-        ("SIP user", user),
-        ("SIP pass", password),
-        ("Display name", display),
-        ("Email user", email_user),
-        ("Email app password", email_pass),
-    ]:
-        lay.addWidget(QLabel(lab))
-        lay.addWidget(w)
-    lay.addWidget(save)
-    lay.addStretch(1)
-
-    def do_save():
-        store.ensure()
-        dest = Path("/etc/esp-handset/sip.env")
-        content = (
-            f"SIP_SERVER={server.text().strip()}\n"
-            f"SIP_USER={user.text().strip()}\n"
-            f"SIP_PASS={password.text().strip()}\n"
-            f"SIP_DISPLAY={display.text().strip() or 'ESP Handset'}\n"
-        )
-        try:
-            dest.write_text(content)
-        except PermissionError:
-            (store.DATA / "sip.env").write_text(content)
-            QMessageBox.information(
-                body,
-                "Accounts",
-                "Saved to ~/.esp-handset/sip.env (no permission for /etc).\n"
-                "Copy with sudo if needed.",
-            )
-        store.save(
-            "email.json",
-            {
-                "user": email_user.text().strip(),
-                "pass": email_pass.text().strip(),
-                "host": "imap.gmail.com",
-            },
-        )
-        store.push_notif("Accounts", "Credentials saved", "settings")
-
-    save.clicked.connect(do_save)
-    return page_chrome("Accounts", body, on_back)
+    return make_sip_account_page(on_back)
 
 
 def make_email_page(on_back: Callable[[], None]) -> QWidget:

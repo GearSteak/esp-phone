@@ -55,15 +55,22 @@ def _load_env_file(path: Path) -> None:
 def apply_config() -> Tuple[str, str]:
     _load_env_file(Path("/etc/esp-handset/ollama.env"))
     _load_env_file(_DATA / "ollama.env")
+    cfg: dict = {}
+    try:
+        p = _DATA / "ollama.json"
+        if p.is_file():
+            cfg = json.loads(p.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, TypeError):
+        cfg = {}
     host = (
         os.environ.get("ESP_OLLAMA_HOST")
         or os.environ.get("OLLAMA_HOST")
-        or "http://127.0.0.1:11434"
+        or str(cfg.get("host") or "http://127.0.0.1:11434")
     ).rstrip("/")
     model = (
         os.environ.get("ESP_OLLAMA_MODEL")
         or os.environ.get("OLLAMA_MODEL")
-        or "deepseek-r1:1.5b"
+        or str(cfg.get("model") or "deepseek-r1:1.5b")
     )
     return host, model
 

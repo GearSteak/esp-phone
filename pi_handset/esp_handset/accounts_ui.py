@@ -1,0 +1,294 @@
+"""Settings → Accounts: hub + per-service pages (SIP, Email, AI)."""
+from __future__ import annotations
+
+import os
+from pathlib import Path
+from typing import Callable, Optional
+
+from PyQt5.QtCore import Qt
+from PyQt5.QtWidgets import (
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QMessageBox,
+    QPushButton,
+    QVBoxLayout,
+    QWidget,
+)
+
+from esp_handset import store
+from esp_handset.pages import CONFIG, page_chrome
+
+_BG = "#0e1620"
+_SURFACE = "#16202c"
+_BORDER = "#243040"
+_TEXT = "#e8eef5"
+_MUTED = "#7a8a9a"
+_ACCENT = "#5ec4a8"
+_FIELD = (
+    f"QLineEdit {{ font-size:12px; padding:8px; background:{_SURFACE};"
+    f" color:{_TEXT}; border:1px solid {_BORDER}; border-radius:8px; }}"
+    'QLineEdit[digiFocus="1"] { border:2px solid #FFE600; }'
+)
+
+
+def _label(text: str) -> QLabel:
+    lab = QLabel(text)
+    lab.setStyleSheet(f"font-size:10px; font-weight:700; color:{_MUTED};")
+    return lab
+
+
+def _field(placeholder: str = "", *, password: bool = False) -> QLineEdit:
+    ed = QLineEdit()
+    ed.setPlaceholderText(placeholder)
+    ed.setStyleSheet(_FIELD)
+    ed.setMinimumHeight(32)
+    ed.setFocusPolicy(Qt.StrongFocus)
+    if password:
+        ed.setEchoMode(QLineEdit.Password)
+    return ed
+
+
+def _btn(text: str, *, primary: bool = False) -> QPushButton:
+    b = QPushButton(text)
+    b.setFocusPolicy(Qt.StrongFocus)
+    b.setMinimumHeight(34)
+    if primary:
+        b.setStyleSheet(
+            f"QPushButton {{ font-size:12px; font-weight:700; color:#0a1218;"
+            f" background:{_ACCENT}; border:none; border-radius:10px; }}"
+            'QPushButton[digiFocus="1"] { border:2px solid #FFE600; }'
+        )
+    else:
+        b.setStyleSheet(
+            f"QPushButton {{ font-size:11px; font-weight:600; color:{_TEXT};"
+            f" background:#1e2a38; border:1px solid {_BORDER}; border-radius:10px; }}"
+            'QPushButton[digiFocus="1"] { border:2px solid #FFE600; }'
+        )
+    return b
+
+
+def _status() -> QLabel:
+    lab = QLabel("")
+    lab.setWordWrap(True)
+    lab.setStyleSheet(f"font-size:10px; color:{_MUTED};")
+    return lab
+
+
+def _header(title: str, blurb: str) -> QWidget:
+    w = QWidget()
+    lay = QVBoxLayout(w)
+    lay.setContentsMargins(2, 0, 2, 4)
+    lay.setSpacing(2)
+    t = QLabel(title)
+    t.setStyleSheet(f"font-size:15px; font-weight:700; color:{_TEXT};")
+    b = QLabel(blurb)
+    b.setWordWrap(True)
+    b.setStyleSheet(f"font-size:10px; color:{_MUTED};")
+    lay.addWidget(t)
+    lay.addWidget(b)
+    return w
+
+
+def _read_sip() -> dict:
+    vals = {
+        "SIP_SERVER": "",
+        "SIP_USER": "",
+        "SIP_PASS": "",
+        "SIP_DISPLAY": "",
+    }
+    path = CONFIG
+    try:
+        if not path.is_file() or not os.access(path, os.R_OK):
+            path = store.DATA / "sip.env"
+    except OSError:
+        path = store.DATA / "sip.env"
+    if path.is_file() and os.access(path, os.R_OK):
+        try:
+            for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+                if "=" in line and not line.strip().startswith("#"):
+                    k, v = line.split("=", 1)
+                    vals[k.strip()] = v.strip()
+        except OSError:
+            pass
+    return vals
+
+
+def _write_sip(server: str, user: str, password: str, display: str) -> str:
+    """Returns where it was saved."""
+    store.ensure()
+    content = (
+        f"SIP_SERVER={server.strip()}\n"
+        f"SIP_USER={user.strip()}\n"
+        f"SIP_PASS={password.strip()}\n"
+        f"SIP_DISPLAY={(display.strip() or 'ESP Handset')}\n"
+    )
+    dest = Path("/etc/esp-handset/sip.env")
+    try:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_text(content)
+        return str(dest)
+    except PermissionError:
+        alt = store.DATA / "sip.env"
+        alt.write_text(content)
+        return str(alt)
+
+
+def make_sip_account_page(on_back: Callable[[], None]) -> QWidget:
+    body = QWidget()
+    body.setStyleSheet(f"background:{_BG}; color:{_TEXT};")
+    lay = QVBoxLayout(body)
+    lay.setContentsMargins(6, 4, 6, 6)
+    lay.setSpacing(6)
+    lay.addWidget(
+        _header("SIP / VoIP", "Softphone login for Digivice Calls")
+    )
+    vals = _read_sip()
+    server = _field("sip.example.com")
+    user = _field("user / extension")
+    password = _field("password", password=True)
+    display = _field("Display name")
+    server.setText(vals.get("SIP_SERVER", ""))
+    user.setText(vals.get("SIP_USER", ""))
+    password.setText(vals.get("SIP_PASS", ""))
+    display.setText(vals.get("SIP_DISPLAY", ""))
+    for lab, w in (
+        ("Server", server),
+        ("User", user),
+        ("Password", password),
+        ("Display name", display),
+    ):
+        lay.addWidget(_label(lab))
+        lay.addWidget(w)
+    status = _status()
+    save = _btn("Save SIP", primary=True)
+    lay.addWidget(save)
+    lay.addWidget(status)
+    lay.addStretch(1)
+
+    def do_save() -> None:
+        where = _write_sip(
+            server.text(), user.text(), password.text(), display.text()
+        )
+        status.setText(f"Saved · {where}")
+        store.push_notif("SIP", "Account saved", "settings")
+
+    save.clicked.connect(do_save)
+    return page_chrome("SIP", body, on_back, scroll=True)
+
+
+def make_email_account_page(on_back: Callable[[], None]) -> QWidget:
+    body = QWidget()
+    body.setStyleSheet(f"background:{_BG}; color:{_TEXT};")
+    lay = QVBoxLayout(body)
+    lay.setContentsMargins(6, 4, 6, 6)
+    lay.setSpacing(6)
+    lay.addWidget(
+        _header(
+            "Email",
+            "Gmail: use an App Password (not your normal login)",
+        )
+    )
+    em = store.load(
+        "email.json",
+        {
+            "user": "",
+            "pass": "",
+            "host": "imap.gmail.com",
+            "smtp": "smtp.gmail.com",
+        },
+    )
+    user = _field("you@gmail.com")
+    password = _field("app password", password=True)
+    imap_host = _field("imap.gmail.com")
+    smtp_host = _field("smtp.gmail.com")
+    user.setText(str(em.get("user") or ""))
+    password.setText(str(em.get("pass") or ""))
+    imap_host.setText(str(em.get("host") or "imap.gmail.com"))
+    smtp_host.setText(str(em.get("smtp") or "smtp.gmail.com"))
+    for lab, w in (
+        ("Address", user),
+        ("App password", password),
+        ("IMAP host", imap_host),
+        ("SMTP host", smtp_host),
+    ):
+        lay.addWidget(_label(lab))
+        lay.addWidget(w)
+    status = _status()
+    save = _btn("Save Email", primary=True)
+    lay.addWidget(save)
+    lay.addWidget(status)
+    lay.addStretch(1)
+
+    def do_save() -> None:
+        store.save(
+            "email.json",
+            {
+                "user": user.text().strip(),
+                "pass": password.text().strip(),
+                "host": imap_host.text().strip() or "imap.gmail.com",
+                "smtp": smtp_host.text().strip() or "smtp.gmail.com",
+            },
+        )
+        status.setText("Saved · Email inbox will use these")
+        store.push_notif("Email", "Account saved", "settings")
+
+    save.clicked.connect(do_save)
+    return page_chrome("Email", body, on_back, scroll=True)
+
+
+def make_ai_account_page(on_back: Callable[[], None]) -> QWidget:
+    body = QWidget()
+    body.setStyleSheet(f"background:{_BG}; color:{_TEXT};")
+    lay = QVBoxLayout(body)
+    lay.setContentsMargins(6, 4, 6, 6)
+    lay.setSpacing(6)
+    lay.addWidget(
+        _header("AI · Ollama", "Local or LAN Ollama endpoint for Digivice AI")
+    )
+    cfg = store.load(
+        "ollama.json",
+        {"host": "http://127.0.0.1:11434", "model": "deepseek-r1:1.5b"},
+    )
+    try:
+        from esp_handset.ollama_chat import apply_config
+
+        live_host, live_model = apply_config()
+        if not cfg.get("host"):
+            cfg["host"] = live_host
+        if not cfg.get("model"):
+            cfg["model"] = live_model
+    except Exception:
+        pass
+    host = _field("http://127.0.0.1:11434")
+    model = _field("model name")
+    host.setText(str(cfg.get("host") or "http://127.0.0.1:11434"))
+    model.setText(str(cfg.get("model") or "deepseek-r1:1.5b"))
+    lay.addWidget(_label("Host URL"))
+    lay.addWidget(host)
+    lay.addWidget(_label("Default model"))
+    lay.addWidget(model)
+    status = _status()
+    save = _btn("Save AI", primary=True)
+    lay.addWidget(save)
+    lay.addWidget(status)
+    lay.addStretch(1)
+
+    def do_save() -> None:
+        store.save(
+            "ollama.json",
+            {
+                "host": host.text().strip() or "http://127.0.0.1:11434",
+                "model": model.text().strip(),
+            },
+        )
+        status.setText("Saved · Tools → AI will use this")
+        store.push_notif("AI", "Ollama settings saved", "settings")
+
+    save.clicked.connect(do_save)
+    return page_chrome("AI", body, on_back, scroll=True)
+
+
+# Legacy combined page — redirect callers to SIP (kept for safety)
+def make_accounts_page(on_back: Callable[[], None]) -> QWidget:
+    return make_sip_account_page(on_back)

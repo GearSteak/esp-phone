@@ -64,11 +64,18 @@ SETTINGS_APPS = [
     AppEntry("set_orientation", "Screen", "Rotation · flip", "↻"),
     AppEntry("set_security", "Security", "PIN", "🔒"),
     AppEntry("set_network", "Network", "Wi‑Fi / LTE", "⌁"),
-    AppEntry("set_accounts", "Accounts", "SIP", "@"),
+    AppEntry("set_accounts", "Accounts", "SIP · Email · AI", "@"),
     AppEntry("set_power", "Power", "Off · Restart", "⏻"),
     AppEntry("set_about", "About", "", "i"),
     AppEntry("help", "Help", "Joystick map", "?"),
     AppEntry("linux", "Linux", "Full desktop", "▤"),
+]
+
+# Settings → Accounts hub
+ACCOUNTS_APPS = [
+    AppEntry("acct_sip", "SIP", "VoIP register", "☎"),
+    AppEntry("acct_email", "Email", "Gmail IMAP/SMTP", "@"),
+    AppEntry("acct_ai", "AI", "Ollama host", "✦"),
 ]
 
 MEDIA_APPS = [
@@ -109,5 +116,6 @@ FOLDER_MAP = {
     "settings": ("folder_settings", "Settings", SETTINGS_APPS),
     "media": ("folder_media", "Media", MEDIA_APPS),
     "games": ("folder_games", "Games", GAMES_APPS),
+    "set_accounts": ("set_accounts", "Accounts", ACCOUNTS_APPS),
     "set_debug": ("set_debug", "Debug", DEBUG_APPS),
 }

@@ -224,6 +224,7 @@ from esp_handset import ollama_chat  # noqa: E402
 from esp_handset import store  # noqa: E402
 from esp_handset import display_geom as geom  # noqa: E402
 from esp_handset.shell import (  # noqa: E402
+    ACCOUNTS_APPS,
     CALLS_APPS,
     CLOCK_APPS,
     DEBUG_APPS,
@@ -234,6 +235,7 @@ from esp_handset.shell import (  # noqa: E402
     TOOLS_APPS,
     PhoneShell,
 )
+from esp_handset import accounts_ui  # noqa: E402
 
 DATA = Path.home() / ".esp-handset"
 
@@ -514,7 +516,13 @@ def build_app(bridge: Optional[EspBridge], modem: Optional[Sim7600]) -> PhoneShe
     shell.register_page("solitaire", games_ui.make_solitaire(back))
     shell.register_page("uno", games_ui.make_uno(back))
     shell.register_page("set_security", features.make_security_page(back))
-    shell.register_page("set_accounts", features.make_accounts_page(back))
+    shell.register_page(
+        "set_accounts",
+        shell.build_folder_keyed("set_accounts", "Accounts", ACCOUNTS_APPS),
+    )
+    shell.register_page("acct_sip", accounts_ui.make_sip_account_page(back))
+    shell.register_page("acct_email", accounts_ui.make_email_account_page(back))
+    shell.register_page("acct_ai", accounts_ui.make_ai_account_page(back))
     shell.register_page("stub", pages.stub_page("App", "Unknown app key.", back))
 
     # Bridge events

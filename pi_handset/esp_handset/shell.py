@@ -26,6 +26,7 @@ from esp_handset import theme as handset_theme
 from esp_handset.digivice_home import DigiviceHome
 from esp_handset.radial_menu import RadialMenu
 from esp_handset.shell_data import (
+    ACCOUNTS_APPS,
     CALLS_APPS,
     CLOCK_APPS,
     COMM_APPS,
@@ -64,6 +65,7 @@ __all__ = [
     "MEDIA_APPS",
     "GAMES_APPS",
     "DEBUG_APPS",
+    "ACCOUNTS_APPS",
 ]
 
 
