@@ -2997,11 +2997,13 @@ def make_debug_notifs_page(
 
     sms_btn = _btn("Test SMS toast")
     lora_btn = _btn("Test LoRa toast")
-    call_btn = _btn("Test incoming call")
+    call_btn = _btn("Test call (unknown)")
+    call_known_btn = _btn("Test call (contact)")
     lay.addWidget(sms_btn)
     lay.addWidget(lora_btn)
     lay.addWidget(call_btn)
-    tip = QLabel("Call overlay: Confirm=Answer · Back=Decline")
+    lay.addWidget(call_known_btn)
+    tip = QLabel("Confirm=Answer · Back=Decline · ←→ switch")
     tip.setWordWrap(True)
     tip.setStyleSheet("color:#9ab;font-size:9px;")
     lay.addWidget(tip)
@@ -3017,7 +3019,7 @@ def make_debug_notifs_page(
     def do_lora() -> None:
         _toast("LoRa", "mesh-peer: hello from Debug", "lora")
 
-    def do_call() -> None:
+    def _fire_call(number: str, name: str = "") -> None:
         if not callable(show_incoming):
             status.setText("Incoming overlay not wired")
             return
@@ -3032,16 +3034,55 @@ def make_debug_notifs_page(
             store.push_notif("Call", "Declined test call", "call")
 
         show_incoming(
-            "+1 555 0100",
-            name="Debug Caller",
+            number,
+            name=name,
             on_answer=answered,
             on_decline=declined,
-            subtitle="Debug · not a real call",
+            subtitle="",
+        )
+
+    def do_call_unknown() -> None:
+        _fire_call("+1 555 0199")
+
+    def do_call_known() -> None:
+        from esp_handset.pages import _contact_photo_file, _load_contacts
+
+        contacts = _load_contacts()
+        if not contacts:
+            status.setText("No contacts — add one first")
+            return
+        c = contacts[0]
+        phone = str(c.get("phone") or "")
+        if not phone:
+            status.setText("First contact has no phone")
+            return
+        photo = _contact_photo_file(c)
+        if not callable(show_incoming):
+            status.setText("Incoming overlay not wired")
+            return
+        status.setText("Incoming call UI…")
+
+        def answered() -> None:
+            status.setText("Answered (debug)")
+            store.push_notif("Call", "Answered test call", "call")
+
+        def declined() -> None:
+            status.setText("Declined (debug)")
+            store.push_notif("Call", "Declined test call", "call")
+
+        show_incoming(
+            phone,
+            name=str(c.get("name") or ""),
+            photo=str(photo) if photo else None,
+            on_answer=answered,
+            on_decline=declined,
+            subtitle="",
         )
 
     sms_btn.clicked.connect(do_sms)
     lora_btn.clicked.connect(do_lora)
-    call_btn.clicked.connect(do_call)
+    call_btn.clicked.connect(do_call_unknown)
+    call_known_btn.clicked.connect(do_call_known)
     return page_chrome("Debug · Alerts", body, on_back, scroll=False)
 
 

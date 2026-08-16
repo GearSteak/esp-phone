@@ -196,14 +196,16 @@ class PhoneShell(QMainWindow):
         number: str,
         *,
         name: str = "",
+        photo: Optional[str] = None,
         on_answer: Optional[Callable[[], None]] = None,
         on_decline: Optional[Callable[[], None]] = None,
-        subtitle: str = "Incoming",
+        subtitle: str = "",
     ) -> None:
         self._incoming.setGeometry(self._root.rect())
         self._incoming.show_call(
             number,
             name=name,
+            photo=photo,
             on_answer=on_answer,
             on_decline=on_decline,
             subtitle=subtitle,
