@@ -564,7 +564,7 @@ def build_app(bridge: Optional[EspBridge], modem: Optional[Sim7600]) -> PhoneShe
                         ref()
                 except Exception:
                     pass
-            if "SIM7600" not in shell.signal_lab.text():
+            if "SIM7600" not in (shell.signal_lab.text() or ""):
                 status(line[:40])
 
     def on_sms(num: str, text: str) -> None:
@@ -603,10 +603,19 @@ def build_app(bridge: Optional[EspBridge], modem: Optional[Sim7600]) -> PhoneShe
         m0 = get_modem()
         assert m0 is not None
         m0.on_sms(lambda n, t: signals.sms.emit(n, t))
-        try:
-            status(m0.signal() or "SIM7600")
-        except Exception:
-            status("SIM7600")
+
+        def _csq_line():
+            m = get_modem()
+            if m is None:
+                return None
+            try:
+                return m.signal()
+            except Exception:
+                return None
+
+        shell.set_modem_signal_provider(_csq_line)
+    else:
+        shell.set_modem_signal_provider(lambda: None)
 
     from PyQt5.QtCore import QTimer
 

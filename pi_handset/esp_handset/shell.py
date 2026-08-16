@@ -92,27 +92,59 @@ class PhoneShell(QMainWindow):
         outer.setSpacing(0)
 
         self.status = QFrame()
-        self.status.setFixedHeight(20)
+        self.status.setFixedHeight(22)
         self.status.setStyleSheet(
             "background: rgba(0,0,0,0.55); border-bottom: 1px solid rgba(255,255,255,0.08);"
         )
         s_lay = QHBoxLayout(self.status)
-        s_lay.setContentsMargins(4, 0, 4, 0)
-        s_lay.setSpacing(4)
+        s_lay.setContentsMargins(3, 0, 3, 0)
+        s_lay.setSpacing(3)
+
+        # Left: time + date
+        left = QHBoxLayout()
+        left.setSpacing(3)
+        left.setContentsMargins(0, 0, 0, 0)
         self.clock_lab = QLabel("--:--")
-        self.clock_lab.setStyleSheet("font-weight: 700; font-size: 10px;")
-        self.clock_lab.setFixedWidth(34)
+        self.clock_lab.setStyleSheet(
+            "font-weight: 700; font-size: 10px; color:#e8eef5; font-family: monospace;"
+        )
+        self.date_lab = QLabel("")
+        self.date_lab.setStyleSheet("font-size: 9px; color:#8a9aaa;")
+        left.addWidget(self.clock_lab)
+        left.addWidget(self.date_lab)
+        s_lay.addLayout(left)
+
         self.title_lab = QLabel("")
         self.title_lab.setAlignment(Qt.AlignCenter)
         self.title_lab.setStyleSheet("font-weight: 700; font-size: 10px; color: #e8eef5;")
-        self.signal_lab = QLabel("·")
-        self.signal_lab.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        self.signal_lab.setStyleSheet("font-size: 9px; color: #9ab;")
-        self.signal_lab.setMinimumWidth(36)
-        s_lay.addWidget(self.clock_lab)
         s_lay.addWidget(self.title_lab, 1)
-        s_lay.addWidget(self.signal_lab)
+
+        # Right: Wi‑Fi + cellular bars (not modem text)
+        from esp_handset.status_icons import CellGlyph, WifiGlyph
+
+        self.wifi_glyph = WifiGlyph()
+        self.cell_glyph = CellGlyph()
+        # Keep signal_lab as a hidden compatibility hook for old checks
+        self.signal_lab = QLabel("")
+        self.signal_lab.hide()
+        right = QHBoxLayout()
+        right.setSpacing(4)
+        right.setContentsMargins(0, 0, 0, 0)
+        right.addWidget(self.wifi_glyph, 0, Qt.AlignVCenter)
+        right.addWidget(self.cell_glyph, 0, Qt.AlignVCenter)
+        s_lay.addLayout(right)
         outer.addWidget(self.status)
+
+        self._title_saved = ""
+        self._flash_timer = QTimer(self)
+        self._flash_timer.setSingleShot(True)
+        self._flash_timer.timeout.connect(self._restore_title)
+
+        self._net_timer = QTimer(self)
+        self._net_timer.timeout.connect(self._tick_network)
+        self._net_timer.start(12_000)
+        self._modem_signal_fn = None  # optional Callable[[], Optional[str]]
+        QTimer.singleShot(800, self._tick_network)
 
         self.stack = QStackedWidget()
         outer.addWidget(self.stack, 1)
@@ -319,10 +351,59 @@ class PhoneShell(QMainWindow):
 
     def _sync_title(self) -> None:
         key = self._nav[-1] if self._nav else "home"
-        self.title_lab.setText(self._page_title(key))
+        self._title_saved = self._page_title(key)
+        if not self._flash_timer.isActive():
+            self.title_lab.setText(self._title_saved)
 
     def set_status_right(self, text: str) -> None:
-        self.signal_lab.setText((text or "")[:18])
+        """Brief center flash — does not replace Wi‑Fi / signal glyphs."""
+        msg = (text or "").strip()
+        if not msg:
+            return
+        # Keep a hidden text mirror for anything still reading signal_lab
+        self.signal_lab.setText(msg[:18])
+        self.title_lab.setText(msg[:28])
+        self._flash_timer.start(2200)
+
+    def _restore_title(self) -> None:
+        self.title_lab.setText(self._title_saved)
+
+    def set_modem_signal_provider(self, fn) -> None:
+        """fn() → AT+CSQ line or None. Polled for cellular bars."""
+        self._modem_signal_fn = fn
+        QTimer.singleShot(200, self._tick_network)
+
+    def _tick_network(self) -> None:
+        """Refresh Wi‑Fi glyph now; CSQ bars off the UI thread (AT can block)."""
+        from esp_handset.status_icons import parse_csq_rssi, rssi_to_bars, wifi_is_up
+        import threading
+
+        try:
+            self.wifi_glyph.set_connected(wifi_is_up())
+        except Exception:
+            self.wifi_glyph.set_connected(False)
+
+        fn = getattr(self, "_modem_signal_fn", None)
+        if not callable(fn):
+            self.cell_glyph.set_bars(0, known=False)
+            return
+
+        def _work() -> None:
+            line = None
+            try:
+                line = fn()
+            except Exception:
+                line = None
+            rssi = parse_csq_rssi(line)
+            known = rssi is not None
+            bars = rssi_to_bars(rssi) if known else 0
+
+            def _apply() -> None:
+                self.cell_glyph.set_bars(bars, known=known)
+
+            QTimer.singleShot(0, _apply)
+
+        threading.Thread(target=_work, daemon=True).start()
 
     def register_page(self, key: str, widget: QWidget) -> None:
         self.pages[key] = widget
@@ -398,7 +479,10 @@ class PhoneShell(QMainWindow):
         self.go("home", replace=True)
 
     def _tick_clock(self) -> None:
-        self.clock_lab.setText(datetime.now().strftime("%H:%M"))
+        now = datetime.now()
+        self.clock_lab.setText(now.strftime("%H:%M"))
+        # Compact date for 240–320 width: "Sat 16"
+        self.date_lab.setText(now.strftime("%a") + f" {now.day}")
 
     def _build_home(self) -> QWidget:
         page = QWidget()
