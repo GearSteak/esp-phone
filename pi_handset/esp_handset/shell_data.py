@@ -24,8 +24,8 @@ HOME_APPS: List[AppEntry] = [
     AppEntry("media", "Media", "Gallery · notes · GPS", "▶"),
     AppEntry("games", "Games", "GB · built-ins", "♠"),
     AppEntry("tools", "Tools", "Calc · steps", "⚒"),
-    AppEntry("settings", "Settings", "Device · Linux", "⚙"),
     AppEntry("email", "Email", "Gmail · Inbox", "@"),
+    AppEntry("settings", "Settings", "Device · Linux", "⚙"),
 ]
 
 CALLS_APPS = [
