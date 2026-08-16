@@ -495,7 +495,7 @@ def make_gb_page(
     tip = QLabel(
         "In Digivice (no RetroArch).\n"
         f"{py_msg}\n"
-        "Sound → USB headphones. Confirm=A · Select=B · S=Start · Back=quit"
+        "Sound → USB headphones. Confirm=A · Select=B · Home=Start · Back=quit"
         if ok_py
         else f"{py_msg}\nROMs: Transfer still works."
     )
@@ -620,12 +620,18 @@ def make_gb_page(
             return True
         return False
 
+    def on_navigate_away() -> None:
+        # Home / hard nav away: must stop PyBoy (stack hide does not hit play_view.hideEvent)
+        if state["playing"] or play_view.isVisible() or play_view.playing:
+            show_list()
+
     lst.itemActivated.connect(lambda _i: launch())
     play.clicked.connect(launch)
     refresh.clicked.connect(refresh_list)
     recv.clicked.connect(do_receive)
 
     chrome.on_hardware_back = on_hardware_back  # type: ignore[attr-defined]
+    chrome.on_navigate_away = on_navigate_away  # type: ignore[attr-defined]
     chrome.gb_board = play_view  # type: ignore[attr-defined]
     refresh_list()
     return chrome

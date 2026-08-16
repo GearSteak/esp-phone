@@ -346,7 +346,23 @@ class PhoneShell(QMainWindow):
             return
         self._sync_title()
 
+    def _leave_current_page(self) -> None:
+        """Stop overlays / emulators before ripping the nav stack away (Home)."""
+        page_key = self._nav[-1] if self._nav else ""
+        if not page_key or page_key == "home":
+            return
+        page = self.pages.get(page_key)
+        if page is None:
+            return
+        leave = getattr(page, "on_navigate_away", None)
+        if callable(leave):
+            try:
+                leave()
+            except Exception:
+                pass
+
     def home(self) -> None:
+        self._leave_current_page()
         self.go("home", replace=True)
 
     def _tick_clock(self) -> None:
@@ -473,7 +489,22 @@ class PhoneShell(QMainWindow):
                 self._esc_exits = 0
 
         # Home = Digivice home screen only (never exit to Linux desktop)
+        # Exception: in-UI PyBoy — Home is Start (buttons daemon stays in phone mode)
         if key == Qt.Key_Home:
+            page_key = self._nav[-1] if self._nav else "home"
+            if page_key == "gb":
+                page = self.pages.get("gb")
+                board = getattr(page, "gb_board", None) if page else None
+                if (
+                    board is not None
+                    and board.isVisible()
+                    and getattr(board, "playing", False)
+                ):
+                    tap = getattr(board, "_tap", None)
+                    if callable(tap):
+                        tap("start")
+                    event.accept()
+                    return
             self.home()
             event.accept()
             return
