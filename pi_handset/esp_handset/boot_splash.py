@@ -132,15 +132,17 @@ def _splash_logo_path() -> Optional[Path]:
 
 
 class BootSplash(QWidget):
-    """Brand logo + status. Fullscreen overlay (not an SPI kiosk source)."""
+    """Brand logo + status. Fullscreen overlay that covers the taskbar."""
 
     finished = pyqtSignal(object)
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        # Window (not Tool) so we can truly cover the desktop / taskbar
+        # Bypass WM so panel struts cannot reserve a strip under/over us
         self.setWindowFlags(
-            Qt.Window | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint
+            Qt.FramelessWindowHint
+            | Qt.WindowStaysOnTopHint
+            | Qt.X11BypassWindowManagerHint
         )
         self.setAttribute(Qt.WA_DeleteOnClose, True)
         self.setAttribute(Qt.WA_ShowWithoutActivating, False)
@@ -167,26 +169,29 @@ class BootSplash(QWidget):
         self._tick.start(120)
 
     def cover_screen(self, screen) -> None:
-        """Pin this splash to one QScreen and go true fullscreen."""
+        """Cover the entire physical screen including taskbar strut area."""
         try:
             self.setScreen(screen)
         except Exception:
             pass
+        # Prefer full geometry (not availableGeometry — that excludes the panel)
         g = screen.geometry()
-        self.setGeometry(g)
+        # Pad a few px past edges — some panels sit outside the reported rect
+        self.setGeometry(g.x() - 2, g.y() - 2, g.width() + 4, g.height() + 4)
         self.show()
         QApplication.processEvents()
         try:
             h = self.windowHandle()
             if h is not None:
                 h.setScreen(screen)
-                h.setGeometry(g)
         except Exception:
             pass
-        self.showFullScreen()
-        self.setGeometry(g)
         self.raise_()
         self.activateWindow()
+        # Keep re-asserting on top while panels die
+        QTimer.singleShot(50, self.raise_)
+        QTimer.singleShot(200, self.raise_)
+        QTimer.singleShot(500, self.raise_)
 
 
     def set_finish_callback(self, cb: Callable[[UpdateCheck, bool], None]) -> None:
@@ -294,37 +299,6 @@ class BootSplash(QWidget):
             p.drawText(8, h - 20, w - 16, 14, Qt.AlignHCenter, self._sub)
 
 
-def _hide_desktop_chrome() -> None:
-    """Tuck LXDE / panel taskbars so splash isn't peeking under them."""
-    for cmd in (
-        ["lxpanelctl", "hide"],
-        ["wf-panel-pi", "-q"],  # may no-op
-    ):
-        try:
-            subprocess.run(
-                cmd,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                timeout=1.5,
-                check=False,
-            )
-        except Exception:
-            pass
-
-
-def _show_desktop_chrome() -> None:
-    try:
-        subprocess.run(
-            ["lxpanelctl", "show"],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            timeout=1.5,
-            check=False,
-        )
-    except Exception:
-        pass
-
-
 def _pump(app: QApplication, seconds: float) -> None:
     end = time.time() + max(0.0, seconds)
     while time.time() < end:
@@ -334,7 +308,15 @@ def _pump(app: QApplication, seconds: float) -> None:
 
 def run_boot_splash(app: QApplication) -> tuple:
     """Show fullscreen splash on every screen, check updates, return result."""
-    _hide_desktop_chrome()
+    try:
+        from esp_handset.desktop_chrome import hide_desktop_chrome
+
+        hide_desktop_chrome()
+    except Exception:
+        pass
+    app.processEvents()
+    time.sleep(0.15)  # let panels die before we paint
+    app.processEvents()
 
     from PyQt5.QtGui import QGuiApplication
 
@@ -347,11 +329,9 @@ def run_boot_splash(app: QApplication) -> tuple:
     splash: Optional[BootSplash] = None
 
     if not screens:
-        # Headless / no QScreen yet — still paint a large black window
         splash = BootSplash()
-        splash.resize(1920, 1080)
-        splash.move(0, 0)
-        splash.showFullScreen()
+        splash.setGeometry(0, 0, 1920, 1200)
+        splash.show()
         splash.raise_()
         overlays.append(splash)
     else:

@@ -99,7 +99,10 @@ class ScaledScreenHost(QWidget):
         self.setAttribute(Qt.WA_StyledBackground, True)
         self.setStyleSheet("background-color: #000;")
         self.setWindowFlags(
-            Qt.Window | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint
+            Qt.Window
+            | Qt.FramelessWindowHint
+            | Qt.WindowStaysOnTopHint
+            | Qt.X11BypassWindowManagerHint
         )
         self.setFocusPolicy(Qt.StrongFocus)
         try:
@@ -114,18 +117,17 @@ class ScaledScreenHost(QWidget):
 
     def place(self) -> None:
         g = self._screen.geometry()
-        self.setGeometry(g)
+        # Cover panel strut — use full geometry + slight pad
+        self.setGeometry(g.x() - 2, g.y() - 2, g.width() + 4, g.height() + 4)
         self.show()
         QApplication.processEvents()
         try:
             h = self.windowHandle()
             if h is not None:
                 h.setScreen(self._screen)
-                h.setGeometry(g)
         except Exception:
             pass
-        self.showFullScreen()
-        self.setGeometry(g)
+        # Bypass WM already set — avoid showFullScreen (conflicts with Bypass)
         self.raise_()
         print(
             f"[handset] HDMI/host FULL {self._screen.name()!r} "
@@ -256,6 +258,13 @@ class MultiDisplayKiosk:
         W, H = _default_wh()
         backend = _backend()
         print(f"[handset] kiosk start backend={backend} canvas={W}x{H}", flush=True)
+
+        try:
+            from esp_handset.desktop_chrome import hide_desktop_chrome
+
+            hide_desktop_chrome()
+        except Exception:
+            pass
 
         # Source = logical Digivice only — NOT a visible full-screen steal on HDMI
         self.source.setWindowFlags(Qt.Window | Qt.FramelessWindowHint | Qt.Tool)

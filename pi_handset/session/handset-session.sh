@@ -263,6 +263,9 @@ apply_digivice_layout() {
 show_desktop_chrome() {
   command -v lxpanelctl >/dev/null 2>&1 && lxpanelctl show || true
   command -v wmctrl >/dev/null 2>&1 && wmctrl -k off || true
+  # Restart panels Digivice may have killed (Bookworm wf-panel-pi / lxpanel)
+  pgrep -x lxpanel >/dev/null 2>&1 || (nohup lxpanel --profile LXDE-pi >/dev/null 2>&1 &) || true
+  pgrep -x wf-panel-pi >/dev/null 2>&1 || (nohup wf-panel-pi >/dev/null 2>&1 &) || true
   local r
   for r in \
     "$PREFIX/session/restore-desktop-displays.sh" \
@@ -300,6 +303,18 @@ show_desktop_chrome() {
       break
     fi
   done
+}
+
+hide_desktop_chrome() {
+  log "hide desktop taskbar / panels for Digivice"
+  command -v lxpanelctl >/dev/null 2>&1 && lxpanelctl hide || true
+  command -v wmctrl >/dev/null 2>&1 && wmctrl -k on || true
+  pkill -x wf-panel-pi 2>/dev/null || true
+  pkill -x wf-panel 2>/dev/null || true
+  pkill -x waybar 2>/dev/null || true
+  pkill -x lxpanel 2>/dev/null || true
+  pkill -x lxqt-panel 2>/dev/null || true
+  pcmanfm --desktop-off 2>/dev/null || true
 }
 
 # Always restore *system* cursor after SPI layout (no yellow overlay —
@@ -419,6 +434,8 @@ launch_phone() {
   stop_desktop_spi_mirror
   pkill -f "handset_app.py" 2>/dev/null || true
   sleep 0.35
+  # Kill taskbar before splash / Digivice paints (Bookworm = wf-panel-pi)
+  hide_desktop_chrome
   # Digivice phone UI — hide mouse (system + any leftover yellow overlay)
   hide_phone_cursor
   ensure_buttons_daemon
