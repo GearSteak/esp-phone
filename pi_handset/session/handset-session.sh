@@ -504,6 +504,77 @@ case "$cmd" in
     echo "Left Digivice. SPI shows desktop mirror. Return: handset-phone"
     log "desktop ready + SPI mirror + cursor"
     ;;
+  browser)
+    # Home → Browser: midori/epiphany/chromium fullscreen, then Digivice again
+    log "browser: hand off Digivice → light browser → return"
+    mode_set desktop
+    kill_phone_ui
+    sleep 0.4
+    pkill -9 -f handset_app.py 2>/dev/null || true
+    digivice_display_env
+    for m in \
+      "$PREFIX/session/digivice-layout.sh" \
+      /usr/local/bin/digivice-layout
+    do
+      if [[ -f "$m" ]]; then
+        bash "$m" --hdmi-restore >>"$LOG" 2>&1 || true
+        break
+      fi
+    done
+    show_desktop_chrome
+    start_desktop_spi_mirror
+    ensure_desktop_cursor
+    export DISPLAY="${DISPLAY:-:0}"
+    BROWSER_BIN=""
+    for c in midori epiphany-browser epiphany chromium-browser chromium firefox-esr firefox; do
+      if command -v "$c" >/dev/null 2>&1; then
+        BROWSER_BIN="$(command -v "$c")"
+        break
+      fi
+    done
+    START_URL="${ESP_HANDSET_BROWSER_URL:-https://www.google.com/}"
+    if [[ -z "$BROWSER_BIN" ]]; then
+      log "browser: none installed (try: sudo apt install midori)"
+      # brief notify via zenity if present
+      if command -v zenity >/dev/null 2>&1; then
+        zenity --error --text="No browser installed.\nRun: sudo apt install midori" --timeout=5 2>/dev/null || true
+      fi
+    else
+      log "browser: launching $BROWSER_BIN $START_URL"
+      base="$(basename "$BROWSER_BIN")"
+      case "$base" in
+        midori)
+          "$BROWSER_BIN" -e Fullscreen "$START_URL" >>"$LOG" 2>&1 || \
+            "$BROWSER_BIN" "$START_URL" >>"$LOG" 2>&1
+          ;;
+        epiphany|epiphany-browser)
+          "$BROWSER_BIN" --new-window "$START_URL" >>"$LOG" 2>&1
+          ;;
+        chromium|chromium-browser)
+          "$BROWSER_BIN" --kiosk --noerrdialogs --disable-infobars \
+            --check-for-update-interval=31536000 "$START_URL" >>"$LOG" 2>&1 || \
+            "$BROWSER_BIN" --start-fullscreen "$START_URL" >>"$LOG" 2>&1
+          ;;
+        *)
+          "$BROWSER_BIN" "$START_URL" >>"$LOG" 2>&1
+          ;;
+      esac
+      log "browser: exited ($base)"
+    fi
+    # Back to Digivice
+    mode_set phone
+    pkill -f desktop_spi_mirror.py 2>/dev/null || true
+    pkill -f desktop-spi-mirror 2>/dev/null || true
+    sleep 0.3
+    digivice_display_env
+    apply_digivice_layout
+    hide_phone_cursor 2>/dev/null || true
+    if [[ -x /usr/local/bin/digivice-start ]]; then
+      /usr/local/bin/digivice-start >>"$LOG" 2>&1 || launch_phone
+    else
+      launch_phone
+    fi
+    ;;
   spi-phone)
     # Digivice with SPI as sole head (HDMI off) — use when dual-head blanks SPI
     export ESP_HANDSET_SPI_ONLY=1
@@ -540,8 +611,9 @@ case "$cmd" in
   *)
     cat <<EOF
 Usage: handset-session <command>
-  phone / spi-phone / spi-prove / desktop / layout / set-phone / set-desktop / mode / log
+  phone / spi-phone / spi-prove / desktop / browser / layout / set-phone / set-desktop / mode / log
 
+  browser   — leave Digivice, open midori/epiphany/chromium, return when closed
   spi-prove  — red on SPI (HDMI off 6s) then restore HDMI  ← run this first if SPI dark
   spi-phone  — Digivice on SPI only (HDMI off). handset-desktop restores HDMI.
 

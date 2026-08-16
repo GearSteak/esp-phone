@@ -433,37 +433,20 @@ def build_app(bridge: Optional[EspBridge], modem: Optional[Sim7600]) -> PhoneShe
 
     def browser_open():
         try:
+            status("Opening browser…")
             handset_apps.open_browser()
-            status("Browser…")
-        except Exception:
+        except Exception as e:
+            print(f"[handset] browser: {e}", flush=True)
             shell.go("browser_stub")
 
+    shell.on_browser = browser_open  # type: ignore[attr-defined]
     shell.register_page(
         "browser_stub",
         pages.stub_page(
             "Browser",
-            "Install a light browser from Linux Desktop:\n  sudo apt install midori\n"
-            "Then reopen Browser from home.",
+            "No browser found.\nFrom Linux Desktop:\n  sudo apt install midori\n"
+            "Then try Browser again from home.",
             back,
-        ),
-    )
-
-    def launch_page(title: str, blurb: str, action):
-        body = QWidget()
-        lay = QVBoxLayout(body)
-        lay.addWidget(QLabel(blurb))
-        btn = QPushButton(f"Open {title}")
-        btn.clicked.connect(action)
-        lay.addWidget(btn)
-        lay.addStretch(1)
-        return pages.page_chrome(title, body, back)
-
-    shell.register_page(
-        "browser",
-        launch_page(
-            "Browser",
-            "Lightweight web (midori/epiphany if installed).",
-            browser_open,
         ),
     )
 

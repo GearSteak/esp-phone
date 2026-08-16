@@ -81,6 +81,7 @@ class PhoneShell(QMainWindow):
         self._home: Optional[DigiviceHome] = None
         self.on_linux_desktop: Optional[Callable[[], None]] = None
         self.on_linux_desktop_now: Optional[Callable[[], None]] = None
+        self.on_browser: Optional[Callable[[], None]] = None
         self._net_busy = False
         self.net_status.connect(self._apply_net_status)
 
@@ -556,6 +557,11 @@ class PhoneShell(QMainWindow):
             if handler:
                 handler()
             return
+        if key == "browser":
+            handler = getattr(self, "on_browser", None)
+            if callable(handler):
+                handler()
+                return
         if key in self.pages:
             self.go(key)
             return

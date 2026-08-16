@@ -138,7 +138,32 @@ def open_maps() -> None:
 
 
 def open_browser() -> None:
+    """Leave Digivice, open a light browser fullscreen, return when it exits."""
+    print("[handset] OPEN browser…", flush=True)
+    _release_all_keyboards()
+    try:
+        from esp_handset import st7789_spi as st
+
+        if st.ready():
+            st.close(blank_panel=False)
+    except Exception as e:
+        print(f"[handset] spi handoff (browser): {e}", flush=True)
+
     run_session("browser")
+
+    try:
+        from PyQt5.QtWidgets import QApplication
+
+        app = QApplication.instance()
+        if app is not None:
+            app.quit()
+    except Exception:
+        pass
+    try:
+        time.sleep(0.15)
+        os._exit(0)
+    except Exception:
+        pass
 
 
 def open_emulators() -> None:

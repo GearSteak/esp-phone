@@ -20,7 +20,7 @@ HOME_APPS: List[AppEntry] = [
     AppEntry("sms", "SMS", "Texts · LoRa", "✉"),
     AppEntry("time", "Time", "Alarms · calendar", "⏱"),
     AppEntry("camera", "Camera", "Snap · preview", "◉"),
-    AppEntry("browser", "Browser", "Light web", "⎋"),
+    AppEntry("browser", "Browser", "Open web", "⎋"),
     AppEntry("media", "Media", "Gallery · notes · GPS", "▶"),
     AppEntry("games", "Games", "GB · built-ins", "♠"),
     AppEntry("tools", "Tools", "Calc · steps", "⚒"),
