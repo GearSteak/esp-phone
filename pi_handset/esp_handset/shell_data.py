@@ -72,7 +72,6 @@ SETTINGS_APPS = [
 ]
 
 MEDIA_APPS = [
-    AppEntry("camera", "Camera", "Pi CSI", "◉"),
     AppEntry("gallery", "Gallery", "", "▣"),
     AppEntry("recorder", "Voice", "", "◉"),
     AppEntry("gps", "GPS", "SIM7600", "⌖"),
