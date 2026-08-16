@@ -672,27 +672,7 @@ def main() -> int:
     modem: Optional[Sim7600] = None
     want_update = False
 
-    def _prepare(status_cb) -> None:
-        nonlocal bridge, modem
-        status_cb("hello ·", "LoRa bridge")
-        try:
-            bridge = EspBridge()
-            bridge.open()
-        except Exception as e:
-            print(f"[handset] LoRa ESP offline ({e})", flush=True)
-            bridge = None
-        status_cb("hello ·", "cellular modem")
-        try:
-            modem = Sim7600()
-            # Modem USB often enumerates 10–25s after boot — wait & probe AT
-            modem.open(retries=12, retry_s=2.5)
-            print(f"[handset] SIM7600 on {modem.port}", flush=True)
-        except Exception as e:
-            print(f"[handset] SIM7600 offline ({e})", flush=True)
-            modem = None
-        status_cb("almost ·", "building UI")
-
-    # Cute splash + update check (ESP_HANDSET_SKIP_BOOT_SPLASH=1 to skip)
+    # Cute splash + update check ONLY (no modem/SPI here — that froze the panel)
     skip_splash = os.environ.get("ESP_HANDSET_SKIP_BOOT_SPLASH", "").strip() in (
         "1",
         "true",
@@ -702,7 +682,7 @@ def main() -> int:
         try:
             from esp_handset.boot_splash import run_boot_splash
 
-            _check, want_update = run_boot_splash(app, prepare=_prepare)
+            _check, want_update = run_boot_splash(app)
             print(
                 f"[handset] boot check: {_check.status} {_check.detail!r} "
                 f"want_update={want_update}",
@@ -710,9 +690,22 @@ def main() -> int:
             )
         except Exception as e:
             print(f"[handset] boot splash failed ({e}) — continuing", flush=True)
-            _prepare(lambda *_a, **_k: None)
-    else:
-        _prepare(lambda *_a, **_k: None)
+
+    print("[handset] waking radios…", flush=True)
+    try:
+        bridge = EspBridge()
+        bridge.open()
+    except Exception as e:
+        print(f"[handset] LoRa ESP offline ({e})", flush=True)
+        bridge = None
+    try:
+        modem = Sim7600()
+        # Modem USB often enumerates 10–25s after boot — wait & probe AT
+        modem.open(retries=12, retry_s=2.5)
+        print(f"[handset] SIM7600 on {modem.port}", flush=True)
+    except Exception as e:
+        print(f"[handset] SIM7600 offline ({e})", flush=True)
+        modem = None
 
     win = build_app(bridge, modem)
     app.installEventFilter(_KioskKeyFilter(win))

@@ -1,4 +1,9 @@
-"""Cute Digivice boot splash + lightweight update check."""
+"""Cute Digivice boot splash + lightweight update check.
+
+Important: do NOT attach ST7789/SPI kiosk to this window — that stole the panel
+and left Digivice looking frozen on the egg after the real UI started.
+Splash is a short X11/Qt overlay; the phone canvas owns SPI after build_app.
+"""
 
 from __future__ import annotations
 
@@ -37,7 +42,6 @@ def _repo_candidates() -> list:
             Path("/home/gearsteak/esp-phone"),
         ]
     )
-    # Dedup
     seen = set()
     uniq = []
     for p in out:
@@ -55,7 +59,7 @@ def find_git_repo() -> Optional[Path]:
     return None
 
 
-def check_for_updates(*, timeout_s: float = 18.0) -> UpdateCheck:
+def check_for_updates(*, timeout_s: float = 6.0) -> UpdateCheck:
     """Fetch origin and compare HEAD to origin/main (best-effort, never raises)."""
     if os.environ.get("ESP_HANDSET_SKIP_BOOT_UPDATE", "").strip() in (
         "1",
@@ -68,7 +72,7 @@ def check_for_updates(*, timeout_s: float = 18.0) -> UpdateCheck:
     if repo is None:
         return UpdateCheck("skip", "No git repo")
 
-    def _run(args: list, t: float = timeout_s) -> subprocess.CompletedProcess:
+    def _run(args: list, t: float) -> subprocess.CompletedProcess:
         return subprocess.run(
             args,
             cwd=str(repo),
@@ -79,23 +83,18 @@ def check_for_updates(*, timeout_s: float = 18.0) -> UpdateCheck:
         )
 
     try:
-        # Quiet fetch — fail soft if offline
-        fr = _run(
-            ["git", "fetch", "--quiet", "origin", "main"],
-            min(timeout_s, 16.0),
-        )
+        fr = _run(["git", "fetch", "--quiet", "origin", "main"], timeout_s)
         if fr.returncode != 0:
-            # Try without branch name
-            fr = _run(["git", "fetch", "--quiet", "origin"], min(timeout_s, 12.0))
+            fr = _run(["git", "fetch", "--quiet", "origin"], min(4.0, timeout_s))
             if fr.returncode != 0:
                 err = (fr.stderr or fr.stdout or "offline").strip().splitlines()
                 tip = err[-1][:60] if err else "offline"
                 return UpdateCheck("offline", tip)
 
-        local = _run(["git", "rev-parse", "HEAD"], 5.0)
-        remote = _run(["git", "rev-parse", "origin/main"], 5.0)
+        local = _run(["git", "rev-parse", "HEAD"], 3.0)
+        remote = _run(["git", "rev-parse", "origin/main"], 3.0)
         if remote.returncode != 0:
-            remote = _run(["git", "rev-parse", "origin/master"], 5.0)
+            remote = _run(["git", "rev-parse", "origin/master"], 3.0)
         if local.returncode != 0 or remote.returncode != 0:
             return UpdateCheck("error", "Could not read git rev")
 
@@ -118,27 +117,32 @@ def check_for_updates(*, timeout_s: float = 18.0) -> UpdateCheck:
 
 
 class BootSplash(QWidget):
-    """Fullscreen-ish splash: Digivice egg + status line + optional Confirm."""
+    """Short overlay: Digivice egg + status. Not an SPI kiosk source."""
 
-    finished = pyqtSignal(object)  # UpdateCheck + want_update bool via tuple
+    finished = pyqtSignal(object)
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
+        # Tool + topmost for HDMI glance; SPI panel uses PhoneShell kiosk only
+        self.setWindowFlags(
+            Qt.FramelessWindowHint | Qt.Tool | Qt.WindowStaysOnTopHint
+        )
         self.setAttribute(Qt.WA_DeleteOnClose, True)
         self.setFocusPolicy(Qt.StrongFocus)
-        self._phase = "hello"
         self._line = "hello ·"
         self._sub = ""
         self._pulse = 0
         self._result: Optional[UpdateCheck] = None
-        self._want_update = False
         self._done = False
         self._awaiting_choice = False
+        self._finish_cb: Optional[Callable[[UpdateCheck, bool], None]] = None
 
         self._tick = QTimer(self)
         self._tick.timeout.connect(self._on_pulse)
         self._tick.start(80)
+
+    def set_finish_callback(self, cb: Callable[[UpdateCheck, bool], None]) -> None:
+        self._finish_cb = cb
 
     def set_line(self, line: str, sub: str = "") -> None:
         self._line = line
@@ -163,9 +167,17 @@ class BootSplash(QWidget):
         if self._done:
             return
         self._done = True
-        self._want_update = want_update
         self._tick.stop()
-        self.finished.emit((self._result or UpdateCheck("skip"), want_update))
+        res = self._result or UpdateCheck("skip")
+        if self._finish_cb is not None:
+            try:
+                self._finish_cb(res, want_update)
+            except Exception:
+                pass
+        try:
+            self.finished.emit((res, want_update))
+        except Exception:
+            pass
 
     def _on_pulse(self) -> None:
         self._pulse = (self._pulse + 1) % 40
@@ -182,7 +194,6 @@ class BootSplash(QWidget):
                 self.request_finish(want_update=False)
                 event.accept()
                 return
-        # Allow early dismiss once we have a non-choice result
         if self._result is not None and not self._awaiting_choice:
             if key in (Qt.Key_Return, Qt.Key_Enter, Qt.Key_Escape):
                 self.request_finish(want_update=False)
@@ -195,58 +206,40 @@ class BootSplash(QWidget):
         p.setRenderHint(QPainter.Antialiasing)
         w, h = self.width(), self.height()
 
-        # Soft night gradient
         p.fillRect(self.rect(), QColor("#0a121c"))
         p.setPen(Qt.NoPen)
         p.setBrush(QColor(30, 55, 80, 40))
         p.drawEllipse(int(w * 0.1), int(h * 0.05), int(w * 0.8), int(h * 0.55))
 
-        # Digivice egg
         egg_w, egg_h = min(120, w - 40), min(150, h - 70)
         cx, cy = w // 2, h // 2 - 8
-        egg = (
-            cx - egg_w // 2,
-            cy - egg_h // 2,
-            egg_w,
-            egg_h,
-        )
+        egg = (cx - egg_w // 2, cy - egg_h // 2, egg_w, egg_h)
         p.setBrush(QColor("#1a2838"))
         p.setPen(QPen(QColor("#3a5a7a"), 2))
         p.drawRoundedRect(*egg, egg_w // 2, egg_h // 2)
 
-        # Screen inset
-        inset = (
-            egg[0] + 18,
-            egg[1] + 28,
-            egg_w - 36,
-            int(egg_h * 0.42),
-        )
+        inset = (egg[0] + 18, egg[1] + 28, egg_w - 36, int(egg_h * 0.42))
         p.setBrush(QColor("#0e1a14"))
         p.setPen(QPen(QColor("#2a4a3a"), 1))
         p.drawRoundedRect(*inset, 8, 8)
 
-        # Tiny creature blink
         blink = self._pulse < 36
         p.setPen(QPen(QColor("#7CFC9A" if blink else "#1a3a28"), 2))
         p.setBrush(Qt.NoBrush)
         eye_y = inset[1] + inset[3] // 2
         p.drawEllipse(cx - 14, eye_y - 6, 10, 10 if blink else 3)
         p.drawEllipse(cx + 4, eye_y - 6, 10, 10 if blink else 3)
-        # Smile
         p.drawArc(cx - 10, eye_y + 2, 20, 12, 200 * 16, 140 * 16)
 
-        # Antenna LED
         led = QColor("#FFE600") if (self._pulse // 5) % 2 == 0 else QColor("#8a7040")
         p.setBrush(led)
         p.setPen(QPen(QColor("#000000"), 1))
         p.drawEllipse(cx - 5, egg[1] - 6, 10, 10)
 
-        # Brand
         p.setPen(QColor("#e8eef5"))
         p.setFont(QFont("DejaVu Sans", 11, QFont.Bold))
         p.drawText(0, egg[1] + egg_h + 4, w, 16, Qt.AlignHCenter, "DIGIVICE")
 
-        # Status
         p.setPen(QColor("#9ab"))
         p.setFont(QFont("DejaVu Sans", 10))
         p.drawText(8, h - 36, w - 16, 14, Qt.AlignHCenter, self._line)
@@ -256,115 +249,93 @@ class BootSplash(QWidget):
             p.drawText(8, h - 20, w - 16, 14, Qt.AlignHCenter, self._sub)
 
 
-def run_boot_splash(
-    app: QApplication,
-    *,
-    prepare: Optional[Callable[[Callable[[str, str], None]], None]] = None,
-) -> tuple:
-    """Show splash, check updates, optionally run prepare(status_cb).
+def _pump(app: QApplication, seconds: float) -> None:
+    end = time.time() + max(0.0, seconds)
+    while time.time() < end:
+        app.processEvents()
+        time.sleep(0.03)
 
-    Returns (UpdateCheck, want_update: bool).
+
+def run_boot_splash(app: QApplication) -> tuple:
+    """Show splash, check updates (capped), return (UpdateCheck, want_update).
+
+    Does not open modem/SPI — callers do that after so the panel never sticks.
     """
-    splash = BootSplash()
-    # Match Digivice canvas size when possible
     try:
         from esp_handset import display_geom as geom
 
-        geom.apply_kiosk(splash)
+        w, h = int(getattr(geom, "W", 320)), int(getattr(geom, "H", 240))
     except Exception:
-        splash.resize(320, 240)
-        splash.show()
-    else:
-        splash.show()
+        w, h = 320, 240
+
+    splash = BootSplash()
+    splash.resize(w, h)
+    splash.show()
     splash.raise_()
     splash.activateWindow()
     splash.setFocus(Qt.OtherFocusReason)
     app.processEvents()
 
-    splash.set_line("hello ·", "waking up")
+    splash.set_line("hello ·", "checking updates")
     app.processEvents()
 
     box: dict = {"result": None}
 
     def _check() -> None:
-        box["result"] = check_for_updates()
+        box["result"] = check_for_updates(timeout_s=6.0)
 
     th = threading.Thread(target=_check, daemon=True)
     th.start()
 
-    # Bring up radio/UI deps while git fetch runs (same cute screen)
-    if prepare is not None:
-
-        def _status(line: str, sub: str = "") -> None:
-            # Don't clobber update-check phrases too aggressively
-            if th.is_alive():
-                splash.set_line(line, sub or "checking updates…")
-            else:
-                splash.set_line(line, sub)
-            app.processEvents()
-
-        try:
-            prepare(_status)
-        except Exception as e:
-            splash.set_line("ready ·", str(e)[:40])
-            app.processEvents()
-
-    phrases = [
-        ("looking around ·", "wifi · git"),
-        ("checking updates ·", "one moment"),
-    ]
+    # Hard cap so we never sit here forever (git/DNS hang, etc.)
     t0 = time.time()
-    pi = 0
-    while th.is_alive() and (time.time() - t0) < 22.0:
-        if prepare is None:
-            idx = min(pi, len(phrases) - 1)
-            if int(time.time() - t0) // 2 != pi:
-                splash.set_line(*phrases[idx])
-                pi = int(time.time() - t0) // 2
+    while th.is_alive() and (time.time() - t0) < 8.0:
+        elapsed = time.time() - t0
+        if elapsed > 2.5:
+            splash.set_line("looking around ·", "wifi · git")
         app.processEvents()
-        time.sleep(0.05)
-    th.join(timeout=1.0)
+        time.sleep(0.04)
+    th.join(timeout=0.5)
 
-    result = box["result"] or UpdateCheck("error", "No result")
+    result = box["result"] or UpdateCheck("offline", "Taking too long")
     splash.apply_result(result)
     app.processEvents()
 
     outcome: dict = {"done": False, "want": False, "result": result}
 
-    def _on_fin(payload) -> None:
-        res, want = payload
+    def _fin(res: UpdateCheck, want: bool) -> None:
         outcome["result"] = res
         outcome["want"] = want
         outcome["done"] = True
 
-    splash.finished.connect(_on_fin)
+    splash.set_finish_callback(_fin)
 
     if result.status == "available":
-        # Wait for Confirm / Back, max ~10s then later
-        deadline = time.time() + 10.0
+        splash.set_line("update ready ·", "Confirm = update  ·  Back = later")
+        deadline = time.time() + 8.0
         while not outcome["done"] and time.time() < deadline:
             app.processEvents()
             time.sleep(0.04)
         if not outcome["done"]:
             splash.request_finish(want_update=False)
-            while not outcome["done"]:
-                app.processEvents()
-                time.sleep(0.02)
     else:
-        # Brief beat so the cute screen can be seen
-        hold = 1.4 if result.status == "up_to_date" else 1.0
-        end = time.time() + hold
-        while not outcome["done"] and time.time() < end:
-            app.processEvents()
-            time.sleep(0.04)
+        _pump(app, 0.9 if result.status == "up_to_date" else 0.7)
         if not outcome["done"]:
             splash.request_finish(want_update=False)
-            while not outcome["done"]:
-                app.processEvents()
-                time.sleep(0.02)
+
+    # Ensure we never block on the callback
+    guard = time.time() + 1.0
+    while not outcome["done"] and time.time() < guard:
+        app.processEvents()
+        time.sleep(0.02)
+    if not outcome["done"]:
+        outcome["done"] = True
+        outcome["want"] = False
 
     try:
+        splash.hide()
         splash.close()
+        splash.deleteLater()
     except Exception:
         pass
     app.processEvents()
