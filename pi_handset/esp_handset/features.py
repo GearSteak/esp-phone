@@ -107,10 +107,15 @@ def check_alarms_tick() -> Optional[str]:
 
 # ----- Notifications -----
 def make_notifs_page(on_back: Callable[[], None]) -> QWidget:
+    """Notification history (SMS / LoRa / alarms / etc. logged via store.push_notif)."""
     body = QWidget()
     lay = QVBoxLayout(body)
+    tip = QLabel("History of alerts · toasts also pop on screen")
+    tip.setStyleSheet("color:#9ab;font-size:9px;")
+    tip.setWordWrap(True)
     lst = QListWidget()
     clear = QPushButton("Clear all")
+    lay.addWidget(tip)
     lay.addWidget(lst, 1)
     lay.addWidget(clear)
 

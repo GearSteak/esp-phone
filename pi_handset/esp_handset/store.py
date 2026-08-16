@@ -57,14 +57,15 @@ def push_notif(
         },
     )
     save("notifs.json", items[:200])
-    # Prefer ESP notify panel; Digivice stays clear of banners
+    # Optional Heltec ST7735 panel (if wired)
     esp_cb = globals().get("_esp_notif_cb")
     if callable(esp_cb):
         try:
             esp_cb(title, body, kind)
         except Exception:
             pass
-    elif toast:
+    # Digivice on-screen toast (always when requested — even if ESP also got it)
+    if toast:
         cb = globals().get("_toast_cb")
         if callable(cb):
             try:
@@ -74,12 +75,12 @@ def push_notif(
 
 
 def set_toast_handler(cb) -> None:
-    """Register Digivice UI toast (fallback if no ESP panel). cb(title, body, kind)."""
+    """Register Digivice UI toast. cb(title, body, kind)."""
     globals()["_toast_cb"] = cb
 
 
 def set_esp_notif_handler(cb) -> None:
-    """Register ESP bridge notify. cb(title, body, kind). Disables Digivice toasts."""
+    """Register ESP bridge notify panel. cb(title, body, kind)."""
     globals()["_esp_notif_cb"] = cb
 
 

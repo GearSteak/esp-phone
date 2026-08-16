@@ -2964,8 +2964,89 @@ def make_mouse_page(on_back: Callable[[], None]) -> QWidget:
     return page_chrome("Mouse speed", body, on_back, scroll=False)
 
 
+def make_debug_notifs_page(
+    on_back: Callable[[], None],
+    *,
+    show_toast: Optional[Callable[[str, str, str], None]] = None,
+    show_incoming: Optional[Callable[..., None]] = None,
+) -> QWidget:
+    """Debug → Alerts: fire test toasts and incoming-call takeover."""
+    from PyQt5.QtWidgets import QSizePolicy
+
+    from esp_handset import store
+
+    body = QWidget()
+    lay = QVBoxLayout(body)
+    lay.setContentsMargins(4, 2, 4, 2)
+    lay.setSpacing(4)
+    status = QLabel("Test alerts")
+    status.setAlignment(Qt.AlignCenter)
+    status.setWordWrap(True)
+    status.setFixedHeight(36)
+    status.setStyleSheet(
+        "font-size:12px; font-weight:700; color:#fff; background:#152030; padding:4px;"
+    )
+    lay.addWidget(status)
+
+    def _btn(text: str) -> QPushButton:
+        b = QPushButton(text)
+        b.setFixedHeight(36)
+        b.setStyleSheet("font-size:13px; font-weight:700;")
+        b.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        return b
+
+    sms_btn = _btn("Test SMS toast")
+    lora_btn = _btn("Test LoRa toast")
+    call_btn = _btn("Test incoming call")
+    lay.addWidget(sms_btn)
+    lay.addWidget(lora_btn)
+    lay.addWidget(call_btn)
+    tip = QLabel("Call overlay: Confirm=Answer · Back=Decline")
+    tip.setWordWrap(True)
+    tip.setStyleSheet("color:#9ab;font-size:9px;")
+    lay.addWidget(tip)
+    lay.addStretch(1)
+
+    def _toast(title: str, body: str, kind: str) -> None:
+        store.push_notif(title, body, kind)
+        status.setText(f"Toast: {title}")
+
+    def do_sms() -> None:
+        _toast("SMS", "+15551212: Test message from Debug", "sms")
+
+    def do_lora() -> None:
+        _toast("LoRa", "mesh-peer: hello from Debug", "lora")
+
+    def do_call() -> None:
+        if not callable(show_incoming):
+            status.setText("Incoming overlay not wired")
+            return
+        status.setText("Incoming call UI…")
+
+        def answered() -> None:
+            status.setText("Answered (debug)")
+            store.push_notif("Call", "Answered test call", "call")
+
+        def declined() -> None:
+            status.setText("Declined (debug)")
+            store.push_notif("Call", "Declined test call", "call")
+
+        show_incoming(
+            "+1 555 0100",
+            name="Debug Caller",
+            on_answer=answered,
+            on_decline=declined,
+            subtitle="Debug · not a real call",
+        )
+
+    sms_btn.clicked.connect(do_sms)
+    lora_btn.clicked.connect(do_lora)
+    call_btn.clicked.connect(do_call)
+    return page_chrome("Debug · Alerts", body, on_back, scroll=False)
+
+
 def make_debug_page(on_back: Callable[[], None]) -> QWidget:
-    """Digivice Debug — readable on 240×320: big buttons, short status."""
+    """Digivice Debug → Sound — beep, mic, USB, profile."""
     import struct
     import threading
     import wave
@@ -3399,7 +3480,7 @@ def make_debug_page(on_back: Callable[[], None]) -> QWidget:
     yes_btn.clicked.connect(on_yes)
     no_btn.clicked.connect(on_no)
     QTimer.singleShot(150, scan_hw)
-    return page_chrome("Debug", body, on_back, scroll=False)
+    return page_chrome("Debug · Sound", body, on_back, scroll=False)
 
 def make_about_page(modem, on_back) -> QWidget:
     body = QWidget()

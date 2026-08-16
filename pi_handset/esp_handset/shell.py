@@ -29,6 +29,7 @@ from esp_handset.shell_data import (
     CALLS_APPS,
     CLOCK_APPS,
     COMM_APPS,
+    DEBUG_APPS,
     FOLDER_MAP,
     GAMES_APPS,
     HOME_APPS,
@@ -40,6 +41,7 @@ from esp_handset.shell_data import (
     AppEntry,
 )
 from esp_handset.toasts import ToastHost
+from esp_handset.incoming_call import IncomingCallOverlay
 
 _GAME_PAGES = {e.key for e in GAMES_APPS}
 # Live boards (timers + own keys) — not button-driven solitaire/uno
@@ -60,6 +62,7 @@ __all__ = [
     "SETUP_APPS",
     "MEDIA_APPS",
     "GAMES_APPS",
+    "DEBUG_APPS",
 ]
 
 
@@ -117,6 +120,8 @@ class PhoneShell(QMainWindow):
         self.setCentralWidget(root)
         self._toasts = ToastHost(root)
         self._toasts.raise_()
+        self._incoming = IncomingCallOverlay(root)
+        self._incoming.raise_()
 
         self.register_page("home", self._build_home())
         self.go("home", replace=True)
@@ -186,6 +191,28 @@ class PhoneShell(QMainWindow):
         self._toasts.raise_()
         self._toasts.show_toast(title, body)
 
+    def show_incoming_call(
+        self,
+        number: str,
+        *,
+        name: str = "",
+        on_answer: Optional[Callable[[], None]] = None,
+        on_decline: Optional[Callable[[], None]] = None,
+        subtitle: str = "Incoming",
+    ) -> None:
+        self._incoming.setGeometry(self._root.rect())
+        self._incoming.show_call(
+            number,
+            name=name,
+            on_answer=on_answer,
+            on_decline=on_decline,
+            subtitle=subtitle,
+        )
+        self._incoming.raise_()
+
+    def hide_incoming_call(self) -> None:
+        self._incoming.hide_call()
+
     def resizeEvent(self, event) -> None:  # noqa: N802
         super().resizeEvent(event)
         if self._wallpaper.isVisible():
@@ -194,6 +221,9 @@ class PhoneShell(QMainWindow):
         if hasattr(self, "_toasts"):
             self._toasts.setGeometry(self._root.rect())
             self._toasts.raise_()
+        if hasattr(self, "_incoming") and self._incoming.isVisible():
+            self._incoming.setGeometry(self._root.rect())
+            self._incoming.raise_()
 
     def _apply_base_style(self) -> None:
         # Focus uses yellow/black, not hue near button blue — shade- and
@@ -444,6 +474,11 @@ class PhoneShell(QMainWindow):
 
     def keyPressEvent(self, event) -> None:  # noqa: N802
         key = event.key()
+        # Incoming call takeover — before everything else
+        if getattr(self, "_incoming", None) is not None and self._incoming.active:
+            self._incoming.keyPressEvent(event)
+            event.accept()
+            return
         # Desktop escapes (must work with hard buttons)
         if key in (Qt.Key_F12, Qt.Key_F10):
             self._request_desktop()

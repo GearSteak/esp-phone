@@ -226,6 +226,7 @@ from esp_handset import display_geom as geom  # noqa: E402
 from esp_handset.shell import (  # noqa: E402
     CALLS_APPS,
     CLOCK_APPS,
+    DEBUG_APPS,
     GAMES_APPS,
     MEDIA_APPS,
     SETTINGS_APPS,
@@ -280,13 +281,12 @@ def build_app(bridge: Optional[EspBridge], modem: Optional[Sim7600]) -> PhoneShe
 
     shell.on_linux_desktop = on_linux  # type: ignore[attr-defined]
     shell.on_linux_desktop_now = on_linux_now  # type: ignore[attr-defined]
-    # Digivice: no on-screen toast banners — ESP ST7735 shows alerts
+    # Digivice toasts always; Heltec notify panel is optional extra
+    store.set_toast_handler(lambda t, b, k: shell.show_toast(t, b, k))
     if bridge:
         store.set_esp_notif_handler(
             lambda t, b, k: bridge.notif(t, b, k)  # type: ignore[union-attr]
         )
-    else:
-        store.set_toast_handler(lambda t, b, k: shell.show_toast(t, b, k))
 
     # Radial submenus (main → folder → app)
     shell.register_page(
@@ -405,9 +405,21 @@ def build_app(bridge: Optional[EspBridge], modem: Optional[Sim7600]) -> PhoneShe
     shell.register_page("set_about", pages.make_about_page(modem, back))
     shell.register_page("set_update", pages.make_update_page(back))
     shell.register_page("set_mouse", pages.make_mouse_page(back))
-    shell.register_page("set_debug", pages.make_debug_page(back))
-    # Old Sounds menu key → same Audio page
-    shell.pages["set_sounds"] = shell.pages["set_debug"]
+    shell.register_page(
+        "set_debug",
+        shell.build_folder_keyed("set_debug", "Debug", DEBUG_APPS),
+    )
+    shell.register_page("dbg_sound", pages.make_debug_page(back))
+    shell.register_page(
+        "dbg_notifs",
+        pages.make_debug_notifs_page(
+            back,
+            show_toast=lambda t, b, k: shell.show_toast(t, b, k),
+            show_incoming=lambda *a, **kw: shell.show_incoming_call(*a, **kw),
+        ),
+    )
+    # Old Sounds menu key → sound debug
+    shell.pages["set_sounds"] = shell.pages["dbg_sound"]
     shell.register_page("set_power", pages.make_power_page(back))
     shell.register_page("help", pages.make_help_page(back))
     shell.register_page(

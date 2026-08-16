@@ -36,7 +36,7 @@ CALLS_APPS = [
 SMS_APPS = [
     AppEntry("messages", "Messages", "Conversations", "✉"),
     AppEntry("lora", "LoRa", "Mesh chats · SOS", "⌁"),
-    AppEntry("notifs", "Notifs", "", "⚑"),
+    AppEntry("notifs", "Notifs", "Alert history", "⚑"),
 ]
 
 CLOCK_APPS = [
@@ -57,7 +57,7 @@ TOOLS_APPS = [
 SETTINGS_APPS = [
     AppEntry("set_update", "Update", "Pull · install · restart", "↓"),
     AppEntry("set_mouse", "Mouse", "Desktop pointer speed", "⇔"),
-    AppEntry("set_debug", "Debug", "Audio · beep · mic · profile", "⚒"),
+    AppEntry("set_debug", "Debug", "Sound · alerts · tests", "⚒"),
     AppEntry("set_appearance", "Look", "Wallpaper", "▣"),
     AppEntry("set_orientation", "Screen", "Rotation · flip", "↻"),
     AppEntry("set_security", "Security", "PIN", "🔒"),
@@ -91,6 +91,12 @@ GAMES_APPS = [
     AppEntry("uno", "Uno", "", "U"),
 ]
 
+# Settings → Debug hub
+DEBUG_APPS = [
+    AppEntry("dbg_sound", "Sound", "Beep · mic · USB · profile", "♪"),
+    AppEntry("dbg_notifs", "Alerts", "Toasts · incoming call", "⚑"),
+]
+
 COMM_APPS = CALLS_APPS + SMS_APPS
 SETUP_APPS = TOOLS_APPS + SETTINGS_APPS  # legacy alias
 
@@ -102,4 +108,5 @@ FOLDER_MAP = {
     "settings": ("folder_settings", "Settings", SETTINGS_APPS),
     "media": ("folder_media", "Media", MEDIA_APPS),
     "games": ("folder_games", "Games", GAMES_APPS),
+    "set_debug": ("set_debug", "Debug", DEBUG_APPS),
 }
