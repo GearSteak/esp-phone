@@ -137,7 +137,7 @@ def ensure_visible(w: Optional[QWidget]) -> None:
 
 
 def move_focus(root: QWidget, delta: int) -> bool:
-    """Cycle focus among page controls. Returns True if handled."""
+    """Cycle focus among page controls (linear). Returns True if handled."""
     items = focusables(root)
     if not items:
         return False
@@ -154,6 +154,73 @@ def move_focus(root: QWidget, delta: int) -> bool:
     if isinstance(w, QListWidget) and w.count() > 0 and w.currentRow() < 0:
         w.setCurrentRow(0)
     ensure_visible(w)
+    return True
+
+
+def move_focus_xy(root: QWidget, dx: int, dy: int) -> bool:
+    """Move digi focus spatially (keypad grids: 1↓→4, not 1→2→3→4).
+
+    dx: -1 left / +1 right · dy: -1 up / +1 down
+    """
+    if dx == 0 and dy == 0:
+        return False
+    items = focusables(root)
+    if not items:
+        return False
+    cur = digi_current(root)
+    if cur is None or cur not in items:
+        clear_highlights(root)
+        w = items[0]
+        w.setFocus(Qt.OtherFocusReason)
+        _highlight(w, True)
+        ensure_visible(w)
+        return True
+
+    origin = cur.mapTo(root, cur.rect().center())
+    ox, oy = origin.x(), origin.y()
+    best: Optional[QWidget] = None
+    best_score = 1e18
+
+    for w in items:
+        if w is cur:
+            continue
+        c = w.mapTo(root, w.rect().center())
+        vx = c.x() - ox
+        vy = c.y() - oy
+
+        if dx != 0:
+            # Must be in the horizontal direction; prefer same row
+            if dx > 0 and vx < 4:
+                continue
+            if dx < 0 and vx > -4:
+                continue
+            # Reject mostly-vertical neighbors for L/R
+            if abs(vy) > abs(vx) + 12:
+                continue
+            # Primary: horizontal distance; penalty: vertical misalignment
+            score = float(abs(vx)) + float(abs(vy)) * 4.0
+        else:
+            if dy > 0 and vy < 4:
+                continue
+            if dy < 0 and vy > -4:
+                continue
+            if abs(vx) > abs(vy) + 12:
+                continue
+            score = float(abs(vy)) + float(abs(vx)) * 4.0
+
+        if score < best_score:
+            best_score = score
+            best = w
+
+    if best is None:
+        return True  # edge of grid — stay put, still consume
+
+    clear_highlights(root)
+    best.setFocus(Qt.OtherFocusReason)
+    _highlight(best, True)
+    if isinstance(best, QListWidget) and best.count() > 0 and best.currentRow() < 0:
+        best.setCurrentRow(0)
+    ensure_visible(best)
     return True
 
 

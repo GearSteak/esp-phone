@@ -646,7 +646,7 @@ class PhoneShell(QMainWindow):
                         self._nav_click()
                         event.accept()
                         return
-                if digi_nav.move_focus(page, delta):
+                if digi_nav.move_focus_xy(page, delta, 0):
                     self._nav_click()
                     event.accept()
                     return
@@ -672,7 +672,7 @@ class PhoneShell(QMainWindow):
                         self._nav_click()
                         event.accept()
                         return
-                if digi_nav.move_focus(page, delta):
+                if digi_nav.move_focus_xy(page, 0, delta):
                     self._nav_click()
                     event.accept()
                     return
