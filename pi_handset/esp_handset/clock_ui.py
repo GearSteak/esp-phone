@@ -120,32 +120,14 @@ def make_clock_hub(
     *,
     start_tool: str = "alarms",
 ) -> QWidget:
-    """Unified Clock app: quiet time + flip Alarms ↔ Timer."""
+    """Unified Clock app: Alarms ↔ Timer (time lives in the status bar)."""
     del on_back
     body = QWidget()
     root = QVBoxLayout(body)
     root.setContentsMargins(2, 0, 2, 0)
     root.setSpacing(3)
 
-    # Quiet clock strip — secondary, glanceable
-    strip = QHBoxLayout()
-    strip.setSpacing(6)
-    clock_lab = QLabel("--:--")
-    clock_lab.setStyleSheet(
-        "font-size: 13px; font-weight: 600; color:#8a9aaa; font-family: monospace;"
-    )
-    date_lab = QLabel("")
-    date_lab.setStyleSheet("font-size: 10px; color:#5a6a7a;")
-    next_lab = QLabel("")
-    next_lab.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-    next_lab.setStyleSheet("font-size: 10px; color:#6a8a7a;")
-    strip.addWidget(clock_lab)
-    strip.addWidget(date_lab)
-    strip.addStretch(1)
-    strip.addWidget(next_lab)
-    root.addLayout(strip)
-
-    # Tool flip
+    # Tool flip — no wall-clock here (status bar already has time/date)
     flip = QHBoxLayout()
     flip.setSpacing(4)
     tab_alarms = _seg("Alarms")
@@ -153,9 +135,10 @@ def make_clock_hub(
     flip.addWidget(tab_alarms)
     flip.addWidget(tab_timer)
     flip.addStretch(1)
-    hint = QLabel("←→ flip")
-    hint.setStyleSheet("font-size: 9px; color:#4a5a6a;")
-    flip.addWidget(hint)
+    next_lab = QLabel("")
+    next_lab.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+    next_lab.setStyleSheet("font-size: 9px; color:#6a8a7a;")
+    flip.addWidget(next_lab)
     root.addLayout(flip)
 
     stack = QStackedWidget()
@@ -466,29 +449,28 @@ def make_clock_hub(
     start_btn.clicked.connect(toggle_run)
     reset_btn.clicked.connect(do_reset)
 
-    def tick_clock_safe() -> None:
-        now = datetime.now()
-        clock_lab.setText(now.strftime("%H:%M"))
-        date_lab.setText(now.strftime("%a") + f" {now.day}")
+    def tick_ui() -> None:
         if state["tool"] == 0 and not state["edit"]:
             next_lab.setText(_next_alarm_hint())
         elif state["tool"] == 1:
             next_lab.setText("")
             paint_timer()
+        else:
+            next_lab.setText("")
 
     clock_timer = QTimer(body)
     clock_timer.setInterval(250)
-    clock_timer.timeout.connect(tick_clock_safe)
+    clock_timer.timeout.connect(tick_ui)
     clock_timer.start()
 
     body.clock_show_tool = show_tool  # type: ignore[attr-defined]
-    body.refresh_clock_hub = tick_clock_safe  # type: ignore[attr-defined]
+    body.refresh_clock_hub = tick_ui  # type: ignore[attr-defined]
 
     start_idx = 0 if start_tool != "timer" else 1
     show_tool(start_idx)
     refresh_alarms()
     paint_timer()
-    tick_clock_safe()
+    tick_ui()
 
     page = page_chrome("Clock", body, None, scroll=False)
     page.clock_body = body  # type: ignore[attr-defined]
