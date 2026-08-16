@@ -51,7 +51,7 @@ TOOLS_APPS = [
     AppEntry("calc", "Calculator", "", "+"),
     AppEntry("ai", "AI", "Ollama · DeepSeek", "✦"),
     AppEntry("convert", "Converter", "", "⇄"),
-    AppEntry("weather", "Weather", "", "☁"),
+    AppEntry("weather", "Weather", "GPS · Open-Meteo", "☁"),
     AppEntry("steps", "Steps", "Tilt SW-520D", "👟"),
     AppEntry("share_gps", "Share GPS", "", "⌖"),
 ]

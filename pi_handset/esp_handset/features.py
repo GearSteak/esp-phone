@@ -204,27 +204,99 @@ def make_convert_page(on_back: Callable[[], None]) -> QWidget:
     return page_chrome("Converter", body, on_back)
 
 
-# ----- Weather (Open-Meteo) -----
+# ----- Weather (Open-Meteo) — location from GPS / manual only (never Wi‑Fi / IP) -----
+_WMO = {
+    0: "Clear",
+    1: "Mainly clear",
+    2: "Partly cloudy",
+    3: "Overcast",
+    45: "Fog",
+    48: "Rime fog",
+    51: "Light drizzle",
+    53: "Drizzle",
+    55: "Heavy drizzle",
+    61: "Light rain",
+    63: "Rain",
+    65: "Heavy rain",
+    71: "Light snow",
+    73: "Snow",
+    75: "Heavy snow",
+    80: "Rain showers",
+    81: "Rain showers",
+    82: "Heavy showers",
+    95: "Thunderstorm",
+}
+
+
 def make_weather_page(on_back: Callable[[], None], modem=None) -> QWidget:
     body = QWidget()
     lay = QVBoxLayout(body)
-    lat = QLineEdit("49.28")
-    lon = QLineEdit("-123.12")
+    lay.setSpacing(4)
+
+    saved = store.load("weather.json", {}) or {}
+    lat = QLineEdit(str(saved.get("lat", "")))
+    lon = QLineEdit(str(saved.get("lon", "")))
     lat.setPlaceholderText("Latitude")
     lon.setPlaceholderText("Longitude")
-    out = QLabel("Tap Fetch")
+    src = QLabel("Location: GPS or type coords — not Wi‑Fi")
+    src.setWordWrap(True)
+    src.setStyleSheet("color:#9ab;font-size:10px;")
+    out = QLabel("Use GPS or enter lat/lon, then Fetch")
     out.setWordWrap(True)
+    out.setStyleSheet("font-size:13px;")
+    use_gps = QPushButton("Use GPS")
+    use_gps.setMinimumHeight(30)
     fetch = QPushButton("Fetch weather")
-    lay.addWidget(QLabel("Lat / Lon (or use last GPS later)"))
+    fetch.setMinimumHeight(32)
+    fetch.setStyleSheet("font-weight:700;")
+    lay.addWidget(src)
     lay.addWidget(lat)
     lay.addWidget(lon)
-    lay.addWidget(fetch)
+    row = QHBoxLayout()
+    row.addWidget(use_gps)
+    row.addWidget(fetch)
+    lay.addLayout(row)
     lay.addWidget(out, 1)
+
+    def _persist(la: float, lo: float) -> None:
+        store.save("weather.json", {"lat": round(la, 5), "lon": round(lo, 5)})
+
+    def do_gps():
+        if not modem:
+            out.setText("No modem — type lat/lon manually")
+            return
+        try:
+            modem.gps_on()
+            fix = modem.gps_fix()
+        except Exception as e:
+            out.setText(f"GPS error:\n{e}")
+            return
+        if fix.get("ok") and fix.get("lat") is not None and fix.get("lon") is not None:
+            la = float(fix["lat"])
+            lo = float(fix["lon"])
+            lat.setText(f"{la:.5f}")
+            lon.setText(f"{lo:.5f}")
+            _persist(la, lo)
+            src.setText(f"Location: GPS fix ({la:.4f}, {lo:.4f})")
+            out.setText("GPS locked — tap Fetch weather")
+            return
+        if fix.get("searching"):
+            out.setText(
+                "GPS searching…\n"
+                + (fix.get("detail") or "Go outdoors, wait 30–120s, try again")
+            )
+            return
+        out.setText(fix.get("summary") or "No GPS fix yet")
 
     def do_fetch():
         try:
-            la = float(lat.text())
-            lo = float(lon.text())
+            la = float(lat.text().strip())
+            lo = float(lon.text().strip())
+        except ValueError:
+            out.setText("Need valid lat/lon\n(Use GPS or type them)")
+            return
+        _persist(la, lo)
+        try:
             url = (
                 "https://api.open-meteo.com/v1/forecast?"
                 + urllib.parse.urlencode(
@@ -235,21 +307,33 @@ def make_weather_page(on_back: Callable[[], None], modem=None) -> QWidget:
                     }
                 )
             )
-            with urllib.request.urlopen(url, timeout=8) as resp:
+            # Weather data over internet only — coords never from Wi‑Fi / IP lookup
+            with urllib.request.urlopen(url, timeout=10) as resp:
                 import json
 
                 data = json.loads(resp.read().decode())
             cw = data.get("current_weather") or {}
+            code = cw.get("weathercode")
+            try:
+                code_i = int(code)
+            except (TypeError, ValueError):
+                code_i = -1
+            desc = _WMO.get(code_i, f"Code {code}")
             out.setText(
-                f"Temp: {cw.get('temperature')}°C\n"
-                f"Wind: {cw.get('windspeed')} km/h\n"
-                f"Code: {cw.get('weathercode')}\n"
-                f"Time: {cw.get('time')}"
+                f"{desc}\n"
+                f"{cw.get('temperature')}°C\n"
+                f"Wind {cw.get('windspeed')} km/h\n"
+                f"{la:.3f}, {lo:.3f}\n"
+                f"{cw.get('time') or ''}"
             )
+            src.setText(f"Forecast for {la:.4f}, {lo:.4f}")
         except Exception as e:
             out.setText(f"Failed (need internet):\n{e}")
 
+    use_gps.clicked.connect(do_gps)
     fetch.clicked.connect(do_fetch)
+    if saved.get("lat") not in (None, "") and saved.get("lon") not in (None, ""):
+        src.setText(f"Saved coords ({saved.get('lat')}, {saved.get('lon')})")
     return page_chrome("Weather", body, on_back)
 
 
