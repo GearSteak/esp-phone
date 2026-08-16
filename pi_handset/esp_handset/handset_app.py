@@ -619,24 +619,27 @@ def build_app(bridge: Optional[EspBridge], modem: Optional[Sim7600]) -> PhoneShe
     from PyQt5.QtCore import QTimer
 
     def _alarm_poll():
-        from esp_handset.clock_ui import check_timer_tick, play_alert
+        try:
+            from esp_handset.clock_ui import check_timer_tick, play_alert
 
-        label = features.check_alarms_tick()
-        if label:
-            store.push_notif("Alarm", label, "alarm")
-            ref = getattr(notifs_page, "refresh_notifs", None)
-            if callable(ref):
-                ref()
-            status(f"Alarm: {label}")
-            play_alert()
-        done = check_timer_tick()
-        if done:
-            store.push_notif("Timer", done, "timer")
-            ref = getattr(notifs_page, "refresh_notifs", None)
-            if callable(ref):
-                ref()
-            status(done)
-            play_alert()
+            label = features.check_alarms_tick()
+            if label:
+                store.push_notif("Alarm", label, "alarm")
+                ref = getattr(notifs_page, "refresh_notifs", None)
+                if callable(ref):
+                    ref()
+                status(f"Alarm: {label}")
+                play_alert()
+            done = check_timer_tick()
+            if done:
+                store.push_notif("Timer", done, "timer")
+                ref = getattr(notifs_page, "refresh_notifs", None)
+                if callable(ref):
+                    ref()
+                status(done)
+                play_alert()
+        except Exception as e:
+            print(f"[handset] alarm poll: {e}", flush=True)
 
     atimer = QTimer(shell)
     atimer.timeout.connect(_alarm_poll)

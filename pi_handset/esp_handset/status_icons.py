@@ -13,33 +13,31 @@ from PyQt5.QtWidgets import QWidget
 
 def wifi_is_up() -> bool:
     """True if a wireless iface looks associated / has carrier."""
-    for name in ("wlan0", "wlan1", "wlp1s0", "wlx"):
-        # exact names first
-        if name == "wlx":
-            net = Path("/sys/class/net")
-            if not net.is_dir():
-                continue
-            for p in net.iterdir():
-                if p.name.startswith("wlx") or p.name.startswith("wl"):
-                    if _iface_up(p.name):
-                        return True
-            continue
+    for name in ("wlan0", "wlan1", "wlp1s0"):
         if _iface_up(name):
             return True
-    # nmcli fallback
+    try:
+        net = Path("/sys/class/net")
+        if net.is_dir():
+            for p in net.iterdir():
+                n = p.name
+                if n.startswith("wlan") or n.startswith("wlp") or n.startswith("wlx"):
+                    if _iface_up(n):
+                        return True
+    except OSError:
+        pass
     try:
         r = subprocess.run(
             ["nmcli", "-t", "-f", "DEVICE,TYPE,STATE", "dev"],
             capture_output=True,
             text=True,
-            timeout=2.0,
+            timeout=1.0,
             check=False,
         )
         for line in (r.stdout or "").splitlines():
             parts = line.split(":")
-            if len(parts) >= 3 and parts[1] == "wifi" and parts[2] in (
-                "connected",
-                "connecting (getting IP configuration)",
+            if len(parts) >= 3 and parts[1] == "wifi" and parts[2].startswith(
+                "connected"
             ):
                 return True
     except Exception:

@@ -335,7 +335,7 @@ def run_boot_splash(app: QApplication) -> tuple:
     try:
         splash.hide()
         splash.close()
-        splash.deleteLater()
+        # Do not deleteLater immediately — SPI/hosts can still grab a dying widget
     except Exception:
         pass
     app.processEvents()

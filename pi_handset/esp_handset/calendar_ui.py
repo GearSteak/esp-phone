@@ -77,6 +77,12 @@ class MonthGrid(QWidget):
         self.set_selected(self._selected + timedelta(days=delta))
 
     def paintEvent(self, _event) -> None:  # noqa: N802
+        try:
+            self._paint_month()
+        except Exception:
+            pass
+
+    def _paint_month(self) -> None:
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
         w, h = self.width(), self.height()

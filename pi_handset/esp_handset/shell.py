@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Callable, Dict, List, Optional
 
-from PyQt5.QtCore import Qt, QTimer
+from PyQt5.QtCore import Qt, QTimer, pyqtSignal
 from PyQt5.QtGui import QPixmap
 from PyQt5.QtWidgets import (
     QFrame,
@@ -69,6 +69,9 @@ __all__ = [
 class PhoneShell(QMainWindow):
     """Digivice: two-row home, radial folders, hard-button nav apps."""
 
+    # Emitted from worker threads → slots update glyphs on the UI thread
+    net_status = pyqtSignal(bool, int, bool)  # wifi_on, cell_bars, cell_known
+
     def __init__(self):
         super().__init__()
         self.setWindowTitle("ESP Digivice")
@@ -78,6 +81,8 @@ class PhoneShell(QMainWindow):
         self._home: Optional[DigiviceHome] = None
         self.on_linux_desktop: Optional[Callable[[], None]] = None
         self.on_linux_desktop_now: Optional[Callable[[], None]] = None
+        self._net_busy = False
+        self.net_status.connect(self._apply_net_status)
 
         root = QWidget()
         root.setObjectName("phoneRoot")
@@ -142,7 +147,7 @@ class PhoneShell(QMainWindow):
 
         self._net_timer = QTimer(self)
         self._net_timer.timeout.connect(self._tick_network)
-        self._net_timer.start(12_000)
+        self._net_timer.start(20_000)
         self._modem_signal_fn = None  # optional Callable[[], Optional[str]]
         QTimer.singleShot(800, self._tick_network)
 
@@ -366,44 +371,74 @@ class PhoneShell(QMainWindow):
         self._flash_timer.start(2200)
 
     def _restore_title(self) -> None:
-        self.title_lab.setText(self._title_saved)
+        try:
+            self.title_lab.setText(self._title_saved)
+        except Exception:
+            pass
 
     def set_modem_signal_provider(self, fn) -> None:
         """fn() → AT+CSQ line or None. Polled for cellular bars."""
         self._modem_signal_fn = fn
-        QTimer.singleShot(200, self._tick_network)
+        QTimer.singleShot(400, self._tick_network)
+
+    def _apply_net_status(self, wifi_on: bool, bars: int, known: bool) -> None:
+        try:
+            self.wifi_glyph.set_connected(bool(wifi_on))
+            self.cell_glyph.set_bars(int(bars), known=bool(known))
+        except Exception:
+            pass
+        finally:
+            self._net_busy = False
 
     def _tick_network(self) -> None:
-        """Refresh Wi‑Fi glyph now; CSQ bars off the UI thread (AT can block)."""
-        from esp_handset.status_icons import parse_csq_rssi, rssi_to_bars, wifi_is_up
-        import threading
-
-        try:
-            self.wifi_glyph.set_connected(wifi_is_up())
-        except Exception:
-            self.wifi_glyph.set_connected(False)
-
-        fn = getattr(self, "_modem_signal_fn", None)
-        if not callable(fn):
-            self.cell_glyph.set_bars(0, known=False)
+        """Probe Wi‑Fi + CSQ off the UI thread; apply via net_status signal."""
+        if self._net_busy:
             return
+        self._net_busy = True
+        fn = getattr(self, "_modem_signal_fn", None)
 
         def _work() -> None:
-            line = None
+            wifi_on = False
+            bars = 0
+            known = False
             try:
-                line = fn()
-            except Exception:
+                from esp_handset.status_icons import (
+                    parse_csq_rssi,
+                    rssi_to_bars,
+                    wifi_is_up,
+                )
+
+                try:
+                    wifi_on = bool(wifi_is_up())
+                except Exception:
+                    wifi_on = False
                 line = None
-            rssi = parse_csq_rssi(line)
-            known = rssi is not None
-            bars = rssi_to_bars(rssi) if known else 0
+                if callable(fn):
+                    try:
+                        line = fn()
+                    except Exception:
+                        line = None
+                rssi = parse_csq_rssi(line)
+                known = rssi is not None
+                bars = rssi_to_bars(rssi) if known else 0
+            except Exception:
+                pass
+            try:
+                self.net_status.emit(wifi_on, bars, known)
+            except Exception:
+                self._net_busy = False
 
-            def _apply() -> None:
-                self.cell_glyph.set_bars(bars, known=known)
-
-            QTimer.singleShot(0, _apply)
+        import threading
 
         threading.Thread(target=_work, daemon=True).start()
+
+    def _tick_clock(self) -> None:
+        try:
+            now = datetime.now()
+            self.clock_lab.setText(now.strftime("%H:%M"))
+            self.date_lab.setText(now.strftime("%a") + f" {now.day}")
+        except Exception:
+            pass
 
     def register_page(self, key: str, widget: QWidget) -> None:
         self.pages[key] = widget
@@ -477,12 +512,6 @@ class PhoneShell(QMainWindow):
     def home(self) -> None:
         self._leave_current_page()
         self.go("home", replace=True)
-
-    def _tick_clock(self) -> None:
-        now = datetime.now()
-        self.clock_lab.setText(now.strftime("%H:%M"))
-        # Compact date for 240–320 width: "Sat 16"
-        self.date_lab.setText(now.strftime("%a") + f" {now.day}")
 
     def _build_home(self) -> QWidget:
         page = QWidget()
