@@ -72,15 +72,15 @@ SETTINGS_APPS = [
 ]
 
 MEDIA_APPS = [
-    AppEntry("gallery", "Gallery", "", "▣"),
-    AppEntry("recorder", "Voice", "", "◉"),
-    AppEntry("gps", "GPS", "SIM7600", "⌖"),
-    AppEntry("notes", "Notes", "", "✎"),
-    AppEntry("todos", "Todos", "", "☑"),
-    AppEntry("music", "Music", "", "♪"),
-    AppEntry("videos", "Videos", "", "▶"),
-    AppEntry("ebooks", "Ebooks", "", "▤"),
-    AppEntry("audiobooks", "Audiobooks", "", "♬"),
+    AppEntry("gallery", "Gallery", "Photos", "▣"),
+    AppEntry("recorder", "Voice", "Quick clips", "◉"),
+    AppEntry("gps", "GPS", "Location", "⌖"),
+    AppEntry("notes", "Notes", "Jot · save", "✎"),
+    AppEntry("todos", "Todos", "Checklist", "☑"),
+    AppEntry("music", "Music", "Tracks", "♪"),
+    AppEntry("videos", "Videos", "Clips", "▶"),
+    AppEntry("ebooks", "Ebooks", "Read", "▤"),
+    AppEntry("audiobooks", "Audiobooks", "Listen", "♬"),
 ]
 
 GAMES_APPS = [

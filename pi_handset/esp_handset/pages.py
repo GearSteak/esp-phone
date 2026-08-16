@@ -1487,20 +1487,35 @@ def make_gallery_page(on_back: Callable[[], None], on_status) -> QWidget:
     ll = QVBoxLayout(list_page)
     ll.setContentsMargins(2, 2, 2, 2)
     ll.setSpacing(4)
-    tip = QLabel("Confirm opens photo · refresh reloads")
-    tip.setStyleSheet("color:#9ab;font-size:10px;")
+    tip = QLabel("Photos from Camera")
+    tip.setStyleSheet("color:#5ec4a8;font-size:11px;font-weight:700;")
     tip.setWordWrap(True)
     lst = QListWidget()
     lst.setIconSize(QSize(72, 54))
-    lst.setSpacing(2)
+    lst.setSpacing(3)
     lst.setUniformItemSizes(True)
     lst.setResizeMode(QListWidget.Adjust)
     lst.setWordWrap(True)
+    lst.setStyleSheet(
+        "QListWidget { background:#16202c; border:1px solid #243040; border-radius:8px;"
+        " outline:none; color:#e8eef5; font-size:11px; }"
+        "QListWidget::item { padding:6px; border-bottom:1px solid #243040; }"
+        "QListWidget::item:selected { background:#1a3a32; }"
+        'QListWidget[digiFocus="1"] { border:2px solid #FFE600; }'
+    )
     refresh = QPushButton("Refresh")
-    refresh.setMinimumHeight(28)
-    empty = QLabel("No photos yet.\nCamera → Snap")
+    refresh.setMinimumHeight(30)
+    refresh.setStyleSheet(
+        "QPushButton { font-size:11px; font-weight:700; padding:4px 10px;"
+        " color:#0a1218; background:#5ec4a8; border:none; border-radius:8px; }"
+        'QPushButton[digiFocus="1"] { border:2px solid #FFE600; }'
+    )
+    empty = QLabel("No photos yet.\nOpen Camera on home · Snap")
     empty.setAlignment(Qt.AlignCenter)
-    empty.setStyleSheet("color:#888;")
+    empty.setStyleSheet(
+        "color:#7a8a9a; font-size:11px; padding:16px; background:#16202c;"
+        " border-radius:8px; border:1px dashed #243040;"
+    )
     empty.hide()
     ll.addWidget(tip)
     ll.addWidget(lst, 1)
@@ -2185,11 +2200,21 @@ def make_gps_page(modem, on_back, on_status, get_modem=None) -> QWidget:
 
 
 def make_notes_page(on_back) -> QWidget:
+    from esp_handset.media_ui import media_btn, media_header, style_media_body, _SURFACE, _TEXT, _BORDER
+
     body = QWidget()
+    style_media_body(body)
     lay = QVBoxLayout(body)
+    lay.setContentsMargins(4, 2, 4, 2)
+    lay.setSpacing(4)
+    lay.addWidget(media_header("✎", "Notes", "Autosave when you hit Save"))
     edit = QTextEdit()
     edit.setPlainText("\n".join(_load_json(NOTES, ["(new note)"])))
-    save = QPushButton("Save notes")
+    edit.setStyleSheet(
+        f"QTextEdit {{ background:{_SURFACE}; color:{_TEXT}; border:1px solid {_BORDER};"
+        f" border-radius:8px; font-size:12px; padding:8px; }}"
+    )
+    save = media_btn("Save", primary=True)
     lay.addWidget(edit, 1)
     lay.addWidget(save)
 
@@ -2198,24 +2223,54 @@ def make_notes_page(on_back) -> QWidget:
         _save_json(NOTES, lines or ["(empty)"])
 
     save.clicked.connect(do_save)
-    return page_chrome("Notes", body, on_back)
+    return page_chrome("Notes", body, on_back, scroll=False)
 
 
 def make_todos_page(on_back) -> QWidget:
+    from esp_handset.media_ui import (
+        media_btn,
+        media_empty,
+        media_header,
+        media_list,
+        style_media_body,
+        _MUTED,
+        _SURFACE,
+        _TEXT,
+        _BORDER,
+    )
+
     body = QWidget()
+    style_media_body(body)
     lay = QVBoxLayout(body)
-    lst = QListWidget()
+    lay.setContentsMargins(4, 2, 4, 2)
+    lay.setSpacing(4)
+    lay.addWidget(media_header("☑", "Todos", "Confirm adds · keep it short"))
+    lst = media_list()
+    empty = media_empty("Nothing to do.\nAdd one below.")
+    empty.hide()
     inp = QLineEdit()
     inp.setPlaceholderText("New todo")
-    add = QPushButton("Add")
+    inp.setStyleSheet(
+        f"QLineEdit {{ background:{_SURFACE}; color:{_TEXT}; border:1px solid {_BORDER};"
+        f" border-radius:8px; padding:6px 8px; font-size:12px; }}"
+    )
+    add = media_btn("Add", primary=True)
     lay.addWidget(lst, 1)
+    lay.addWidget(empty)
     lay.addWidget(inp)
     lay.addWidget(add)
 
     def refresh():
         lst.clear()
-        for t in _load_json(TODOS, []):
-            lst.addItem(t)
+        items = _load_json(TODOS, [])
+        for t in items:
+            lst.addItem(f"○  {t}")
+        if not items:
+            lst.hide()
+            empty.show()
+        else:
+            empty.hide()
+            lst.show()
 
     def do_add():
         t = inp.text().strip()
@@ -2228,8 +2283,9 @@ def make_todos_page(on_back) -> QWidget:
         refresh()
 
     add.clicked.connect(do_add)
+    inp.returnPressed.connect(do_add)
     refresh()
-    return page_chrome("Todos", body, on_back)
+    return page_chrome("Todos", body, on_back, scroll=False)
 
 
 def make_clock_page(on_back) -> QWidget:

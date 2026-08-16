@@ -372,25 +372,51 @@ def make_share_gps_page(modem, on_back: Callable[[], None], on_status) -> QWidge
 
 # ----- Voice notes -----
 def make_recorder_page(on_back: Callable[[], None], on_status) -> QWidget:
+    from esp_handset.media_ui import (
+        media_btn,
+        media_empty,
+        media_header,
+        media_list,
+        style_media_body,
+    )
+
     body = QWidget()
+    style_media_body(body)
     lay = QVBoxLayout(body)
-    lst = QListWidget()
-    rec = QPushButton("Record 5s")
-    play = QPushButton("Play selected")
+    lay.setContentsMargins(4, 2, 4, 2)
+    lay.setSpacing(4)
+    lay.addWidget(
+        media_header("◉", "Voice", "Tap record · plays through USB audio")
+    )
+    lst = media_list()
+    empty = media_empty("No voice notes yet.\nRecord a quick clip below.")
+    empty.hide()
     lay.addWidget(lst, 1)
-    lay.addWidget(rec)
-    lay.addWidget(play)
-    tip = QLabel("Uses arecord/ffmpeg if present → ~/VoiceNotes")
-    tip.setStyleSheet("color:#9ab;font-size:11px;")
-    lay.addWidget(tip)
-    proc = {"p": None}
+    lay.addWidget(empty)
+    row = QHBoxLayout()
+    row.setSpacing(4)
+    rec = media_btn("● Record 5s", primary=True)
+    play = media_btn("▶ Play")
+    row.addWidget(rec, 2)
+    row.addWidget(play, 1)
+    lay.addLayout(row)
 
     def refresh():
         store.ensure()
         lst.clear()
-        for p in sorted(store.VOICE.glob("*"), reverse=True):
-            if p.suffix.lower() in (".wav", ".mp3", ".ogg"):
-                lst.addItem(p.name)
+        files = [
+            p
+            for p in sorted(store.VOICE.glob("*"), reverse=True)
+            if p.suffix.lower() in (".wav", ".mp3", ".ogg")
+        ]
+        for p in files:
+            lst.addItem(p.name)
+        if not files:
+            lst.hide()
+            empty.show()
+        else:
+            empty.hide()
+            lst.show()
 
     def do_rec():
         store.ensure()
@@ -440,7 +466,7 @@ def make_recorder_page(on_back: Callable[[], None], on_status) -> QWidget:
     rec.clicked.connect(do_rec)
     play.clicked.connect(do_play)
     refresh()
-    return page_chrome("Voice notes", body, on_back)
+    return page_chrome("Voice", body, on_back, scroll=False)
 
 
 def _which(name: str) -> Optional[str]:
@@ -457,76 +483,87 @@ def make_file_media_page(
     on_back: Callable[[], None],
     open_cmd: Optional[List[str]] = None,
 ) -> QWidget:
-    body = QWidget()
-    lay = QVBoxLayout(body)
-    lst = QListWidget()
-    open_btn = QPushButton("Open")
-    refresh = QPushButton("Refresh")
-    lay.addWidget(QLabel(str(folder)))
-    lay.addWidget(lst, 1)
-    row = QHBoxLayout()
-    row.addWidget(open_btn)
-    row.addWidget(refresh)
-    lay.addLayout(row)
+    from esp_handset.media_ui import make_library_page
 
-    def do_refresh():
-        folder.mkdir(parents=True, exist_ok=True)
-        lst.clear()
-        files = []
-        for pat in patterns:
-            files.extend(folder.glob(pat))
-        for p in sorted(set(files), key=lambda x: x.name.lower()):
-            lst.addItem(p.name)
-
-    def do_open():
-        items = lst.selectedItems()
-        if not items:
-            return
-        path = folder / items[0].text()
-        if open_cmd:
-            subprocess.Popen(
-                open_cmd + [str(path)],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            )
-            return
-        # text ebook
-        if path.suffix.lower() in (".txt", ".md", ".text"):
-            # handled by caller registration for ebooks reader
-            pass
-        for bin_ in ("xdg-open", "mpv", "vlc", "ffplay"):
-            if _which(bin_):
-                subprocess.Popen(
-                    [bin_, str(path)],
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                )
-                return
-
-    open_btn.clicked.connect(do_open)
-    refresh.clicked.connect(do_refresh)
-    do_refresh()
-    return page_chrome(title, body, on_back)
+    glyphs = {
+        "Music": "♪",
+        "Videos": "▶",
+        "Audiobooks": "♬",
+    }
+    kinds = {
+        "Music": "tracks",
+        "Videos": "videos",
+        "Audiobooks": "books",
+    }
+    opens = {
+        "Music": "Play",
+        "Videos": "Play",
+        "Audiobooks": "Play",
+    }
+    return make_library_page(
+        title=title,
+        glyph=glyphs.get(title, "▤"),
+        folder=folder,
+        patterns=tuple(patterns),
+        on_back=on_back,
+        kind_label=kinds.get(title, "files"),
+        open_cmd=open_cmd,
+        open_label=opens.get(title, "Open"),
+    )
 
 
 def make_ebook_page(on_back: Callable[[], None]) -> QWidget:
+    from esp_handset.media_ui import (
+        media_btn,
+        media_empty,
+        media_header,
+        media_list,
+        style_media_body,
+        _MUTED,
+        _SURFACE,
+        _TEXT,
+        _BORDER,
+    )
+
     body = QWidget()
+    style_media_body(body)
     lay = QVBoxLayout(body)
-    lst = QListWidget()
+    lay.setContentsMargins(4, 2, 4, 2)
+    lay.setSpacing(4)
+    lay.addWidget(media_header("▤", "Ebooks", "~/Books · txt / md"))
+
+    lst = media_list()
+    lst.setMaximumHeight(72)
+    empty = media_empty("No text books yet.\nPut .txt / .md in Books/")
+    empty.hide()
     text = QTextEdit()
     text.setReadOnly(True)
-    open_btn = QPushButton("Read selected")
-    lay.addWidget(QLabel(str(store.BOOKS)))
+    text.setStyleSheet(
+        f"QTextEdit {{ background:{_SURFACE}; color:{_TEXT}; border:1px solid {_BORDER};"
+        f" border-radius:8px; font-size:12px; padding:6px; }}"
+    )
+    open_btn = media_btn("Read", primary=True)
     lay.addWidget(lst)
+    lay.addWidget(empty)
     lay.addWidget(open_btn)
     lay.addWidget(text, 1)
 
     def refresh():
         store.ensure()
         lst.clear()
-        for p in sorted(store.BOOKS.glob("*.*")):
-            if p.suffix.lower() in (".txt", ".md", ".text"):
-                lst.addItem(p.name)
+        files = [
+            p
+            for p in sorted(store.BOOKS.glob("*.*"))
+            if p.suffix.lower() in (".txt", ".md", ".text")
+        ]
+        for p in files:
+            lst.addItem(p.name)
+        if not files:
+            lst.hide()
+            empty.show()
+        else:
+            empty.hide()
+            lst.show()
 
     def do_read():
         items = lst.selectedItems()
@@ -539,8 +576,9 @@ def make_ebook_page(on_back: Callable[[], None]) -> QWidget:
             text.setPlainText(str(e))
 
     open_btn.clicked.connect(do_read)
+    lst.itemActivated.connect(lambda _=None: do_read())
     refresh()
-    return page_chrome("Ebooks", body, on_back)
+    return page_chrome("Ebooks", body, on_back, scroll=False)
 
 
 # ----- Accounts / Email -----
