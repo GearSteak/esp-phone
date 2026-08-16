@@ -337,49 +337,66 @@ def make_weather_page(on_back: Callable[[], None], modem=None) -> QWidget:
     return page_chrome("Weather", body, on_back)
 
 
-# ----- Steps (Heltec SW-520D) -----
+# ----- Steps (Pi SW-520D / tilt switch) -----
 def make_steps_page(on_back: Callable[[], None], bridge=None) -> QWidget:
+    del bridge  # Heltec gone — steps are local GPIO only
     body = QWidget()
     lay = QVBoxLayout(body)
     big = QLabel("0")
     big.setAlignment(Qt.AlignCenter)
     big.setStyleSheet("font-size: 36px; font-weight: bold;")
-    hint = QLabel("SW-520D tilt on Heltec\n(crude pedometer)")
+    hint = QLabel(
+        "Pi tilt switch (SW-520D)\n"
+        "BCM17 / pin 11 → GND\n"
+        "Walk · shake to count"
+    )
     hint.setWordWrap(True)
     hint.setAlignment(Qt.AlignCenter)
+    hint.setStyleSheet("color:#9ab;font-size:11px;")
+    status = QLabel("")
+    status.setWordWrap(True)
+    status.setAlignment(Qt.AlignCenter)
+    status.setStyleSheet("color:#7a8;font-size:10px;")
     refresh = QPushButton("Refresh")
+    bump = QPushButton("+1 test")
     reset = QPushButton("Reset today")
     lay.addStretch(1)
     lay.addWidget(big)
     lay.addWidget(hint)
+    lay.addWidget(status)
     lay.addWidget(refresh)
+    lay.addWidget(bump)
     lay.addWidget(reset)
     lay.addStretch(1)
 
     def show_local() -> None:
         st = store.steps_state()
         big.setText(str(int(st.get("count") or 0)))
+        try:
+            from esp_handset.steps_pi import monitor_status
+
+            status.setText(monitor_status())
+        except Exception:
+            status.setText("")
 
     def do_refresh() -> None:
         show_local()
-        if bridge:
-            try:
-                bridge.steps_query()
-            except Exception:
-                pass
+
+    def do_bump() -> None:
+        store.add_steps(1)
+        show_local()
 
     def do_reset() -> None:
         store.reset_steps_today()
         show_local()
-        if bridge:
-            try:
-                bridge.steps_reset()
-            except Exception:
-                pass
 
     refresh.clicked.connect(do_refresh)
+    bump.clicked.connect(do_bump)
     reset.clicked.connect(do_reset)
     show_local()
+    tick = QTimer(body)
+    tick.timeout.connect(show_local)
+    tick.start(1500)
     page = page_chrome("Steps", body, on_back)
     page.refresh_steps = show_local  # type: ignore[attr-defined]
     return page

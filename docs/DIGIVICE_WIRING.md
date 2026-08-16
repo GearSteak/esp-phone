@@ -1,7 +1,7 @@
 # Digivice wiring sheet (Pi Zero 2 W)
 
 Stack: **Pi → (optional tall header) → Waveshare 2″ on its SPI pins → passthrough** for buttons + CardKB.  
-**SIM7600** and **Heltec** stay USB only.
+**SIM7600** is USB. Heltec is optional/legacy (no longer used for steps).
 
 LCD electrical map is the [Waveshare 2inch](https://www.waveshare.com/wiki/2inch_LCD_Module) Pi table — same whether you use jumpers or a GPIO/passthrough adapter.
 
@@ -49,12 +49,27 @@ Wire to the **top of the passthrough** (same pin numbers). Details: [`DIGI_BUTTO
 
 Enable: `sudo systemctl enable --now cardkb-inputd` — [`CARDKB_PI.md`](CARDKB_PI.md).
 
-## 4. USB only
+## 4. Steps tilt + passive piezo (Pi GPIO)
+
+Heltec SW-520D path is gone. Wire a **tilt / vibration switch** (SW-520D or similar) and a **passive piezo** on free pins:
+
+| Device | Pi pin | BCM | Wiring |
+|--------|--------|-----|--------|
+| **Steps** (SW-520D) | **11** | **17** | One leg → GPIO, other → **GND** (internal pull-up) |
+| **Piezo** (passive) | **15** | **22** | **+** → GPIO (optional 100–220Ω series), **−** → **GND** |
+
+- Steps: walk / shake closes the switch; Digivice counts edges while the UI is running.
+- Piezo: software square-wave for alarms, timer, SMS/call chirps until USB speaker is sorted. Test: **Settings → Debug → Sound → PIEZO**.
+- Override pins: `DIGI_STEPS_BCM`, `DIGI_BUZZER_BCM` (set to `off` to disable).
+
+Active buzzers (with onboard oscillator) will only click on/off — use a **passive** element for tones.
+
+## 5. USB only
 
 | Device | Link |
 |--------|------|
 | SIM7600G-H | USB → Pi (modem USB) |
-| Heltec Tracker | USB-C → Pi |
+| Heltec Tracker | optional / unused for steps |
 
 ## Full 40-pin map (passthrough view)
 
@@ -64,9 +79,9 @@ Enable: `sudo systemctl enable --now cardkb-inputd` — [`CARDKB_PI.md`](CARDKB_
          SCL · CardKB     [5]  [6]  GND · CardKB
          (free)           [7]  [8]  (free)
          GND ★LCD         [9]  [10] (free)
-         (free)          [11]  [12] ★LCD BL  (BCM18)
+         STEPS BCM17     [11]  [12] ★LCD BL  (BCM18)
          ★LCD RST BCM27  [13]  [14] GND
-         (free)          [15]  [16] (free)
+         PIEZO BCM22     [15]  [16] (free)
          3V3             [17]  [18] (free)
          ★LCD DIN MOSI   [19]  [20] GND
          (free)          [21]  [22] ★LCD DC  (BCM25)
@@ -81,7 +96,7 @@ Enable: `sudo systemctl enable --now cardkb-inputd` — [`CARDKB_PI.md`](CARDKB_
          GND             [39]  [40] SELECT BCM21
 ```
 
-★ = Waveshare LCD · · = CardKB / buttons on passthrough · (free) = unused
+★ = Waveshare LCD · · = CardKB / buttons on passthrough · STEPS / PIEZO = new Digivice extras
 
 ## Pin ownership
 
@@ -89,6 +104,8 @@ Enable: `sudo systemctl enable --now cardkb-inputd` — [`CARDKB_PI.md`](CARDKB_
 |------------|--------|
 | 1, 9, 12, 13, 19, 22, 23, 24 (+ BCM 8/10/11/18/25/27) | Waveshare 2″ |
 | 2, 3, 5, 6 | CardKB |
+| 11 (BCM17) | Steps tilt |
+| 15 (BCM22) | Passive piezo |
 | 29–36, 38, 40 (+ GND 34/39) | Buttons |
-| USB | SIM7600 + Heltec |
+| USB | SIM7600 (+ optional Heltec) |
 | 27–28 ID EEPROM | Leave alone |

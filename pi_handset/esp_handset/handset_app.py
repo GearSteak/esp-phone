@@ -458,8 +458,14 @@ def build_app(bridge: Optional[EspBridge], modem: Optional[Sim7600]) -> PhoneShe
     shell.register_page("email", features.make_email_page(back))
     shell.register_page("convert", features.make_convert_page(back))
     shell.register_page("weather", features.make_weather_page(back, modem))
-    steps_page = features.make_steps_page(back, bridge)
+    steps_page = features.make_steps_page(back)
     shell.register_page("steps", steps_page)
+    try:
+        from esp_handset.steps_pi import start_monitor
+
+        start_monitor()
+    except Exception as e:
+        print(f"[handset] steps monitor: {e}", flush=True)
     shell.register_page(
         "share_gps", features.make_share_gps_page(modem, back, status)
     )

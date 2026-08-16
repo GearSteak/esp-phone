@@ -5,9 +5,8 @@
 ```
 Pi Zero 2 W
   ├─ SPI ──► Waveshare 2" LCD 240×320 (ST7789) — main Digivice UI
-  ├─ GPIO ─► 7 hard buttons (↑ ↓ ← → Confirm Back Home)
-  ├─ USB ──► SIM7600G-H — LTE / SMS / GNSS
-  └─ USB ──► Heltec Tracker — LoRa (+ optional steps / notify)
+  ├─ GPIO ─► hard buttons + steps tilt (BCM17) + passive piezo (BCM22)
+  └─ USB ──► SIM7600G-H — LTE / SMS / GNSS
 ```
 
 ## Quick start

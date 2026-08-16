@@ -72,6 +72,14 @@ def push_notif(
                 cb(title, body, kind)
             except Exception:
                 pass
+        # Piezo for inbox-style alerts; alarms/timers use play_alert() separately
+        if kind in ("sms", "call", "lora"):
+            try:
+                from esp_handset.buzzer import beep_async
+
+                beep_async("chirp" if kind != "call" else "alert")
+            except Exception:
+                pass
 
 
 def set_toast_handler(cb) -> None:
@@ -85,33 +93,35 @@ def set_esp_notif_handler(cb) -> None:
 
 
 def steps_state() -> dict:
-    """Daily step count synced from Heltec SW-520D (STEPS n lines)."""
+    """Daily step count from Pi tilt GPIO (SW-520D), not Heltec."""
     from datetime import date
 
     today = date.today().isoformat()
-    st = load("steps.json", {"date": today, "count": 0, "esp": 0})
+    st = load("steps.json", {"date": today, "count": 0})
     if st.get("date") != today:
-        st = {"date": today, "count": 0, "esp": 0}
+        st = {"date": today, "count": 0}
+        save("steps.json", st)
+    # Drop legacy Heltec session field if present
+    if "esp" in st:
+        st = {"date": st.get("date") or today, "count": int(st.get("count") or 0)}
         save("steps.json", st)
     return st
 
 
 def apply_esp_steps(esp_count: int) -> int:
-    """Merge ESP session counter into today's Digivice total. Returns display count."""
-    st = steps_state()
-    prev_esp = int(st.get("esp") or 0)
-    esp_count = max(0, int(esp_count))
-    if esp_count >= prev_esp:
-        st["count"] = int(st.get("count") or 0) + (esp_count - prev_esp)
-    else:
-        # ESP rebooted / STEPS RESET — treat as new session delta
-        st["count"] = int(st.get("count") or 0) + esp_count
-    st["esp"] = esp_count
-    save("steps.json", st)
-    return int(st["count"])
+    """Deprecated Heltec path — ignored; returns current Pi total."""
+    del esp_count
+    return int(steps_state().get("count") or 0)
+
+
+def add_steps(n: int = 1) -> int:
+    """Add steps locally (Pi tilt sensor or UI +1)."""
+    from esp_handset.steps_pi import record_step
+
+    return record_step(n)
 
 
 def reset_steps_today() -> None:
     from datetime import date
 
-    save("steps.json", {"date": date.today().isoformat(), "count": 0, "esp": 0})
+    save("steps.json", {"date": date.today().isoformat(), "count": 0})

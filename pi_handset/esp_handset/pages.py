@@ -3210,6 +3210,11 @@ def make_debug_page(on_back: Callable[[], None]) -> QWidget:
     wake_btn.setStyleSheet("font-size:13px; font-weight:700;")
     lay.addWidget(wake_btn)
 
+    piezo_btn = QPushButton("PIEZO (GPIO)")
+    piezo_btn.setFixedHeight(32)
+    piezo_btn.setStyleSheet("font-size:13px; font-weight:700;")
+    lay.addWidget(piezo_btn)
+
     yes_btn = _big_btn("YES")
     no_btn = _big_btn("NO")
     yes_btn.setStyleSheet("font-size:15px; font-weight:700; background:#1a5a2a;")
@@ -3222,7 +3227,7 @@ def make_debug_page(on_back: Callable[[], None]) -> QWidget:
     yes_btn.hide()
     no_btn.hide()
 
-    tip = QLabel(f"{AUDIO_BUILD} · green=out")
+    tip = QLabel(f"{AUDIO_BUILD} · green=out · piezo pin 15")
     tip.setAlignment(Qt.AlignCenter)
     tip.setStyleSheet("font-size:10px; color:#789;")
     lay.addWidget(tip)
@@ -3560,8 +3565,29 @@ def make_debug_page(on_back: Callable[[], None]) -> QWidget:
 
         rec.finished.connect(_after_rec)
 
+    def piezo_test() -> None:
+        if busy["on"]:
+            return
+        _clear_ask()
+        _set_status("Piezo alert…")
+        try:
+            from esp_handset.buzzer import beep_async, available
+            from esp_handset.hw_pins import BUZZER_BCM
+
+            if BUZZER_BCM is None:
+                _set_status("Piezo disabled")
+                return
+            if not available():
+                _set_status(f"GPIO {BUZZER_BCM} fail")
+                return
+            beep_async("alert")
+            _set_status(f"Piezo BCM{BUZZER_BCM}")
+        except Exception as e:
+            _set_status(str(e)[:40])
+
     sound_btn.clicked.connect(cycle_sound)
     wake_btn.clicked.connect(do_wake)
+    piezo_btn.clicked.connect(piezo_test)
     spk_btn.clicked.connect(speaker_test)
     mic_btn.clicked.connect(mic_test)
     yes_btn.clicked.connect(on_yes)

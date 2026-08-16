@@ -86,7 +86,23 @@ def check_timer_tick() -> Optional[str]:
 
 
 def play_alert() -> None:
+    """Alarm / timer sound — piezo first, USB CM108 fallback."""
+
     def _run() -> None:
+        try:
+            from esp_handset.audio_out import _sounds_on
+
+            if not _sounds_on():
+                return
+        except Exception:
+            pass
+        try:
+            from esp_handset.buzzer import alert
+
+            if alert():
+                return
+        except Exception:
+            pass
         try:
             from esp_handset.audio_out import play_test_tone
 
