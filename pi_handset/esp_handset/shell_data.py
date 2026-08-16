@@ -85,11 +85,11 @@ MEDIA_APPS = [
 
 GAMES_APPS = [
     AppEntry("gb", "Game Boy", "GB / GBC ROMs", "♠"),
-    AppEntry("snake", "Snake", "", "◆"),
-    AppEntry("pong", "Pong", "", "○"),
-    AppEntry("tetris", "Tetris", "", "▣"),
-    AppEntry("solitaire", "Solitaire", "", "♠"),
-    AppEntry("uno", "Uno", "", "U"),
+    AppEntry("snake", "Snake", "Arcade · high score", "◆"),
+    AppEntry("pong", "Pong", "Arcade · vs AI", "○"),
+    AppEntry("tetris", "Tetris", "Arcade · stack", "▣"),
+    AppEntry("solitaire", "Solitaire", "Klondike cards", "♠"),
+    AppEntry("uno", "Uno", "Match color · number", "U"),
 ]
 
 # Settings → Debug hub

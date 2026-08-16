@@ -46,8 +46,9 @@ from esp_handset.incoming_call import IncomingCallOverlay
 _GAME_PAGES = {e.key for e in GAMES_APPS}
 # Live boards (timers + own keys) — not button-driven solitaire/uno
 _ARCADE_PAGES = {"snake", "pong", "tetris"}
-# In-UI GB (PyBoy) also eats pad keys while playing
-_GAMEPAD_PAGES = _ARCADE_PAGES | {"gb"}
+_CARD_GAME_PAGES = {"solitaire", "uno"}
+# Pad routes to game_shell / GB while on these pages
+_GAMEPAD_PAGES = _ARCADE_PAGES | _CARD_GAME_PAGES | {"gb"}
 
 __all__ = [
     "PhoneShell",
@@ -758,9 +759,38 @@ class PhoneShell(QMainWindow):
                         board.setFocus(Qt.OtherFocusReason)
                     event.accept()
                     return
+                game_shell = getattr(page, "game_shell", None)
+                if game_shell is not None:
+                    if key in (Qt.Key_Left, Qt.Key_Right):
+                        dx = -1 if key == Qt.Key_Left else 1
+                        game_shell.digi_nav(dx, 0)
+                        self._nav_click()
+                        event.accept()
+                        return
+                    if key in (Qt.Key_Up, Qt.Key_Down):
+                        dy = -1 if key == Qt.Key_Up else 1
+                        game_shell.digi_nav(0, dy)
+                        self._nav_click()
+                        event.accept()
+                        return
+                    if key in (Qt.Key_Return, Qt.Key_Enter):
+                        game_shell.digi_confirm()
+                        event.accept()
+                        return
+                    # Space → restart / board key handler when playing
+                    play = getattr(game_shell, "board", None)
+                    if play is not None and hasattr(play, "keyPressEvent"):
+                        if game_shell.stack.currentWidget() is getattr(
+                            game_shell, "play_page", None
+                        ):
+                            play.keyPressEvent(event)
+                            event.accept()
+                            return
+                    event.accept()
+                    return
                 for w in page.findChildren(QWidget):
                     mod = getattr(w.__class__, "__module__", "") or ""
-                    if mod.endswith("games_ui") and hasattr(w, "keyPressEvent"):
+                    if mod.endswith("games_ui") and hasattr(w, "tick"):
                         w.keyPressEvent(event)
                         if not w.hasFocus():
                             w.setFocus(Qt.OtherFocusReason)
