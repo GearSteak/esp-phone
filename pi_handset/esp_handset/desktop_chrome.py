@@ -1,4 +1,9 @@
-"""Hide / restore desktop taskbars so Digivice can own the screen."""
+"""Hide / restore desktop taskbars so Digivice can own the screen.
+
+Keep this gentle: hard-killing wf-panel-pi / lxpanel (and X11 bypass windows)
+was crashing Digivice on open under Bookworm / labwc. Soft-hide is enough.
+Optional: ESP_HANDSET_KILL_PANEL=1 for the aggressive path.
+"""
 from __future__ import annotations
 
 import os
@@ -19,25 +24,29 @@ def _run(cmd: List[str], timeout: float = 2.0) -> None:
         pass
 
 
+def _want_hard_kill() -> bool:
+    return os.environ.get("ESP_HANDSET_KILL_PANEL", "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+
+
 def hide_desktop_chrome() -> None:
-    """Hide LXDE / PIXEL / labwc panels so they don't peek under Digivice."""
-    # Soft hide first
+    """Tuck the taskbar so Digivice can paint full-screen."""
     _run(["lxpanelctl", "hide"])
-    # Bookworm Wayland / labwc panel
+    if not _want_hard_kill():
+        return
+    # Aggressive path (opt-in only — can destabilize the Pi desktop session)
     for name in (
         "wf-panel-pi",
         "wf-panel",
         "waybar",
         "lxpanel",
         "lxqt-panel",
-        "mate-panel",
-        "xfce4-panel",
-        "polybar",
     ):
         _run(["pkill", "-x", name])
-    # pcmanfm desktop icons can also sit on top
     _run(["pcmanfm", "--desktop-off"])
-    # Show desktop / minimize everything behind us
     _run(["wmctrl", "-k", "on"])
 
 
@@ -45,10 +54,9 @@ def show_desktop_chrome() -> None:
     """Best-effort restore when leaving Digivice for Linux desktop."""
     _run(["wmctrl", "-k", "off"])
     _run(["lxpanelctl", "show"])
-    # Restart common panels if they were killed
-    user = os.environ.get("USER") or os.environ.get("SUDO_USER") or "pi"
-    home = os.path.expanduser(f"~{user}") if user else os.path.expanduser("~")
-    # Prefer user session restart via dbus-free nohup
+    if not _want_hard_kill():
+        return
+    # Only restart panels if we may have killed them
     for cmd in (
         ["lxpanel", "--profile", "LXDE-pi"],
         ["lxpanel"],
@@ -65,4 +73,3 @@ def show_desktop_chrome() -> None:
             break
         except Exception:
             continue
-    del home  # reserved for future autostart paths

@@ -306,15 +306,19 @@ show_desktop_chrome() {
 }
 
 hide_desktop_chrome() {
+  # Soft-hide only. Hard-killing wf-panel-pi / lxpanel crashed Digivice on open.
+  # Opt-in hard kill: ESP_HANDSET_KILL_PANEL=1
   log "hide desktop taskbar / panels for Digivice"
   command -v lxpanelctl >/dev/null 2>&1 && lxpanelctl hide || true
-  command -v wmctrl >/dev/null 2>&1 && wmctrl -k on || true
-  pkill -x wf-panel-pi 2>/dev/null || true
-  pkill -x wf-panel 2>/dev/null || true
-  pkill -x waybar 2>/dev/null || true
-  pkill -x lxpanel 2>/dev/null || true
-  pkill -x lxqt-panel 2>/dev/null || true
-  pcmanfm --desktop-off 2>/dev/null || true
+  if [[ "${ESP_HANDSET_KILL_PANEL:-}" == "1" || "${ESP_HANDSET_KILL_PANEL:-}" == "true" ]]; then
+    command -v wmctrl >/dev/null 2>&1 && wmctrl -k on || true
+    pkill -x wf-panel-pi 2>/dev/null || true
+    pkill -x wf-panel 2>/dev/null || true
+    pkill -x waybar 2>/dev/null || true
+    pkill -x lxpanel 2>/dev/null || true
+    pkill -x lxqt-panel 2>/dev/null || true
+    pcmanfm --desktop-off 2>/dev/null || true
+  fi
 }
 
 # Always restore *system* cursor after SPI layout (no yellow overlay —

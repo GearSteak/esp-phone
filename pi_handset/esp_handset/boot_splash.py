@@ -132,17 +132,15 @@ def _splash_logo_path() -> Optional[Path]:
 
 
 class BootSplash(QWidget):
-    """Brand logo + status. Fullscreen overlay that covers the taskbar."""
+    """Brand logo + status. Fullscreen overlay (not an SPI kiosk source)."""
 
     finished = pyqtSignal(object)
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        # Bypass WM so panel struts cannot reserve a strip under/over us
+        # Normal topmost window — X11BypassWindowManagerHint crashed Digivice on Pi
         self.setWindowFlags(
-            Qt.FramelessWindowHint
-            | Qt.WindowStaysOnTopHint
-            | Qt.X11BypassWindowManagerHint
+            Qt.Window | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint
         )
         self.setAttribute(Qt.WA_DeleteOnClose, True)
         self.setAttribute(Qt.WA_ShowWithoutActivating, False)
@@ -169,29 +167,26 @@ class BootSplash(QWidget):
         self._tick.start(120)
 
     def cover_screen(self, screen) -> None:
-        """Cover the entire physical screen including taskbar strut area."""
+        """Pin this splash to one QScreen and go true fullscreen."""
         try:
             self.setScreen(screen)
         except Exception:
             pass
-        # Prefer full geometry (not availableGeometry — that excludes the panel)
         g = screen.geometry()
-        # Pad a few px past edges — some panels sit outside the reported rect
-        self.setGeometry(g.x() - 2, g.y() - 2, g.width() + 4, g.height() + 4)
+        self.setGeometry(g)
         self.show()
         QApplication.processEvents()
         try:
             h = self.windowHandle()
             if h is not None:
                 h.setScreen(screen)
+                h.setGeometry(g)
         except Exception:
             pass
+        self.showFullScreen()
+        self.setGeometry(g)
         self.raise_()
         self.activateWindow()
-        # Keep re-asserting on top while panels die
-        QTimer.singleShot(50, self.raise_)
-        QTimer.singleShot(200, self.raise_)
-        QTimer.singleShot(500, self.raise_)
 
 
     def set_finish_callback(self, cb: Callable[[UpdateCheck, bool], None]) -> None:
@@ -315,8 +310,6 @@ def run_boot_splash(app: QApplication) -> tuple:
     except Exception:
         pass
     app.processEvents()
-    time.sleep(0.15)  # let panels die before we paint
-    app.processEvents()
 
     from PyQt5.QtGui import QGuiApplication
 
@@ -329,9 +322,11 @@ def run_boot_splash(app: QApplication) -> tuple:
     splash: Optional[BootSplash] = None
 
     if not screens:
+        # Headless / no QScreen yet — still paint a large black window
         splash = BootSplash()
-        splash.setGeometry(0, 0, 1920, 1200)
-        splash.show()
+        splash.resize(1920, 1080)
+        splash.move(0, 0)
+        splash.showFullScreen()
         splash.raise_()
         overlays.append(splash)
     else:

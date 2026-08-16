@@ -99,10 +99,7 @@ class ScaledScreenHost(QWidget):
         self.setAttribute(Qt.WA_StyledBackground, True)
         self.setStyleSheet("background-color: #000;")
         self.setWindowFlags(
-            Qt.Window
-            | Qt.FramelessWindowHint
-            | Qt.WindowStaysOnTopHint
-            | Qt.X11BypassWindowManagerHint
+            Qt.Window | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint
         )
         self.setFocusPolicy(Qt.StrongFocus)
         try:
@@ -117,17 +114,18 @@ class ScaledScreenHost(QWidget):
 
     def place(self) -> None:
         g = self._screen.geometry()
-        # Cover panel strut — use full geometry + slight pad
-        self.setGeometry(g.x() - 2, g.y() - 2, g.width() + 4, g.height() + 4)
+        self.setGeometry(g)
         self.show()
         QApplication.processEvents()
         try:
             h = self.windowHandle()
             if h is not None:
                 h.setScreen(self._screen)
+                h.setGeometry(g)
         except Exception:
             pass
-        # Bypass WM already set — avoid showFullScreen (conflicts with Bypass)
+        self.showFullScreen()
+        self.setGeometry(g)
         self.raise_()
         print(
             f"[handset] HDMI/host FULL {self._screen.name()!r} "
