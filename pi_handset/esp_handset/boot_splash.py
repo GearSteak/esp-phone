@@ -132,17 +132,23 @@ def _splash_logo_path() -> Optional[Path]:
 
 
 class BootSplash(QWidget):
-    """Brand logo + status. Not an SPI kiosk source."""
+    """Brand logo + status. Fullscreen overlay (not an SPI kiosk source)."""
 
     finished = pyqtSignal(object)
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        # Window (not Tool) so we can truly cover the desktop / taskbar
         self.setWindowFlags(
-            Qt.FramelessWindowHint | Qt.Tool | Qt.WindowStaysOnTopHint
+            Qt.Window | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint
         )
         self.setAttribute(Qt.WA_DeleteOnClose, True)
+        self.setAttribute(Qt.WA_ShowWithoutActivating, False)
         self.setFocusPolicy(Qt.StrongFocus)
+        try:
+            self.setCursor(Qt.BlankCursor)
+        except Exception:
+            pass
         self._line = "hello ·"
         self._sub = ""
         self._pulse = 0
@@ -159,6 +165,29 @@ class BootSplash(QWidget):
         self._tick = QTimer(self)
         self._tick.timeout.connect(self._on_pulse)
         self._tick.start(120)
+
+    def cover_screen(self, screen) -> None:
+        """Pin this splash to one QScreen and go true fullscreen."""
+        try:
+            self.setScreen(screen)
+        except Exception:
+            pass
+        g = screen.geometry()
+        self.setGeometry(g)
+        self.show()
+        QApplication.processEvents()
+        try:
+            h = self.windowHandle()
+            if h is not None:
+                h.setScreen(screen)
+                h.setGeometry(g)
+        except Exception:
+            pass
+        self.showFullScreen()
+        self.setGeometry(g)
+        self.raise_()
+        self.activateWindow()
+
 
     def set_finish_callback(self, cb: Callable[[UpdateCheck, bool], None]) -> None:
         self._finish_cb = cb
@@ -265,6 +294,37 @@ class BootSplash(QWidget):
             p.drawText(8, h - 20, w - 16, 14, Qt.AlignHCenter, self._sub)
 
 
+def _hide_desktop_chrome() -> None:
+    """Tuck LXDE / panel taskbars so splash isn't peeking under them."""
+    for cmd in (
+        ["lxpanelctl", "hide"],
+        ["wf-panel-pi", "-q"],  # may no-op
+    ):
+        try:
+            subprocess.run(
+                cmd,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=1.5,
+                check=False,
+            )
+        except Exception:
+            pass
+
+
+def _show_desktop_chrome() -> None:
+    try:
+        subprocess.run(
+            ["lxpanelctl", "show"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=1.5,
+            check=False,
+        )
+    except Exception:
+        pass
+
+
 def _pump(app: QApplication, seconds: float) -> None:
     end = time.time() + max(0.0, seconds)
     while time.time() < end:
@@ -273,23 +333,59 @@ def _pump(app: QApplication, seconds: float) -> None:
 
 
 def run_boot_splash(app: QApplication) -> tuple:
-    """Show splash, check updates (capped), return (UpdateCheck, want_update)."""
-    try:
-        from esp_handset import display_geom as geom
+    """Show fullscreen splash on every screen, check updates, return result."""
+    _hide_desktop_chrome()
 
-        w, h = int(getattr(geom, "W", 320)), int(getattr(geom, "H", 240))
-    except Exception:
-        w, h = 320, 240
+    from PyQt5.QtGui import QGuiApplication
 
-    splash = BootSplash()
-    splash.resize(w, h)
-    splash.show()
-    splash.raise_()
-    splash.activateWindow()
+    screens = list(QGuiApplication.screens() or [])
+    primary = QGuiApplication.primaryScreen()
+    if primary is not None and primary not in screens:
+        screens.insert(0, primary)
+
+    overlays: list = []
+    splash: Optional[BootSplash] = None
+
+    if not screens:
+        # Headless / no QScreen yet — still paint a large black window
+        splash = BootSplash()
+        splash.resize(1920, 1080)
+        splash.move(0, 0)
+        splash.showFullScreen()
+        splash.raise_()
+        overlays.append(splash)
+    else:
+        for i, scr in enumerate(screens):
+            w = BootSplash()
+            w.cover_screen(scr)
+            overlays.append(w)
+            if i == 0 or scr is primary:
+                splash = w
+        if splash is None:
+            splash = overlays[0]
+
+    assert splash is not None
     splash.setFocus(Qt.OtherFocusReason)
     app.processEvents()
 
+    def _broadcast_line(line: str, sub: str = "") -> None:
+        for w in overlays:
+            try:
+                w.set_line(line, sub)
+            except Exception:
+                pass
+
+    def _close_all() -> None:
+        for w in overlays:
+            try:
+                w.hide()
+                w.close()
+            except Exception:
+                pass
+        overlays.clear()
+
     splash.set_line("hello ·", "checking updates")
+    _broadcast_line("hello ·", "checking updates")
     app.processEvents()
 
     box: dict = {"result": None}
@@ -303,49 +399,53 @@ def run_boot_splash(app: QApplication) -> tuple:
     t0 = time.time()
     while th.is_alive() and (time.time() - t0) < 8.0:
         if time.time() - t0 > 2.5:
-            splash.set_line("looking around ·", "wifi · git")
+            _broadcast_line("looking around ·", "wifi · git")
         app.processEvents()
         time.sleep(0.04)
     th.join(timeout=0.5)
 
-    result = box["result"] or UpdateCheck("offline", "Taking too long")
-    splash.apply_result(result)
+    result = box["result"] or UpdateCheck("error", "check stalled")
+    for w in overlays:
+        try:
+            w.apply_result(result)
+        except Exception:
+            pass
     app.processEvents()
 
-    outcome: dict = {"done": False, "want": False, "result": result}
+    done: dict = {"ok": False, "want": False, "res": result}
 
     def _fin(res: UpdateCheck, want: bool) -> None:
-        outcome["result"] = res
-        outcome["want"] = want
-        outcome["done"] = True
+        done["ok"] = True
+        done["want"] = bool(want)
+        done["res"] = res
 
     splash.set_finish_callback(_fin)
+    # Extra overlays: any key finishes without update
+    for w in overlays:
+        if w is splash:
+            continue
+        w.set_finish_callback(_fin)
 
     if result.status == "available":
-        splash.set_line("update ready ·", "Confirm = update  ·  Back = later")
-        deadline = time.time() + 8.0
-        while not outcome["done"] and time.time() < deadline:
-            app.processEvents()
-            time.sleep(0.04)
-        if not outcome["done"]:
-            splash.request_finish(want_update=False)
+        _broadcast_line("update ready ·", "Confirm = update  ·  Back = later")
+        # Wait for Confirm / Back (buttons → keys)
+        wait_s = 12.0
     else:
-        _pump(app, 0.9 if result.status == "up_to_date" else 0.7)
-        if not outcome["done"]:
-            splash.request_finish(want_update=False)
+        wait_s = 1.4
+        QTimer.singleShot(
+            int(wait_s * 1000),
+            lambda: splash.request_finish(want_update=False),
+        )
 
-    guard = time.time() + 1.0
-    while not outcome["done"] and time.time() < guard:
+    t1 = time.time()
+    while not done["ok"] and (time.time() - t1) < max(wait_s + 2.0, 14.0):
         app.processEvents()
-        time.sleep(0.02)
-    if not outcome["done"]:
-        outcome["done"] = True
-        outcome["want"] = False
+        time.sleep(0.03)
 
-    try:
-        splash.hide()
-        splash.close()
-    except Exception:
-        pass
+    if not done["ok"]:
+        splash.request_finish(want_update=False)
+
+    _close_all()
+    # Digivice kiosk will cover again; don't force panel show (phone mode)
     app.processEvents()
-    return outcome["result"], bool(outcome["want"])
+    return done["res"], bool(done["want"])
