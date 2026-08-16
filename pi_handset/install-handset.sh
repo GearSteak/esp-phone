@@ -282,12 +282,16 @@ EOF
 
 cat >/etc/systemd/system/cardkb-inputd.service <<EOF
 [Unit]
-Description=Optional CardKB I2C
+Description=Digivice CardKB I2C → uinput + xdotool
 After=multi-user.target
 
 [Service]
 Type=simple
 User=root
+Environment=DISPLAY=:0
+Environment=XAUTHORITY=/home/$USER_NAME/.Xauthority
+ExecStartPre=-/sbin/modprobe uinput
+ExecStartPre=-/sbin/modprobe i2c-dev
 ExecStart=/usr/bin/python3 $PREFIX/cardkb_inputd.py
 Restart=always
 RestartSec=2

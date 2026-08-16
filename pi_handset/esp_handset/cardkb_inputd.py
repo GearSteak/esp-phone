@@ -1,28 +1,30 @@
 #!/usr/bin/env python3
-"""M5Stack CardKB on Pi I2C → uinput (Digivice nav + typing).
+"""M5Stack CardKB on Pi I2C → Digivice (uinput + xdotool).
 
 Wiring (Pi 40-pin):
-  CardKB 5V  → Pin 2  (5V)
+  CardKB 5V  → Pin 2  (5V)   — not 3.3V
   CardKB GND → Pin 6  (GND)
   CardKB SDA → Pin 3  (GPIO 2 / SDA1)
   CardKB SCL → Pin 5  (GPIO 3 / SCL1)
 
-Poll /dev/i2c-1 @ 0x5F. Survives I2C wedges (reopen bus) and emit errors.
-Prefer slower I2C baud on Pi Zero: dtparam=i2c_arm_baudrate=50000
+Poll /dev/i2c-1 @ 0x5F. Same dual inject as digi-buttons (uinput + xdotool)
+so keys reach Digivice on the SPI kiosk display.
+Prefer: dtparam=i2c_arm_baudrate=50000
 """
 
 from __future__ import annotations
 
 import argparse
 import fcntl
+import os
+import subprocess
 import sys
 import time
-from typing import Any, Optional
+from pathlib import Path
+from typing import Any, List, Optional
 
 ADDR = 0x5F
-
-# linux/i2c-dev.h — timeout in units of 10 ms
-I2C_TIMEOUT = 0x0702
+I2C_TIMEOUT = 0x0702  # linux/i2c-dev.h — units of 10 ms
 
 ARROW = {
     0xB4: "LEFT",
@@ -56,7 +58,7 @@ PUNCT = {
     "*": "KEY_8",
     "(": "KEY_9",
     ")": "KEY_0",
-    "`": "KEY_ESC",  # CardKB ~/` often used as escape-ish
+    "`": "KEY_ESC",
     "~": "KEY_ESC",
     "[": "KEY_LEFTBRACE",
     "{": "KEY_LEFTBRACE",
@@ -67,23 +69,109 @@ PUNCT = {
 }
 NEEDS_SHIFT = set(':!@#$%^&*()<>?"_+{}|~')
 
+# xdotool key names for specials / arrows
+XDOTOOL_SPECIAL = {
+    "UP": "Up",
+    "DOWN": "Down",
+    "LEFT": "Left",
+    "RIGHT": "Right",
+    "ENTER": "Return",
+    "ESC": "Escape",
+    "BACKSPACE": "BackSpace",
+    "TAB": "Tab",
+    "SPACE": "space",
+}
+
+
+def log(msg: str) -> None:
+    print(msg, flush=True)
+
+
+def _which(name: str) -> Optional[str]:
+    for d in os.environ.get("PATH", "/usr/bin:/bin").split(":"):
+        p = os.path.join(d, name)
+        if os.path.isfile(p) and os.access(p, os.X_OK):
+            return p
+    return None
+
+
+def _find_xauthority() -> Optional[str]:
+    for cand in (
+        os.environ.get("XAUTHORITY") or "",
+        "/home/pi/.Xauthority",
+        str(Path.home() / ".Xauthority"),
+    ):
+        if cand and os.path.isfile(cand):
+            return cand
+    # Common Digivice user homes
+    for home in Path("/home").glob("*/.Xauthority"):
+        return str(home)
+    return None
+
+
+class XInject:
+    """Mirror digi-buttons: push keys into the Digivice X session."""
+
+    def __init__(self) -> None:
+        self.display = os.environ.get("DISPLAY") or ":0"
+        self.auth = _find_xauthority()
+        self.xdotool = _which("xdotool")
+        self.ok = bool(self.xdotool)
+        if self.ok:
+            log(
+                f"X inject ON display={self.display} "
+                f"XAUTHORITY={self.auth or '(none)'}"
+            )
+        else:
+            log("X inject OFF — sudo apt install xdotool (uinput only)")
+
+    def _env(self) -> dict:
+        env = os.environ.copy()
+        env["DISPLAY"] = self.display
+        if self.auth:
+            env["XAUTHORITY"] = self.auth
+        return env
+
+    def _run(self, args: List[str]) -> None:
+        if not self.ok:
+            return
+        try:
+            subprocess.run(
+                [self.xdotool, *args],
+                env=self._env(),
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=0.8,
+                check=False,
+            )
+        except Exception:
+            pass
+
+    def key_named(self, name: str) -> None:
+        if name:
+            self._run(["key", "--clearmodifiers", name])
+
+    def type_char(self, ch: str) -> None:
+        if not ch:
+            return
+        # type is more reliable for letters than synthesizing Shift+key
+        self._run(["type", "--clearmodifiers", "--delay", "1", "--", ch])
+
 
 def _open_bus(smbus_mod: Any, bus_id: int) -> Any:
     bus = smbus_mod.SMBus(bus_id)
-    # Bound hung clock-stretch / NACK so one bad read cannot freeze the daemon
     try:
         fd = getattr(bus, "fd", None)
         if fd is None and hasattr(bus, "_fd"):
             fd = bus._fd
         if fd is not None:
-            fcntl.ioctl(fd, I2C_TIMEOUT, 5)  # 50 ms
+            fcntl.ioctl(fd, I2C_TIMEOUT, 8)  # 80 ms
     except Exception:
         pass
     return bus
 
 
 def _read_key(bus: Any) -> int:
-    """Raw 1-byte I2C read (CardKB protocol). Prefer i2c_rdwr when available."""
     try:
         from smbus2 import i2c_msg  # type: ignore
 
@@ -95,10 +183,19 @@ def _read_key(bus: Any) -> int:
         return int(bus.read_byte(ADDR)) & 0xFF
 
 
+def _probe(bus: Any) -> bool:
+    """True if something ACKs at 0x5F."""
+    try:
+        _read_key(bus)
+        return True
+    except OSError:
+        return False
+
+
 def main() -> int:
-    ap = argparse.ArgumentParser(description="CardKB → uinput for Digivice")
+    ap = argparse.ArgumentParser(description="CardKB → Digivice (uinput + xdotool)")
     ap.add_argument("bus", nargs="?", type=int, default=1, help="I2C bus (default 1)")
-    ap.add_argument("--hz", type=float, default=40.0, help="Poll rate Hz")
+    ap.add_argument("--hz", type=float, default=50.0, help="Poll rate Hz")
     ap.add_argument("-v", "--verbose", action="store_true", help="Log every keycode")
     args = ap.parse_args()
 
@@ -115,6 +212,16 @@ def main() -> int:
     except ImportError:
         print("python3-uinput required", file=sys.stderr)
         return 1
+
+    try:
+        subprocess.run(
+            ["modprobe", "uinput"],
+            check=False,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    except Exception:
+        pass
 
     events = [uinput.KEY_A + i for i in range(26)]
     events += [uinput.KEY_0 + i for i in range(10)]
@@ -142,21 +249,11 @@ def main() -> int:
         uinput.KEY_BACKSLASH,
     ]
     device = uinput.Device(events, name="Digivice-CardKB")
+    xinj = XInject()
 
     bus: Optional[Any] = None
-    try:
-        bus = _open_bus(smbus, args.bus)
-    except OSError as e:
-        print(f"open i2c-{args.bus}: {e} (enable I2C, check wiring)", file=sys.stderr)
-        return 1
 
-    print(
-        f"cardkb-inputd ready bus={args.bus} addr=0x{ADDR:02X} "
-        f"(arrows=nav Enter=confirm Esc=back)",
-        flush=True,
-    )
-
-    def reopen() -> None:
+    def reopen() -> bool:
         nonlocal bus
         try:
             if bus is not None:
@@ -164,51 +261,76 @@ def main() -> int:
         except Exception:
             pass
         bus = None
-        time.sleep(0.15)
+        time.sleep(0.2)
         try:
             bus = _open_bus(smbus, args.bus)
-            print("CardKB I2C reopened", flush=True)
+            return True
         except OSError as e:
-            print(f"CardKB reopen failed: {e}", flush=True)
-            time.sleep(0.5)
+            log(f"open i2c-{args.bus}: {e} — waiting (enable I2C / check wiring)")
+            time.sleep(1.5)
+            return False
 
-    def tap(code: int) -> None:
+    log(
+        f"cardkb-inputd ready bus={args.bus} addr=0x{ADDR:02X} "
+        f"(uinput+xdotool · arrows=nav Enter=confirm Esc=back)"
+    )
+
+    def tap_uinput(code: int) -> None:
         device.emit(code, 1)
         time.sleep(0.012)
         device.emit(code, 0)
 
+    def emit_special(logical: str, u_code: int) -> None:
+        # Prefer xdotool (same path as digi-buttons into Digivice). Avoid
+        # dual-fire doubles that plagued Escape.
+        if xinj.ok:
+            xinj.key_named(XDOTOOL_SPECIAL.get(logical, ""))
+            return
+        try:
+            tap_uinput(u_code)
+        except Exception as e:
+            log(f"uinput {logical}: {e}")
+
     def emit_char(ch: str) -> None:
+        if ch in ("`", "~"):
+            emit_special("ESC", uinput.KEY_ESC)
+            return
+        if xinj.ok:
+            xinj.type_char(ch)
+            return
+        # Fallback: synthesize via uinput when X inject is unavailable
         need_shift = ch.isupper() or ch in NEEDS_SHIFT
         base = ch.lower() if ch.isalpha() else ch
-        if ch in ("`", "~"):
-            tap(uinput.KEY_ESC)
-            return
-        if ch in PUNCT:
-            name = PUNCT[ch]
-            if name == "KEY_ESC":
-                tap(uinput.KEY_ESC)
-                return
-            code = getattr(uinput, name)
-        elif "a" <= base <= "z":
-            code = getattr(uinput, f"KEY_{base.upper()}")
-        elif "0" <= base <= "9":
-            code = getattr(uinput, f"KEY_{base}")
-        else:
-            return
-        shift_down = False
         try:
-            if need_shift:
-                device.emit(uinput.KEY_LEFTSHIFT, 1)
-                shift_down = True
-            device.emit(code, 1)
-            time.sleep(0.01)
-            device.emit(code, 0)
-        finally:
-            if shift_down:
-                try:
-                    device.emit(uinput.KEY_LEFTSHIFT, 0)
-                except Exception:
-                    pass
+            if ch in PUNCT:
+                name = PUNCT[ch]
+                if name == "KEY_ESC":
+                    emit_special("ESC", uinput.KEY_ESC)
+                    return
+                code = getattr(uinput, name)
+            elif "a" <= base <= "z":
+                code = getattr(uinput, f"KEY_{base.upper()}")
+            elif "0" <= base <= "9":
+                code = getattr(uinput, f"KEY_{base}")
+            else:
+                return
+            shift_down = False
+            try:
+                if need_shift:
+                    device.emit(uinput.KEY_LEFTSHIFT, 1)
+                    shift_down = True
+                device.emit(code, 1)
+                time.sleep(0.01)
+                device.emit(code, 0)
+            finally:
+                if shift_down:
+                    try:
+                        device.emit(uinput.KEY_LEFTSHIFT, 0)
+                    except Exception:
+                        pass
+        except Exception as e:
+            if args.verbose:
+                log(f"uinput char {ch!r}: {e}")
 
     def handle(raw: int) -> None:
         if raw in ARROW:
@@ -219,32 +341,30 @@ def main() -> int:
                 "LEFT": uinput.KEY_LEFT,
                 "RIGHT": uinput.KEY_RIGHT,
             }[name]
-            tap(code)
+            emit_special(name, code)
             return
         if raw in (0x0D, 0x0A):
-            tap(uinput.KEY_ENTER)
+            emit_special("ENTER", uinput.KEY_ENTER)
             return
         if raw == 0x1B:
-            tap(uinput.KEY_ESC)
+            emit_special("ESC", uinput.KEY_ESC)
             return
         if raw in (0x08, 0x7F):
-            tap(uinput.KEY_BACKSPACE)
+            emit_special("BACKSPACE", uinput.KEY_BACKSPACE)
             return
         if raw == 0x09:
-            tap(uinput.KEY_TAB)
+            emit_special("TAB", uinput.KEY_TAB)
             return
         if raw == 0x20:
-            tap(uinput.KEY_SPACE)
+            emit_special("SPACE", uinput.KEY_SPACE)
             return
         if 32 <= raw < 127:
             emit_char(chr(raw))
             return
-        # Fn-layer / unknown — ignore quietly (or log)
         if args.verbose:
-            print(f"cardkb skip 0x{raw:02X}", flush=True)
+            log(f"cardkb skip 0x{raw:02X}")
 
     def drain() -> None:
-        """Clear any leftover key byte so the unit does not stick."""
         if bus is None:
             return
         for _ in range(4):
@@ -253,37 +373,48 @@ def main() -> int:
                     return
             except OSError:
                 return
-            time.sleep(0.01)
+            time.sleep(0.008)
 
     period = 1.0 / max(args.hz, 5.0)
     seen = False
     fail_streak = 0
+    last_probe_log = 0.0
 
     while True:
         if bus is None:
-            reopen()
-            if bus is None:
+            if not reopen():
                 continue
+            if _probe(bus):
+                log(f"CardKB ACK at 0x{ADDR:02X} on i2c-{args.bus}")
+                seen = True
+            else:
+                now = time.monotonic()
+                if now - last_probe_log > 8.0:
+                    log(
+                        f"No ACK at 0x{ADDR:02X} — check 5V/GND/SDA/SCL "
+                        f"(pin 2/6/3/5) · sudo i2cdetect -y {args.bus}"
+                    )
+                    last_probe_log = now
+                time.sleep(1.0)
+                continue
+
         try:
             raw = _read_key(bus)
             fail_streak = 0
         except OSError as e:
             fail_streak += 1
-            if seen or fail_streak == 1:
-                print(f"CardKB I2C error ({e}) — reopen", flush=True)
+            if seen or fail_streak <= 2:
+                log(f"CardKB I2C error ({e}) — reopen")
             seen = False
-            if fail_streak >= 1:
-                reopen()
-            else:
-                time.sleep(0.2)
+            reopen()
             continue
         except Exception as e:
-            print(f"CardKB read bug: {e!r}", flush=True)
+            log(f"CardKB read bug: {e!r}")
             reopen()
             continue
 
         if not seen:
-            print("CardKB online", flush=True)
+            log("CardKB online")
             seen = True
 
         if raw == 0:
@@ -291,13 +422,12 @@ def main() -> int:
             continue
 
         if args.verbose:
-            print(f"cardkb 0x{raw:02X}", flush=True)
+            log(f"cardkb 0x{raw:02X}")
 
         try:
             handle(raw)
         except Exception as e:
-            print(f"CardKB emit error 0x{raw:02X}: {e!r}", flush=True)
-            # Release modifiers if a partial emit left them down
+            log(f"CardKB emit error 0x{raw:02X}: {e!r}")
             try:
                 device.emit(uinput.KEY_LEFTSHIFT, 0)
             except Exception:
@@ -307,7 +437,7 @@ def main() -> int:
             drain()
         except Exception:
             pass
-        time.sleep(max(0.02, period * 0.5))
+        time.sleep(max(0.015, period * 0.4))
 
     return 0
 

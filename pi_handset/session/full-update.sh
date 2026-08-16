@@ -262,6 +262,7 @@ install -m 755 "$ROOT/session/gui-update.sh" "$PREFIX/session/gui-update.sh"
 install -m 755 "$ROOT/session/gui-update.sh" /usr/local/bin/digivice-gui-update
 install -m 755 "$ROOT/session/update-handset.sh" /usr/local/bin/digivice-update 2>/dev/null || true
 install -m 755 "$ROOT/session/ensure-buttons.sh" /usr/local/bin/digivice-ensure-buttons 2>/dev/null || true
+install -m 755 "$ROOT/session/ensure-cardkb.sh" /usr/local/bin/digivice-ensure-cardkb 2>/dev/null || true
 if [[ -f "$ROOT/session/home-relaunch.sh" ]]; then
   install -m 755 "$ROOT/session/home-relaunch.sh" "$PREFIX/session/home-relaunch.sh"
   install -m 755 "$ROOT/session/home-relaunch.sh" /usr/local/bin/digivice-home-relaunch
@@ -476,6 +477,7 @@ $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-apply-update
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-power
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-set-rotation
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-ensure-buttons
+$USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-ensure-cardkb
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-ensure-gb
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-stop-gb
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-modem-uart
@@ -490,6 +492,7 @@ $USER_NAME ALL=(root) NOPASSWD: $PREFIX/session/update-handset.sh
 $USER_NAME ALL=(root) NOPASSWD: $PREFIX/session/gui-update.sh
 $USER_NAME ALL=(root) NOPASSWD: $PREFIX/session/power.sh
 $USER_NAME ALL=(root) NOPASSWD: $PREFIX/session/ensure-buttons.sh
+$USER_NAME ALL=(root) NOPASSWD: $PREFIX/session/ensure-cardkb.sh
 $USER_NAME ALL=(root) NOPASSWD: $PREFIX/session/ensure-gb-wrappers.sh
 $USER_NAME ALL=(root) NOPASSWD: /usr/bin/bash $PREFIX/session/gui-update.sh
 $USER_NAME ALL=(root) NOPASSWD: /bin/bash $PREFIX/session/gui-update.sh
@@ -565,12 +568,16 @@ EOF
 
 cat >/etc/systemd/system/cardkb-inputd.service <<EOF
 [Unit]
-Description=Digivice CardKB I2C → uinput
+Description=Digivice CardKB I2C → uinput + xdotool
 After=multi-user.target
 
 [Service]
 Type=simple
 User=root
+Environment=DISPLAY=:0
+Environment=XAUTHORITY=$USER_HOME/.Xauthority
+ExecStartPre=-/sbin/modprobe uinput
+ExecStartPre=-/sbin/modprobe i2c-dev
 ExecStart=/usr/bin/python3 $PREFIX/cardkb_inputd.py
 Restart=always
 RestartSec=2
@@ -604,6 +611,9 @@ systemctl disable t9-keypad-inputd.service hat-inputd.service 2>/dev/null || tru
 
 if [[ -x /usr/local/bin/digivice-ensure-buttons ]]; then
   bash /usr/local/bin/digivice-ensure-buttons 2>&1 | tee -a "$LOG" || true
+fi
+if [[ -x /usr/local/bin/digivice-ensure-cardkb ]]; then
+  bash /usr/local/bin/digivice-ensure-cardkb 2>&1 | tee -a "$LOG" || true
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════

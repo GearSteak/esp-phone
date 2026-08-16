@@ -110,6 +110,7 @@ install_live_from_repo() {
     "power.sh:digivice-power" \
     "desktop-spi-mirror.sh:digivice-desktop-mirror" \
     "ensure-buttons.sh:digivice-ensure-buttons" \
+    "ensure-cardkb.sh:digivice-ensure-cardkb" \
     "digivice-audio-doctor.sh:digivice-audio-doctor" \
     "digivice-audio-usb.sh:digivice-audio-usb" \
     "digivice-audio-fix.sh:digivice-audio-fix" \
@@ -288,6 +289,7 @@ $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-apply-update
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-power
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-set-rotation
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-ensure-buttons
+$USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-ensure-cardkb
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-ensure-gb
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-stop-gb
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-modem-uart
@@ -302,6 +304,7 @@ $USER_NAME ALL=(root) NOPASSWD: $PREFIX/session/gui-update.sh
 $USER_NAME ALL=(root) NOPASSWD: $PREFIX/session/apply-update.sh
 $USER_NAME ALL=(root) NOPASSWD: $PREFIX/session/power.sh
 $USER_NAME ALL=(root) NOPASSWD: $PREFIX/session/ensure-buttons.sh
+$USER_NAME ALL=(root) NOPASSWD: $PREFIX/session/ensure-cardkb.sh
 EOF
   chmod 440 /etc/sudoers.d/esp-handset-update
   log "sudoers restored (incl. digivice-audio-fix + cm108-wake)"

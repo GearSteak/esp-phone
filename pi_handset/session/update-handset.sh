@@ -208,6 +208,7 @@ install_tree() {
       "desktop-spi-mirror.sh:digivice-desktop-mirror" \
       "update-handset.sh:digivice-update" \
       "ensure-buttons.sh:digivice-ensure-buttons" \
+      "ensure-cardkb.sh:digivice-ensure-cardkb" \
       "fix-cursor.sh:digivice-fix-cursor" \
       "restore-desktop-displays.sh:digivice-restore-desktop" \
       "hdmi-hotplug.sh:digivice-hdmi-hotplug" \
@@ -302,6 +303,7 @@ $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-apply-update
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-power
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-set-rotation
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-ensure-buttons
+$USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-ensure-cardkb
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-ensure-gb
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-stop-gb
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-modem-uart
@@ -316,6 +318,7 @@ $USER_NAME ALL=(root) NOPASSWD: $PREFIX/session/gui-update.sh
 $USER_NAME ALL=(root) NOPASSWD: $PREFIX/session/apply-update.sh
 $USER_NAME ALL=(root) NOPASSWD: $PREFIX/session/power.sh
 $USER_NAME ALL=(root) NOPASSWD: $PREFIX/session/ensure-buttons.sh
+$USER_NAME ALL=(root) NOPASSWD: $PREFIX/session/ensure-cardkb.sh
 EOF
     chmod 440 /etc/sudoers.d/esp-handset-update
   fi
@@ -368,6 +371,12 @@ EOF
       systemctl daemon-reload 2>/dev/null || true
       systemctl enable digi-buttons-inputd.service 2>/dev/null || true
       systemctl restart digi-buttons-inputd.service 2>/dev/null || true
+    fi
+    if [[ -f "$PREFIX/session/ensure-cardkb.sh" ]]; then
+      bash "$PREFIX/session/ensure-cardkb.sh" 2>&1 | tee -a "$LOG" || true
+    else
+      systemctl enable cardkb-inputd.service 2>/dev/null || true
+      systemctl restart cardkb-inputd.service 2>/dev/null || true
     fi
     systemctl enable esp-keyd.service 2>/dev/null || true
     systemctl restart esp-keyd.service 2>/dev/null || true

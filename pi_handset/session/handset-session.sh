@@ -369,6 +369,36 @@ ensure_buttons_daemon() {
   fi
 }
 
+ensure_cardkb_daemon() {
+  if systemctl is-active --quiet cardkb-inputd 2>/dev/null \
+    || systemctl is-active --quiet cardkb-inputd.service 2>/dev/null; then
+    log "cardkb-inputd already active"
+    return 0
+  fi
+  log "cardkb-inputd not active — enabling"
+  local e
+  for e in \
+    /usr/local/bin/digivice-ensure-cardkb \
+    "$PREFIX/session/ensure-cardkb.sh" \
+    "$(dirname "$0")/ensure-cardkb.sh"
+  do
+    if [[ -f "$e" ]]; then
+      if [[ "$(id -u)" -eq 0 ]]; then
+        bash "$e" >>"$LOG" 2>&1 && return 0
+      fi
+      sudo -n bash "$e" >>"$LOG" 2>&1 && return 0
+      bash "$e" >>"$LOG" 2>&1 && return 0
+    fi
+  done
+  sudo -n systemctl enable --now cardkb-inputd 2>>"$LOG" \
+    || systemctl enable --now cardkb-inputd 2>>"$LOG" || true
+  if systemctl is-active --quiet cardkb-inputd 2>/dev/null; then
+    log "cardkb-inputd started"
+  else
+    log "WARN: cardkb-inputd still down — sudo digivice-ensure-cardkb --doctor"
+  fi
+}
+
 launch_phone() {
   if force_desktop_from_boot_flag; then
     show_desktop_chrome
@@ -392,6 +422,7 @@ launch_phone() {
   # Digivice phone UI — hide mouse (system + any leftover yellow overlay)
   hide_phone_cursor
   ensure_buttons_daemon
+  ensure_cardkb_daemon
   mode_set phone
   digivice_display_env
   apply_digivice_layout
