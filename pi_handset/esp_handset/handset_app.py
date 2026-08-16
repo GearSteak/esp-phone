@@ -367,6 +367,11 @@ def build_app(bridge: Optional[EspBridge], modem: Optional[Sim7600]) -> PhoneShe
         page = shell.pages.get("email")
         if page is None:
             return
+        for name in ("compose_to", "prefill_to"):
+            fn = getattr(page, name, None)
+            if callable(fn):
+                fn(str(addr or ""))
+                return
         for child in page.findChildren(QLineEdit):
             ph = (child.placeholderText() or "").lower()
             if "to" in ph or "email" in ph or not child.text():

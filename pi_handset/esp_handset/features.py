@@ -775,48 +775,6 @@ def make_accounts_page(on_back: Callable[[], None]) -> QWidget:
 
 
 def make_email_page(on_back: Callable[[], None]) -> QWidget:
-    body = QWidget()
-    lay = QVBoxLayout(body)
-    lst = QListWidget()
-    fetch = QPushButton("Fetch INBOX (IMAP)")
-    lay.addWidget(lst, 1)
-    lay.addWidget(fetch)
-    tip = QLabel("Set Accounts → Email app password first (Gmail IMAP).")
-    tip.setWordWrap(True)
-    tip.setStyleSheet("color:#9ab;")
-    lay.addWidget(tip)
+    from esp_handset.email_ui import make_email_page as _make
 
-    def do_fetch():
-        em = store.load("email.json", {})
-        user = em.get("user") or ""
-        password = em.get("pass") or ""
-        host = em.get("host") or "imap.gmail.com"
-        if not user or not password:
-            QMessageBox.warning(body, "Email", "Configure Accounts first")
-            return
-        try:
-            import imaplib
-            import email
-            from email.header import decode_header
-
-            M = imaplib.IMAP4_SSL(host, 993)
-            M.login(user, password)
-            M.select("INBOX")
-            typ, data = M.search(None, "ALL")
-            ids = data[0].split()[-15:]
-            lst.clear()
-            for num in reversed(ids):
-                typ, msg_data = M.fetch(num, "(BODY.PEEK[HEADER.FIELDS (SUBJECT FROM)])")
-                raw = msg_data[0][1].decode("utf-8", errors="replace")
-                subj = ""
-                for line in raw.splitlines():
-                    if line.lower().startswith("subject:"):
-                        subj = line.split(":", 1)[-1].strip()
-                lst.addItem(subj or f"Message {num.decode()}")
-            M.logout()
-            store.push_notif("Email", f"Fetched {lst.count()} headers", "email")
-        except Exception as e:
-            QMessageBox.warning(body, "Email", str(e))
-
-    fetch.clicked.connect(do_fetch)
-    return page_chrome("Email", body, on_back)
+    return _make(on_back)
