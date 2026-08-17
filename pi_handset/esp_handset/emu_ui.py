@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Set, Tuple
 
-from PyQt5.QtCore import Qt, QThread, pyqtSignal, QObject, QSize, QEvent, QTimer
+from PyQt5.QtCore import Qt, QThread, pyqtSignal, QObject, QSize, QTimer
 from PyQt5.QtGui import QImage, QPixmap, QKeyEvent
 from PyQt5.QtWidgets import (
     QLabel,
@@ -19,6 +19,7 @@ from PyQt5.QtWidgets import (
     QListWidgetItem,
     QPushButton,
     QSizePolicy,
+    QStackedWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -26,6 +27,22 @@ from PyQt5.QtWidgets import (
 from esp_handset.pages import page_chrome
 
 DATA = Path.home() / ".esp-handset"
+
+
+def _emu_log(msg: str) -> None:
+    line = f"{time.strftime('%H:%M:%S')} {msg}"
+    print(f"[emu] {msg}", flush=True)
+    try:
+        path = DATA / "emu-last.log"
+        prev = ""
+        if path.is_file():
+            prev = path.read_text(encoding="utf-8", errors="replace")
+        path.write_text(
+            "\n".join((prev + line + "\n").splitlines()[-80:]) + "\n",
+            encoding="utf-8",
+        )
+    except Exception:
+        pass
 
 # Confirm=A, Back=B, Home=Start, Select=Select — exit = hold Confirm+Back+Home
 _BTN_MAP = {
@@ -85,7 +102,7 @@ SYSTEMS: Dict[str, EmuSystem] = {
         "Famicom · fceumm",
         "◆",
         "nes",
-        (".nes", ".fds", ".unf", ".unif"),
+        (".nes", ".fds", ".unf", ".unif", ".zip"),
         ("fceumm_libretro.so", "nestopia_libretro.so", "quicknes_libretro.so"),
         (256, 240),
     ),
@@ -292,6 +309,7 @@ class EmuWorker(QThread):
 
     def run(self) -> None:
         try:
+            _emu_log(f"start {self._sys.key} {self._rom.name}")
             if self._sys.builtin or self._sys.key == "chip8":
                 self._run_chip8()
                 return
@@ -301,8 +319,11 @@ class EmuWorker(QThread):
                 self._run_pyboy()
                 return
             ok, msg = backend_status(self._sys)
-            self.failed.emit(msg if not ok else "Core failed to start")
+            err = msg if not ok else "Core failed to start"
+            _emu_log(err)
+            self.failed.emit(err)
         except Exception as e:
+            _emu_log(f"crash {e}")
             self.failed.emit(str(e)[:140])
         finally:
             self.stopped.emit()
@@ -378,13 +399,16 @@ class EmuWorker(QThread):
 
         core_paths = find_cores(self._sys.cores)
         if not core_paths:
+            _emu_log(f"no cores for {self._sys.key}: {self._sys.cores}")
             return False
         last_err = None
         for core_path in core_paths:
             try:
+                _emu_log(f"load {core_path.name}")
                 return self._run_one_core(core_path, LibretroCore, raw_to_rgb888)
             except Exception as e:
                 last_err = e
+                _emu_log(f"fail {core_path.name}: {e}")
                 continue
         if self._sys.key == "gb":
             return False
@@ -620,6 +644,9 @@ class EmuPlayView(QWidget):
         self._exit_timer = QTimer(self)
         self._exit_timer.setInterval(50)
         self._exit_timer.timeout.connect(self._poll_exit_combo)
+        self._boot_timer = QTimer(self)
+        self._boot_timer.setSingleShot(True)
+        self._boot_timer.timeout.connect(self._boot_timeout)
         self.setFocusPolicy(Qt.StrongFocus)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.setObjectName("emuPlayView")
@@ -654,17 +681,20 @@ class EmuPlayView(QWidget):
         self._exit_armed = True
         self.screen.setPixmap(QPixmap())
         self.screen.setText(f"Loading\n{rom.name}")
+        _emu_log(f"ui start {self._sys.key} {rom}")
         w = EmuWorker(rom, self._sys, self)
         w.frame.connect(self._on_frame)
         w.failed.connect(self._on_fail)
         self._worker = w
         w.start(QThread.HighPriority)
         self._exit_timer.start()
+        self._boot_timer.start(6000)
         self.setFocus(Qt.OtherFocusReason)
         self.raise_()
 
     def stop(self) -> None:
         self._exit_timer.stop()
+        self._boot_timer.stop()
         self._exit_since = None
         w = self._worker
         self._worker = None
@@ -749,11 +779,21 @@ class EmuPlayView(QWidget):
     def _on_frame(self, qimg: QImage) -> None:
         if qimg is None or qimg.isNull():
             return
+        self._boot_timer.stop()
         self._last_frame = qimg
         self.screen.setText("")
         self._paint_frame(qimg)
 
     def _on_fail(self, msg: str) -> None:
+        self._boot_timer.stop()
+        _emu_log(f"ui fail {msg}")
+        self.screen.setText(msg or "Core failed")
+
+    def _boot_timeout(self) -> None:
+        if self._last_frame is not None:
+            return
+        msg = "No video from core.\nNeed fceumm / nestopia\n(Settings → Update)\nor ROM not valid.\nBack = list"
+        _emu_log("ui boot timeout (no frames)")
         self.screen.setText(msg)
 
     def resizeEvent(self, e) -> None:  # noqa: N802
@@ -793,7 +833,8 @@ class EmuPlayView(QWidget):
         super().keyReleaseEvent(e)
 
     def hideEvent(self, e) -> None:  # noqa: N802
-        self.stop()
+        # Do not stop() here — stacked/layout hide/show would kill the core
+        # the instant Play starts. show_list / navigate-away stop instead.
         super().hideEvent(e)
 
 
@@ -803,11 +844,6 @@ def make_emu_page(
     *,
     on_receive: Optional[Callable[[], None]] = None,
 ) -> QWidget:
-    body = QWidget()
-    outer = QVBoxLayout(body)
-    outer.setContentsMargins(0, 0, 0, 0)
-    outer.setSpacing(0)
-
     list_page = QWidget()
     lay = QVBoxLayout(list_page)
     lay.setContentsMargins(2, 2, 2, 2)
@@ -823,14 +859,15 @@ def make_emu_page(
             "Hold Confirm+Back+Home (~0.5s) to quit"
         )
         if ok_be
-        else f"{be_msg}\nROMs: Transfer still works. Confirm a ROM to try Play."
+        else f"{be_msg}\nROMs still work after: Settings → Update"
     )
     tip.setWordWrap(True)
     tip.setStyleSheet("color:#9ab;font-size:9px;")
     status = QLabel("")
     status.setWordWrap(True)
-    status.setStyleSheet("color:#cde;font-size:10px;")
+    status.setStyleSheet("color:#ffe66d;font-size:11px;font-weight:700;")
     lst = QListWidget()
+    lst.setFocusPolicy(Qt.StrongFocus)
     lst.setStyleSheet(
         "QListWidget { background: transparent; border: none; }"
         "QListWidget::item { padding: 4px; min-height: 22px; }"
@@ -850,7 +887,11 @@ def make_emu_page(
     lay.addWidget(play)
     lay.addWidget(recv)
     lay.addWidget(refresh)
-    outer.addWidget(list_page, 1)
+
+    play_view = EmuPlayView(system, on_quit=lambda: None)
+    stack = QStackedWidget()
+    stack.addWidget(list_page)
+    stack.addWidget(play_view)
 
     state = {"playing": False}
 
@@ -862,39 +903,18 @@ def make_emu_page(
             return
         on_back()
 
-    chrome = page_chrome(system.title, body, chrome_back, scroll=False)
-    play_view = EmuPlayView(system, on_quit=lambda: None)
-    play_view.setParent(chrome)
-    play_view.hide()
-
-    def _sync_overlay() -> None:
-        play_view.setGeometry(0, 0, chrome.width(), chrome.height())
-        play_view.raise_()
-
-    class _OverlayFilter(QObject):
-        def eventFilter(self, obj, event):  # noqa: N802
-            if obj is chrome and event.type() == QEvent.Resize:
-                if play_view.isVisible():
-                    _sync_overlay()
-            return False
-
-    _filt = _OverlayFilter(chrome)
-    chrome.installEventFilter(_filt)
+    chrome = page_chrome(system.title, stack, chrome_back, scroll=False)
 
     def show_list() -> None:
         state["playing"] = False
         play_view.stop()
-        play_view.hide()
-        list_page.show()
+        stack.setCurrentWidget(list_page)
         refresh_list()
         QTimer.singleShot(0, _focus_rom_list)
 
     def show_play() -> None:
         state["playing"] = True
-        list_page.hide()
-        _sync_overlay()
-        play_view.show()
-        play_view.raise_()
+        stack.setCurrentWidget(play_view)
         play_view.setFocus(Qt.OtherFocusReason)
 
     play_view._on_quit = show_list  # type: ignore[method-assign]
@@ -903,7 +923,6 @@ def make_emu_page(
         lst.clear()
         roms = list_roms(system)
         ok, msg = backend_status(system)
-        # Keep Play selectable whenever a ROM exists (core errors show in status).
         play.setEnabled(bool(roms))
         folder = ensure_rom_dir(system)
         status.setText(f"{msg}\n{len(roms)} ROM(s) · {folder.name}/")
@@ -920,23 +939,21 @@ def make_emu_page(
             lst.setCurrentRow(0)
 
     def launch() -> None:
-        ok, msg = backend_status(system)
-        if not ok:
-            status.setText(msg)
-            return
         item = lst.currentItem()
-        if item is None:
-            status.setText("Pick a ROM")
-            return
-        path = item.data(Qt.UserRole)
+        path = item.data(Qt.UserRole) if item is not None else None
         if not path:
-            status.setText("Pick a ROM")
+            status.setText("Pick a ROM first")
             return
         rom = Path(str(path))
         if not rom.is_file():
             status.setText("ROM missing")
             return
+        ok, msg = backend_status(system)
+        _emu_log(f"launch {system.key} {rom.name} core_ok={ok}")
         show_play()
+        if not ok:
+            play_view.screen.setText(msg + "\nBack = list")
+            return
         play_view.start_rom(rom)
 
     def do_receive() -> None:
@@ -946,12 +963,15 @@ def make_emu_page(
             status.setText("Open Tools → Transfer · ROMs")
 
     def on_hardware_back() -> bool:
-        if play_view.isVisible() and play_view.playing:
+        if stack.currentWidget() is play_view:
+            if play_view.playing:
+                return True
+            show_list()
             return True
         return False
 
     def on_navigate_away() -> None:
-        if state["playing"] or play_view.isVisible() or play_view.playing:
+        if state["playing"] or stack.currentWidget() is play_view or play_view.playing:
             show_list()
 
     lst.itemActivated.connect(lambda _i: launch())
@@ -960,7 +980,7 @@ def make_emu_page(
     recv.clicked.connect(do_receive)
 
     def _focus_rom_list() -> None:
-        if state["playing"] or not lst.isVisible():
+        if state["playing"] or stack.currentWidget() is not list_page:
             return
         from esp_handset import digi_nav
 

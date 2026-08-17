@@ -504,14 +504,17 @@ class LibretroCore:
             cast(data, POINTER(c_char_p))[0] = self._save_dir_p
             return True
         if cmd == RETRO_ENVIRONMENT_GET_VARIABLE:
+            if not data:
+                return False
             var = cast(data, POINTER(_Variable)).contents
-        raw_key = var.key
-        if isinstance(raw_key, bytes):
-            key = raw_key.decode("utf-8", "replace")
-        else:
-            key = raw_key or ""
+            raw_key = var.key
+            if isinstance(raw_key, bytes):
+                key = raw_key.decode("utf-8", "replace")
+            else:
+                key = raw_key or ""
             val = self._vars.get(key)
             if not val:
+                var.value = None
                 return True
             buf = self._var_bufs.get(key)
             if buf is None:

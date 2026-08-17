@@ -190,6 +190,7 @@ if [[ -d "$STAGE" && -f "$STAGE/.ready" ]]; then
     digivice-stop-gb.sh:digivice-stop-gb \
     ensure-gb-wrappers.sh:digivice-ensure-gb \
     ensure-linphone.sh:digivice-ensure-linphone \
+    ensure-libretro-cores.sh:digivice-libretro-cores \
     digivice-linphonecsh.sh:digivice-linphonecsh \
     digivice-linphonec.sh:digivice-linphonec \
     digivice-sip-dial.sh:digivice-sip-dial \
@@ -300,6 +301,7 @@ $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-set-rotation
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-ensure-buttons
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-ensure-cardkb
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-ensure-linphone
+$USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-libretro-cores
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-ensure-gb
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-stop-gb
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-modem-uart
@@ -371,6 +373,15 @@ elif ! command -v linphonecsh >/dev/null 2>&1 && [[ ! -x /usr/bin/linphonecsh ]]
   apt-get update -qq >>"$LOG" 2>&1 || true
   apt-get install -y linphone-cli >>"$LOG" 2>&1 \
     || log "WARN: apt install linphone-cli failed"
+fi
+
+# In-UI NES/GB/… cores — Settings→Update never fetched these before
+if [[ -f "$PREFIX/session/ensure-libretro-cores.sh" ]]; then
+  install -m 755 "$PREFIX/session/ensure-libretro-cores.sh" /usr/local/bin/digivice-libretro-cores
+  log "Ensuring libretro cores (NES/GB/SMS/Genesis/GBA)…"
+  SUDO_USER="$USER_NAME" DIGI_GUI_USER="$USER_NAME" \
+    bash /usr/local/bin/digivice-libretro-cores >>"$LOG" 2>&1 \
+    || log "WARN: digivice-libretro-cores failed — check $LOG"
 fi
 
 # Sealed-case CM108: keep wake helper + boot unit after GUI apply
