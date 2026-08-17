@@ -50,8 +50,8 @@ _GAME_PAGES = {e.key for e in GAMES_APPS}
 # Live boards (timers + own keys) — not button-driven solitaire/uno
 _ARCADE_PAGES = {"snake", "pong", "tetris"}
 _CARD_GAME_PAGES = {"solitaire", "uno"}
-# Pad routes to game_shell / GB while on these pages
-_GAMEPAD_PAGES = _ARCADE_PAGES | _CARD_GAME_PAGES | set(EMU_PAGE_KEYS)
+# Arcade/cards always use the pad. Emulators only while a ROM is running.
+_GAMEPAD_PAGES = _ARCADE_PAGES | _CARD_GAME_PAGES
 
 __all__ = [
     "PhoneShell",
@@ -656,17 +656,7 @@ class PhoneShell(QMainWindow):
 
         # In-UI emulator: pad stays in game (Back=B, Home=Start); exit = combo on board
         gb_board = self._emu_play_board()
-        if gb_board is not None and key in (
-            Qt.Key_Escape,
-            Qt.Key_Home,
-            Qt.Key_Return,
-            Qt.Key_Enter,
-            Qt.Key_Tab,
-            Qt.Key_Left,
-            Qt.Key_Right,
-            Qt.Key_Up,
-            Qt.Key_Down,
-        ):
+        if gb_board is not None:
             gb_board.keyPressEvent(event)
             if not gb_board.hasFocus():
                 gb_board.setFocus(Qt.OtherFocusReason)

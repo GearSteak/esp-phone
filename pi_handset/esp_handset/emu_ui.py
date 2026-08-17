@@ -89,8 +89,8 @@ SYSTEMS: Dict[str, EmuSystem] = {
         ("fceumm_libretro.so", "nestopia_libretro.so", "quicknes_libretro.so"),
         (256, 240),
     ),
-    "sms": EmuSystem(
-        "sms",
+    "smsgg": EmuSystem(
+        "smsgg",
         "SMS / GG",
         "Master System · Game Gear",
         "◎",
@@ -818,11 +818,12 @@ def make_emu_page(
     tip = QLabel(
         (
             f"{be_msg}{extra}\n"
-            "Confirm=A · Back=B · Home=Start · Select=Select\n"
+            "Confirm on a ROM to play · Play button also works\n"
+            "In-game: Confirm=A · Back=B · Home=Start · Select=Select\n"
             "Hold Confirm+Back+Home (~0.5s) to quit"
         )
         if ok_be
-        else f"{be_msg}\nROMs: Transfer still works."
+        else f"{be_msg}\nROMs: Transfer still works. Confirm a ROM to try Play."
     )
     tip.setWordWrap(True)
     tip.setStyleSheet("color:#9ab;font-size:9px;")
@@ -838,7 +839,7 @@ def make_emu_page(
     play = QPushButton("Play")
     play.setFixedHeight(28)
     play.setStyleSheet("font-weight:800;")
-    play.setEnabled(ok_be)
+    play.setEnabled(False)
     recv = QPushButton("Receive ROMs (Wi‑Fi)")
     recv.setFixedHeight(26)
     refresh = QPushButton("Reload")
@@ -886,6 +887,7 @@ def make_emu_page(
         play_view.hide()
         list_page.show()
         refresh_list()
+        QTimer.singleShot(0, _focus_rom_list)
 
     def show_play() -> None:
         state["playing"] = True
@@ -901,7 +903,8 @@ def make_emu_page(
         lst.clear()
         roms = list_roms(system)
         ok, msg = backend_status(system)
-        play.setEnabled(ok and bool(roms))
+        # Keep Play selectable whenever a ROM exists (core errors show in status).
+        play.setEnabled(bool(roms))
         folder = ensure_rom_dir(system)
         status.setText(f"{msg}\n{len(roms)} ROM(s) · {folder.name}/")
         if not roms:
@@ -913,7 +916,8 @@ def make_emu_page(
             item = QListWidgetItem(p.name)
             item.setData(Qt.UserRole, str(p))
             lst.addItem(item)
-        lst.setCurrentRow(0)
+        if lst.currentRow() < 0:
+            lst.setCurrentRow(0)
 
     def launch() -> None:
         ok, msg = backend_status(system)
@@ -955,8 +959,26 @@ def make_emu_page(
     refresh.clicked.connect(refresh_list)
     recv.clicked.connect(do_receive)
 
+    def _focus_rom_list() -> None:
+        if state["playing"] or not lst.isVisible():
+            return
+        from esp_handset import digi_nav
+
+        digi_nav.clear_highlights(chrome)
+        lst.setFocus(Qt.OtherFocusReason)
+        digi_nav._highlight(lst, True)
+        if lst.count() > 0 and lst.currentRow() < 0:
+            lst.setCurrentRow(0)
+
+    def on_page_show() -> None:
+        if state["playing"]:
+            return
+        refresh_list()
+        QTimer.singleShot(0, _focus_rom_list)
+
     chrome.on_hardware_back = on_hardware_back  # type: ignore[attr-defined]
     chrome.on_navigate_away = on_navigate_away  # type: ignore[attr-defined]
+    chrome.on_page_show = on_page_show  # type: ignore[attr-defined]
     chrome.emu_board = play_view  # type: ignore[attr-defined]
     chrome.gb_board = play_view  # type: ignore[attr-defined]
     refresh_list()

@@ -598,7 +598,10 @@ def build_app(bridge: Optional[EspBridge], modem: Optional[Sim7600]) -> PhoneShe
     def open_rom_transfer(system_key: str = "roms") -> None:
         page = shell.pages.get("wifi_transfer")
         setter = getattr(page, "set_transfer_dest", None)
-        dest = f"rom_{system_key}" if system_key in emu_ui.SYSTEMS else "roms"
+        dest = "roms"
+        sys = emu_ui.SYSTEMS.get(system_key)
+        if sys is not None:
+            dest = f"rom_{sys.folder}"
         if dest not in wifi_transfer.DESTINATIONS:
             dest = "roms"
         if callable(setter):

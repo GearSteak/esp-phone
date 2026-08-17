@@ -94,7 +94,8 @@ MEDIA_APPS = [
 GAMES_APPS = [
     AppEntry("gb", "Game Boy", "GB / GBC ROMs", "♠"),
     AppEntry("nes", "NES", "Famicom ROMs", "◆"),
-    AppEntry("sms", "SMS / GG", "Master System · Game Gear", "◎"),
+    # Key must not be "sms" — that is the home Messages folder.
+    AppEntry("smsgg", "SMS / GG", "Master System · Game Gear", "◎"),
     AppEntry("genesis", "Genesis", "Mega Drive ROMs", "▶"),
     AppEntry("gba", "Game Boy Adv", "GBA · gpSP", "■"),
     AppEntry("chip8", "CHIP-8", "Tiny ROMs · always on", "8"),
@@ -105,7 +106,7 @@ GAMES_APPS = [
     AppEntry("uno", "Uno", "Match color · number", "U"),
 ]
 
-EMU_PAGE_KEYS = ("gb", "nes", "sms", "genesis", "gba", "chip8")
+EMU_PAGE_KEYS = ("gb", "nes", "smsgg", "genesis", "gba", "chip8")
 
 # Settings → Debug hub
 DEBUG_APPS = [
