@@ -151,23 +151,32 @@ class _KioskKeyFilter(QObject):
             QApplication.sendEvent(field, event)
         return True
 
+    def _emu_board(self):
+        try:
+            nav_key = (
+                self._shell._nav[-1] if getattr(self._shell, "_nav", None) else ""
+            )
+            page = (getattr(self._shell, "pages", {}) or {}).get(nav_key)
+            if page is None:
+                return None
+            board = getattr(page, "emu_board", None) or getattr(page, "gb_board", None)
+            if (
+                board is not None
+                and board.isVisible()
+                and getattr(board, "playing", False)
+            ):
+                return board
+        except Exception:
+            return None
+        return None
+
     def eventFilter(self, obj, event):  # noqa: N802
         et = event.type()
         if et == QEvent.KeyRelease:
-            try:
-                nav_key = self._shell._nav[-1] if getattr(self._shell, "_nav", None) else ""
-                if nav_key == "gb":
-                    page = (getattr(self._shell, "pages", {}) or {}).get("gb")
-                    board = getattr(page, "gb_board", None) if page else None
-                    if (
-                        board is not None
-                        and board.isVisible()
-                        and getattr(board, "playing", False)
-                    ):
-                        board.keyReleaseEvent(event)
-                        return True
-            except Exception:
-                pass
+            board = self._emu_board()
+            if board is not None:
+                board.keyReleaseEvent(event)
+                return True
             return False
         if et != QEvent.KeyPress:
             return False
@@ -234,17 +243,10 @@ class _KioskKeyFilter(QObject):
             Qt.Key_1,
             Qt.Key_2,
         }
-        # When GB page is playing, always route pad-ish keys via shell → board
+        # When an emulator page is playing, always route pad-ish keys via shell → board
         try:
-            nav_key = self._shell._nav[-1] if getattr(self._shell, "_nav", None) else ""
-            page = (getattr(self._shell, "pages", {}) or {}).get(nav_key)
-            board = getattr(page, "gb_board", None) if page else None
-            if (
-                board is not None
-                and board.isVisible()
-                and getattr(board, "playing", False)
-                and key in pad
-            ):
+            board = self._emu_board()
+            if board is not None and key in pad:
                 if key == Qt.Key_Escape:
                     self._shell.keyPressEvent(event)
                     return True
@@ -285,7 +287,7 @@ from esp_handset import apps as handset_apps  # noqa: E402
 from esp_handset import pages  # noqa: E402
 from esp_handset import features  # noqa: E402
 from esp_handset import games_ui  # noqa: E402
-from esp_handset import gb_emu  # noqa: E402
+from esp_handset import emu_ui  # noqa: E402
 from esp_handset import wifi_transfer  # noqa: E402
 from esp_handset import ollama_chat  # noqa: E402
 from esp_handset import store  # noqa: E402
@@ -600,7 +602,10 @@ def build_app(bridge: Optional[EspBridge], modem: Optional[Sim7600]) -> PhoneShe
             setter("roms")
         shell.go("wifi_transfer")
 
-    shell.register_page("gb", gb_emu.make_gb_page(back, on_receive=open_rom_transfer))
+    for _ek, _esys in emu_ui.SYSTEMS.items():
+        shell.register_page(
+            _ek, emu_ui.make_emu_page(_esys, back, on_receive=open_rom_transfer)
+        )
     shell.register_page("snake", games_ui.make_snake(back))
     shell.register_page("pong", games_ui.make_pong(back))
     shell.register_page("tetris", games_ui.make_tetris(back))

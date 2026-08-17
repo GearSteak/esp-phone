@@ -29,6 +29,29 @@ PHOTOS = Path.home() / "Pictures" / "phone"
 UPLOAD_PORT = 8765
 
 # dest_key → (label, folder, allowed suffixes or None = common docs/media)
+_ROM_EXTS = (
+    ".gb",
+    ".gbc",
+    ".sgb",
+    ".nes",
+    ".fds",
+    ".unf",
+    ".unif",
+    ".sms",
+    ".gg",
+    ".sg",
+    ".md",
+    ".gen",
+    ".smd",
+    ".bin",
+    ".gba",
+    ".agb",
+    ".mb",
+    ".ch8",
+    ".c8",
+    ".chip8",
+)
+
 DESTINATIONS: Dict[str, Tuple[str, Path, Optional[Tuple[str, ...]]]] = {
     "photos": (
         "Photos",
@@ -36,9 +59,9 @@ DESTINATIONS: Dict[str, Tuple[str, Path, Optional[Tuple[str, ...]]]] = {
         (".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif"),
     ),
     "roms": (
-        "GB ROMs",
-        DATA / "roms" / "gb",
-        (".gb", ".gbc", ".sgb"),
+        "ROMs",
+        DATA / "roms",
+        _ROM_EXTS,
     ),
     "files": (
         "Files",
@@ -61,6 +84,14 @@ _FILES_OK = (
     ".gb",
     ".gbc",
     ".sgb",
+    ".nes",
+    ".sms",
+    ".gg",
+    ".md",
+    ".gen",
+    ".gba",
+    ".ch8",
+    ".c8",
     ".mp3",
     ".wav",
     ".ogg",
@@ -69,6 +100,34 @@ _FILES_OK = (
 )
 
 _IMG_EXT = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif"}
+
+_ROM_FOLDER = {
+    ".gb": "gb",
+    ".gbc": "gb",
+    ".sgb": "gb",
+    ".nes": "nes",
+    ".fds": "nes",
+    ".unf": "nes",
+    ".unif": "nes",
+    ".sms": "sms",
+    ".gg": "sms",
+    ".sg": "sms",
+    ".md": "genesis",
+    ".gen": "genesis",
+    ".smd": "genesis",
+    ".bin": "genesis",
+    ".gba": "gba",
+    ".agb": "gba",
+    ".mb": "gba",
+    ".ch8": "chip8",
+    ".c8": "chip8",
+    ".chip8": "chip8",
+}
+
+
+def _rom_folder_for(name: str) -> Path:
+    sub = _ROM_FOLDER.get(Path(name).suffix.lower(), "gb")
+    return DATA / "roms" / sub
 
 MODEM_REPORT = DATA / "modem-doctor.txt"
 MODEM_REPORT_TMP = Path("/tmp/digivice-modem-doctor.txt")
@@ -205,18 +264,26 @@ def _list_folder(dest_key: str) -> List[Path]:
     if dest_key not in DESTINATIONS:
         return []
     _label, folder, allowed = DESTINATIONS[dest_key]
-    if not folder.is_dir():
-        return []
+    roots = [folder]
+    if dest_key == "roms":
+        roots = [folder / sub for sub in ("gb", "nes", "sms", "genesis", "gba", "chip8")]
+        roots.append(folder)
     out: List[Path] = []
-    try:
-        for p in sorted(folder.iterdir(), key=lambda x: x.stat().st_mtime, reverse=True):
-            if not p.is_file():
-                continue
-            if _safe_name(p.name, allowed) is None:
-                continue
-            out.append(p)
-    except OSError:
-        return []
+    for root in roots:
+        if not root.is_dir():
+            continue
+        try:
+            for p in root.iterdir():
+                if not p.is_file():
+                    continue
+                if p.name.upper() == "README.TXT":
+                    continue
+                if _safe_name(p.name, allowed) is None:
+                    continue
+                out.append(p)
+        except OSError:
+            continue
+    out.sort(key=lambda x: x.stat().st_mtime, reverse=True)
     return out
 
 
@@ -227,16 +294,25 @@ def _resolve_file(dest_key: str, name: str) -> Optional[Path]:
     safe = _safe_name(name, allowed)
     if not safe:
         return None
-    path = (folder / safe).resolve()
+    candidates = [folder / safe]
+    if dest_key == "roms":
+        candidates.insert(0, _rom_folder_for(safe) / safe)
+        for sub in ("gb", "nes", "sms", "genesis", "gba", "chip8"):
+            candidates.append(folder / sub / safe)
     try:
         folder_r = folder.resolve()
     except OSError:
         return None
-    if not str(path).startswith(str(folder_r)):
-        return None
-    if not path.is_file():
-        return None
-    return path
+    for path in candidates:
+        try:
+            resolved = path.resolve()
+        except OSError:
+            continue
+        if not str(resolved).startswith(str(folder_r)):
+            continue
+        if resolved.is_file():
+            return resolved
+    return None
 
 
 class _UploadSignals(QObject):
@@ -431,7 +507,7 @@ def _make_handler(get_dest: Callable[[], str], signals: _UploadSignals):
 <button type="submit">Send to Digivice</button>
 </form>
 </div>
-<p class="muted">Photos → Pictures/phone · ROMs → roms/gb · Files → inbox</p>
+<p class="muted">Photos → Pictures/phone · ROMs → roms/gb,nes,sms,… · Files → inbox</p>
 """
             self._html("Digivice Transfer", inner)
 
@@ -614,6 +690,8 @@ def _make_handler(get_dest: Callable[[], str], signals: _UploadSignals):
                 )
                 return
             try:
+                if dest_key == "roms":
+                    folder = _rom_folder_for(safe)
                 folder.mkdir(parents=True, exist_ok=True)
                 out = folder / safe
                 if out.exists():

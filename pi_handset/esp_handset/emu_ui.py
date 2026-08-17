@@ -1,0 +1,963 @@
+"""In-UI console emulators — libretro cores (C, fast) + PyBoy/CHIP-8 fallbacks.
+
+Digivice keeps the SPI panel; frames are blitted into Qt like the original GB view.
+"""
+
+from __future__ import annotations
+
+import os
+import time
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Callable, Dict, List, Optional, Set, Tuple
+
+from PyQt5.QtCore import Qt, QThread, pyqtSignal, QObject, QSize, QEvent, QTimer
+from PyQt5.QtGui import QImage, QPixmap, QKeyEvent
+from PyQt5.QtWidgets import (
+    QLabel,
+    QListWidget,
+    QListWidgetItem,
+    QPushButton,
+    QSizePolicy,
+    QVBoxLayout,
+    QWidget,
+)
+
+from esp_handset.pages import page_chrome
+
+DATA = Path.home() / ".esp-handset"
+
+# Confirm=A, Back=B, Home=Start, Select=Select — exit = hold Confirm+Back+Home
+_BTN_MAP = {
+    Qt.Key_Up: "up",
+    Qt.Key_Down: "down",
+    Qt.Key_Left: "left",
+    Qt.Key_Right: "right",
+    Qt.Key_Return: "a",
+    Qt.Key_Enter: "a",
+    Qt.Key_X: "a",
+    Qt.Key_Space: "a",
+    Qt.Key_Z: "b",
+    Qt.Key_Escape: "b",
+    Qt.Key_Tab: "select",
+    Qt.Key_Shift: "select",
+    Qt.Key_S: "start",
+    Qt.Key_1: "start",
+    Qt.Key_Home: "start",
+    Qt.Key_2: "select",
+    Qt.Key_A: "y",
+    Qt.Key_Q: "x",
+    Qt.Key_W: "l",
+    Qt.Key_E: "r",
+    Qt.Key_C: "x",  # Genesis C ≈ X on SNES layout in many cores
+}
+
+
+@dataclass(frozen=True)
+class EmuSystem:
+    key: str
+    title: str
+    subtitle: str
+    glyph: str
+    folder: str
+    extensions: Tuple[str, ...]
+    cores: Tuple[str, ...]
+    native: Tuple[int, int]
+    tip_extra: str = ""
+    builtin: bool = False  # CHIP-8 always available
+
+
+SYSTEMS: Dict[str, EmuSystem] = {
+    "gb": EmuSystem(
+        "gb",
+        "Game Boy",
+        "GB / GBC · gambatte",
+        "♠",
+        "gb",
+        (".gb", ".gbc", ".sgb"),
+        ("gambatte_libretro.so", "mgba_libretro.so"),
+        (160, 144),
+        "C core (gambatte) when present · PyBoy fallback",
+    ),
+    "nes": EmuSystem(
+        "nes",
+        "NES",
+        "Famicom · fceumm",
+        "◆",
+        "nes",
+        (".nes", ".fds", ".unf", ".unif"),
+        ("fceumm_libretro.so", "nestopia_libretro.so", "quicknes_libretro.so"),
+        (256, 240),
+    ),
+    "sms": EmuSystem(
+        "sms",
+        "SMS / GG",
+        "Master System · Game Gear",
+        "◎",
+        "sms",
+        (".sms", ".gg", ".sg"),
+        ("genesis_plus_gx_libretro.so", "picodrive_libretro.so", "smsplus_libretro.so"),
+        (256, 192),
+    ),
+    "genesis": EmuSystem(
+        "genesis",
+        "Genesis",
+        "Mega Drive",
+        "▶",
+        "genesis",
+        (".md", ".gen", ".smd", ".bin"),
+        ("genesis_plus_gx_libretro.so", "picodrive_libretro.so"),
+        (320, 224),
+        "Confirm=A · Back=B · Select=C",
+    ),
+    "gba": EmuSystem(
+        "gba",
+        "Game Boy Adv",
+        "GBA · gpSP",
+        "■",
+        "gba",
+        (".gba", ".agb", ".mb"),
+        ("gpsp_libretro.so", "mgba_libretro.so"),
+        (240, 160),
+        "Pi Zero 2W: gpSP is the fast core",
+    ),
+    "chip8": EmuSystem(
+        "chip8",
+        "CHIP-8",
+        "Tiny ROMs · always on",
+        "8",
+        "chip8",
+        (".ch8", ".c8", ".chip8"),
+        (),
+        (64, 32),
+        "D-pad + Confirm. No extra install.",
+        builtin=True,
+    ),
+}
+
+EMU_PAGE_KEYS = tuple(SYSTEMS.keys())
+
+ROM_EXT_TO_FOLDER = {
+    ext: sys.folder for sys in SYSTEMS.values() for ext in sys.extensions
+}
+
+
+def rom_root() -> Path:
+    p = DATA / "roms"
+    p.mkdir(parents=True, exist_ok=True)
+    return p
+
+
+def system_rom_dirs(sys: EmuSystem) -> List[Path]:
+    sub = sys.folder
+    return [
+        DATA / "roms" / sub,
+        Path.home() / "roms" / sub,
+        Path.home() / "ROMs" / sub,
+        Path("/opt/esp-handset/roms") / sub,
+    ]
+
+
+def ensure_rom_dir(sys: EmuSystem) -> Path:
+    d = DATA / "roms" / sys.folder
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def list_roms(sys: EmuSystem) -> List[Path]:
+    found: List[Path] = []
+    seen = set()
+    ensure_rom_dir(sys)
+    for d in system_rom_dirs(sys):
+        if not d.is_dir():
+            continue
+        try:
+            for p in sorted(d.iterdir(), key=lambda x: x.name.casefold()):
+                if p.suffix.lower() not in sys.extensions:
+                    continue
+                if p.name.upper() == "README.TXT":
+                    continue
+                try:
+                    key = str(p.resolve())
+                except OSError:
+                    key = str(p)
+                if key in seen:
+                    continue
+                seen.add(key)
+                found.append(p)
+        except OSError:
+            continue
+    return found
+
+
+def _pyboy_ok() -> Tuple[bool, str]:
+    try:
+        import pyboy  # noqa: F401
+
+        return True, f"PyBoy {getattr(pyboy, '__version__', '?')}"
+    except ImportError:
+        return False, "PyBoy not installed"
+
+
+def backend_status(sys: EmuSystem) -> Tuple[bool, str]:
+    if sys.builtin:
+        return True, "Built-in CHIP-8"
+    from esp_handset.libretro_host import find_core
+
+    core = find_core(sys.cores)
+    if core is not None:
+        return True, f"Core {core.name}"
+    if sys.key == "gb":
+        ok, msg = _pyboy_ok()
+        if ok:
+            return True, f"{msg} (fallback)"
+        return False, "Need gambatte core or: sudo pip3 install --break-system-packages pyboy"
+    names = ", ".join(sys.cores[:2]) or "libretro"
+    return False, f"Need core ({names}). Run sudo digivice-full-update"
+
+
+def _set_nonblock(fd: int) -> None:
+    try:
+        import fcntl
+
+        fl = fcntl.fcntl(fd, fcntl.F_GETFL)
+        fcntl.fcntl(fd, fcntl.F_SETFL, fl | os.O_NONBLOCK)
+    except Exception:
+        pass
+
+
+def _write_pcm(pcm, blob: bytes):
+    if pcm is None or not blob or pcm.stdin is None:
+        return pcm
+    if pcm.poll() is not None:
+        return None
+    try:
+        pcm.stdin.write(blob)
+    except (BlockingIOError, BrokenPipeError, OSError):
+        return pcm if pcm.poll() is None else None
+    except Exception:
+        return pcm
+    return pcm
+
+
+def _qimage_from_rgb(arr) -> Optional[QImage]:
+    if arr is None:
+        return None
+    try:
+        h, w = int(arr.shape[0]), int(arr.shape[1])
+        rgb = arr if arr.flags["C_CONTIGUOUS"] else arr.copy()
+        qimg = QImage(rgb.data, w, h, 3 * w, QImage.Format_RGB888)
+        return qimg.copy()
+    except Exception:
+        return None
+
+
+class EmuWorker(QThread):
+    frame = pyqtSignal(object)
+    failed = pyqtSignal(str)
+    stopped = pyqtSignal()
+
+    def __init__(self, rom: Path, system: EmuSystem, parent: Optional[QObject] = None):
+        super().__init__(parent)
+        self._rom = rom
+        self._sys = system
+        self._stop = False
+        self._held: Set[str] = set()
+        self._pending_press: Set[str] = set()
+        self._pending_release: Set[str] = set()
+
+    def request_stop(self) -> None:
+        self._stop = True
+
+    def button_down(self, name: str) -> None:
+        self._pending_press.add(name)
+        self._pending_release.discard(name)
+
+    def button_up(self, name: str) -> None:
+        self._pending_release.add(name)
+        self._pending_press.discard(name)
+
+    def button_tap(self, name: str) -> None:
+        self._pending_press.add(name)
+        self._pending_release.add(name)
+
+    def _sync_held(self) -> Set[str]:
+        for name in list(self._pending_press):
+            self._pending_press.discard(name)
+            self._held.add(name)
+        for name in list(self._pending_release):
+            self._pending_release.discard(name)
+            self._held.discard(name)
+        return self._held
+
+    def run(self) -> None:
+        try:
+            if self._sys.builtin or self._sys.key == "chip8":
+                self._run_chip8()
+                return
+            if self._run_libretro():
+                return
+            if self._sys.key == "gb":
+                self._run_pyboy()
+                return
+            ok, msg = backend_status(self._sys)
+            self.failed.emit(msg if not ok else "Core failed to start")
+        except Exception as e:
+            self.failed.emit(str(e)[:140])
+        finally:
+            self.stopped.emit()
+
+    def _open_pcm(self, rate: int, want: bool):
+        if not want:
+            return None
+        try:
+            from esp_handset.audio_out import open_usb_play_stream
+
+            pcm = open_usb_play_stream(rate=int(rate), channels=2)
+            if pcm is not None and pcm.stdin is not None:
+                try:
+                    _set_nonblock(pcm.stdin.fileno())
+                except Exception:
+                    pass
+            return pcm
+        except Exception:
+            return None
+
+    def _close_pcm(self, pcm) -> None:
+        try:
+            from esp_handset.audio_out import close_usb_play_stream
+
+            close_usb_play_stream(pcm)
+        except Exception:
+            pass
+
+    def _want_sound(self) -> bool:
+        try:
+            from esp_handset.audio_out import _sounds_on
+
+            return bool(_sounds_on())
+        except Exception:
+            return True
+
+    def _pace(self, next_t: float, frame_s: float) -> float:
+        now = time.perf_counter()
+        sleep_s = next_t - now
+        if sleep_s > 0.0008:
+            time.sleep(min(sleep_s, 0.05))
+            return next_t + frame_s
+        if now > next_t + 0.08:
+            return now + frame_s
+        return next_t + frame_s
+
+    def _run_chip8(self) -> None:
+        from esp_handset.chip8_core import Chip8
+
+        cpu = Chip8(self._rom.read_bytes())
+        frame_s = 1.0 / 60.0
+        next_t = time.perf_counter()
+        acc = 0.0
+        last_emit = 0.0
+        while not self._stop and cpu.alive:
+            held = self._sync_held()
+            cpu.step(held, n=12)
+            acc += 1.0
+            if acc >= 1.0:
+                cpu.tick_timers()
+                acc = 0.0
+            now = time.perf_counter()
+            if cpu.draw and (now - last_emit) >= (1.0 / 30.0):
+                cpu.draw = False
+                last_emit = now
+                img = _qimage_from_rgb(cpu.rgb888())
+                if img is not None:
+                    self.frame.emit(img)
+            next_t = self._pace(next_t, frame_s)
+
+    def _run_libretro(self) -> bool:
+        from esp_handset.libretro_host import LibretroCore, find_cores, raw_to_rgb888
+
+        core_paths = find_cores(self._sys.cores)
+        if not core_paths:
+            return False
+        last_err = None
+        for core_path in core_paths:
+            try:
+                return self._run_one_core(core_path, LibretroCore, raw_to_rgb888)
+            except Exception as e:
+                last_err = e
+                continue
+        if self._sys.key == "gb":
+            return False
+        self.failed.emit(str(last_err)[:140] if last_err else "Core failed")
+        return True
+
+    def _run_one_core(self, core_path: Path, LibretroCore, raw_to_rgb888) -> bool:
+        save_dir = DATA / "saves" / self._sys.folder
+        sys_dir = DATA / "bios" / self._sys.folder
+        core = None
+        pcm = None
+        try:
+            core = LibretroCore(
+                core_path,
+                self._rom,
+                save_dir=save_dir,
+                system_dir=sys_dir,
+            )
+            core.load()
+            want = self._want_sound()
+            rate = int(round(core.sample_rate)) or 44100
+            pcm = self._open_pcm(rate, want)
+            fps = core.fps if core.fps > 1 else 60.0
+            frame_s = 1.0 / fps
+            emit_every = 1.0 / min(30.0, fps)
+            next_t = time.perf_counter()
+            last_emit = 0.0
+            while not self._stop:
+                core.set_held(self._sync_held())
+                raw, w, h, fmt = core.run_frame()
+                if want and pcm is not None:
+                    pcm = _write_pcm(pcm, core.take_audio())
+                now = time.perf_counter()
+                if raw and (now - last_emit) >= emit_every:
+                    last_emit = now
+                    pitch = len(raw) // max(h, 1)
+                    arr = raw_to_rgb888(raw, w, h, pitch, fmt)
+                    img = _qimage_from_rgb(arr)
+                    if img is not None:
+                        self.frame.emit(img)
+                next_t = self._pace(next_t, frame_s)
+            return True
+        finally:
+            self._close_pcm(pcm)
+            if core is not None:
+                try:
+                    core.close()
+                except Exception:
+                    pass
+
+    def _run_pyboy(self) -> None:
+        """Optimized PyBoy fallback — no double throttle, skip draws, nonblock audio."""
+        try:
+            from pyboy import PyBoy  # noqa: F401
+        except ImportError as e:
+            self.failed.emit(f"PyBoy missing: {e}")
+            return
+
+        boy = None
+        pcm = None
+        want = self._want_sound()
+        try:
+            boy = self._open_pyboy(want)
+            if boy is None:
+                self.failed.emit("PyBoy would not start")
+                return
+            try:
+                boy.set_emulation_speed(0)
+            except Exception:
+                pass
+
+            rate = 48000
+            try:
+                rate = int(getattr(boy.sound, "sample_rate", 0) or 48000)
+            except Exception:
+                rate = 48000
+            pcm = self._open_pcm(rate, want)
+
+            frame_s = 1.0 / 59.7275
+            next_t = time.perf_counter()
+            last_emit = 0.0
+            emit_every = 1.0 / 30.0
+            slow = 0
+            prev_held: Set[str] = set()
+            names = ("up", "down", "left", "right", "a", "b", "start", "select")
+            while not self._stop:
+                t0 = time.perf_counter()
+                held = self._sync_held()
+                try:
+                    for name in names:
+                        if name in held and name not in prev_held:
+                            try:
+                                boy.button_press(name)
+                            except Exception:
+                                boy.button(name)
+                        elif name not in held and name in prev_held:
+                            try:
+                                boy.button_release(name)
+                            except Exception:
+                                pass
+                except Exception:
+                    pass
+                prev_held = set(held)
+
+                render = (t0 - last_emit) >= emit_every
+                try:
+                    alive = boy.tick(1, render, want)
+                except TypeError:
+                    try:
+                        alive = boy.tick(1, render)
+                    except TypeError:
+                        alive = boy.tick()
+                if alive is False:
+                    break
+
+                if want and pcm is not None:
+                    pcm = self._feed_pyboy_audio(boy, pcm)
+
+                if render:
+                    last_emit = t0
+                    img = self._pyboy_qimage(boy)
+                    if img is not None:
+                        self.frame.emit(img)
+
+                tick_ms = (time.perf_counter() - t0) * 1000.0
+                if tick_ms > 22:
+                    slow += 1
+                elif slow > 0:
+                    slow -= 1
+                if want and slow > 45:
+                    want = False
+
+                next_t = self._pace(next_t, frame_s)
+        finally:
+            self._close_pcm(pcm)
+            if boy is not None:
+                try:
+                    boy.stop(save=True)
+                except Exception:
+                    try:
+                        boy.stop()
+                    except Exception:
+                        pass
+
+    def _open_pyboy(self, want_sound: bool):
+        from pyboy import PyBoy
+
+        cgb = self._rom.suffix.lower() in (".gbc", ".sgb")
+        attempts = []
+        base = {"window": "null"}
+        if not cgb:
+            attempts.append({**base, "cgb": False, "sound_emulated": want_sound})
+        if want_sound:
+            attempts.append({**base, "sound_emulated": True, "sound_volume": 50})
+            attempts.append({**base, "sound": True})
+        else:
+            attempts.append({**base, "sound_emulated": False})
+            attempts.append({**base, "sound": False})
+        attempts.append(base)
+        last_err = None
+        for kw in attempts:
+            try:
+                return PyBoy(str(self._rom), **kw)
+            except TypeError:
+                continue
+            except Exception as e:
+                last_err = e
+                break
+        if last_err:
+            raise last_err
+        return None
+
+    @staticmethod
+    def _feed_pyboy_audio(boy, pcm):
+        try:
+            arr = boy.sound.ndarray
+        except Exception:
+            return pcm
+        if arr is None:
+            return pcm
+        try:
+            n = getattr(arr, "size", 0)
+            if not n:
+                return pcm
+            import numpy as np
+
+            a = np.ascontiguousarray(arr)
+            if a.dtype == np.int8:
+                pcm16 = (a.astype(np.int16) << 8).tobytes()
+            elif a.dtype == np.int16:
+                pcm16 = a.tobytes()
+            else:
+                pcm16 = (np.clip(a, -1, 1) * 24000).astype(np.int16).tobytes()
+            return _write_pcm(pcm, pcm16)
+        except Exception:
+            return pcm
+
+    @staticmethod
+    def _pyboy_qimage(boy) -> Optional[QImage]:
+        try:
+            import numpy as np
+
+            arr = boy.screen.ndarray
+            if arr is not None:
+                rgb = np.ascontiguousarray(arr[:, :, :3])
+                return _qimage_from_rgb(rgb)
+        except Exception:
+            pass
+        try:
+            pil = boy.screen.image
+            if pil is None:
+                return None
+            rgb = pil.convert("RGB")
+            data = rgb.tobytes()
+            w, h = rgb.size
+            return QImage(data, w, h, 3 * w, QImage.Format_RGB888).copy()
+        except Exception:
+            return None
+
+
+class EmuPlayView(QWidget):
+    digi_gamepad = True
+
+    def __init__(self, system: EmuSystem, on_quit: Callable[[], None]):
+        super().__init__()
+        self._sys = system
+        self._on_quit = on_quit
+        self._worker: Optional[EmuWorker] = None
+        self._held_qt: Dict[int, str] = {}
+        self._last_frame: Optional[QImage] = None
+        self._exit_since: Optional[float] = None
+        self._exit_armed = True
+        self._exit_timer = QTimer(self)
+        self._exit_timer.setInterval(50)
+        self._exit_timer.timeout.connect(self._poll_exit_combo)
+        self.setFocusPolicy(Qt.StrongFocus)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.setObjectName("emuPlayView")
+        self.setAttribute(Qt.WA_OpaquePaintEvent, True)
+        self.setAutoFillBackground(True)
+        pal = self.palette()
+        pal.setColor(self.backgroundRole(), Qt.black)
+        self.setPalette(pal)
+        self.setStyleSheet("background:#000000; color:#9ab;")
+
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(0)
+        self.screen = QLabel("")
+        self.screen.setAlignment(Qt.AlignCenter)
+        self.screen.setStyleSheet("background:#000000; color:#888;")
+        self.screen.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.screen.setScaledContents(False)
+        lay.addWidget(self.screen, 1)
+
+    def sizeHint(self) -> QSize:  # noqa: N802
+        return QSize(240, 320)
+
+    @property
+    def playing(self) -> bool:
+        return self._worker is not None and self._worker.isRunning()
+
+    def start_rom(self, rom: Path) -> None:
+        self.stop()
+        self._last_frame = None
+        self._exit_since = None
+        self._exit_armed = True
+        self.screen.setPixmap(QPixmap())
+        self.screen.setText(f"Loading\n{rom.name}")
+        w = EmuWorker(rom, self._sys, self)
+        w.frame.connect(self._on_frame)
+        w.failed.connect(self._on_fail)
+        self._worker = w
+        w.start(QThread.HighPriority)
+        self._exit_timer.start()
+        self.setFocus(Qt.OtherFocusReason)
+        self.raise_()
+
+    def stop(self) -> None:
+        self._exit_timer.stop()
+        self._exit_since = None
+        w = self._worker
+        self._worker = None
+        self._held_qt.clear()
+        self._last_frame = None
+        if w is not None:
+            try:
+                w.frame.disconnect()
+            except Exception:
+                pass
+            try:
+                w.failed.disconnect()
+            except Exception:
+                pass
+            w.request_stop()
+            if not w.wait(2000):
+                w.terminate()
+                w.wait(400)
+        self.screen.setPixmap(QPixmap())
+        self.screen.setText("")
+
+    def _exit_combo_held(self) -> bool:
+        keys = self._held_qt
+        confirm = Qt.Key_Return in keys or Qt.Key_Enter in keys
+        back = Qt.Key_Escape in keys
+        home = Qt.Key_Home in keys
+        return confirm and back and home
+
+    def _poll_exit_combo(self) -> None:
+        if not self.playing:
+            self._exit_since = None
+            return
+        if self._exit_combo_held():
+            now = time.monotonic()
+            if self._exit_since is None:
+                self._exit_since = now
+            elif self._exit_armed and (now - self._exit_since) >= 0.45:
+                self._exit_armed = False
+                self._exit_since = None
+                if self._worker is not None:
+                    for name in list(set(self._held_qt.values())):
+                        self._worker.button_up(name)
+                self._held_qt.clear()
+                cb = self._on_quit
+                if callable(cb):
+                    cb()
+        else:
+            self._exit_since = None
+            self._exit_armed = True
+
+    def _tap(self, name: str) -> None:
+        if self._worker is not None:
+            self._worker.button_tap(name)
+
+    def _fit_size(self, nw: int, nh: int) -> QSize:
+        aw = max(self.screen.width(), 1)
+        ah = max(self.screen.height(), 1)
+        nw = max(int(nw), 1)
+        nh = max(int(nh), 1)
+        sx = max(1, aw // nw)
+        sy = max(1, ah // nh)
+        scale = min(sx, sy)
+        iw, ih = nw * scale, nh * scale
+        if iw < aw * 0.85 or ih < ah * 0.85:
+            fit_w = aw
+            fit_h = int(round(aw * nh / nw))
+            if fit_h > ah:
+                fit_h = ah
+                fit_w = int(round(ah * nw / nh))
+            return QSize(max(fit_w, 1), max(fit_h, 1))
+        return QSize(iw, ih)
+
+    def _paint_frame(self, qimg: QImage) -> None:
+        target = self._fit_size(qimg.width(), qimg.height())
+        pix = QPixmap.fromImage(qimg).scaled(
+            target,
+            Qt.IgnoreAspectRatio,
+            Qt.FastTransformation,
+        )
+        self.screen.setPixmap(pix)
+
+    def _on_frame(self, qimg: QImage) -> None:
+        if qimg is None or qimg.isNull():
+            return
+        self._last_frame = qimg
+        self.screen.setText("")
+        self._paint_frame(qimg)
+
+    def _on_fail(self, msg: str) -> None:
+        self.screen.setText(msg)
+
+    def resizeEvent(self, e) -> None:  # noqa: N802
+        super().resizeEvent(e)
+        if self._last_frame is not None:
+            self._paint_frame(self._last_frame)
+
+    def keyPressEvent(self, e: QKeyEvent) -> None:  # noqa: N802
+        if e.isAutoRepeat():
+            return
+        if e.key() == Qt.Key_S:
+            self._tap("start")
+            e.accept()
+            return
+        if e.key() == Qt.Key_2:
+            self._tap("select")
+            e.accept()
+            return
+        name = _BTN_MAP.get(e.key())
+        if name and self._worker is not None:
+            self._held_qt[e.key()] = name
+            self._worker.button_down(name)
+            self._poll_exit_combo()
+            e.accept()
+            return
+        super().keyPressEvent(e)
+
+    def keyReleaseEvent(self, e: QKeyEvent) -> None:  # noqa: N802
+        if e.isAutoRepeat():
+            return
+        name = self._held_qt.pop(e.key(), None) or _BTN_MAP.get(e.key())
+        if name and self._worker is not None:
+            self._worker.button_up(name)
+            self._poll_exit_combo()
+            e.accept()
+            return
+        super().keyReleaseEvent(e)
+
+    def hideEvent(self, e) -> None:  # noqa: N802
+        self.stop()
+        super().hideEvent(e)
+
+
+def make_emu_page(
+    system: EmuSystem,
+    on_back: Callable[[], None],
+    *,
+    on_receive: Optional[Callable[[], None]] = None,
+) -> QWidget:
+    body = QWidget()
+    outer = QVBoxLayout(body)
+    outer.setContentsMargins(0, 0, 0, 0)
+    outer.setSpacing(0)
+
+    list_page = QWidget()
+    lay = QVBoxLayout(list_page)
+    lay.setContentsMargins(2, 2, 2, 2)
+    lay.setSpacing(2)
+
+    ok_be, be_msg = backend_status(system)
+    extra = f"\n{system.tip_extra}" if system.tip_extra else ""
+    tip = QLabel(
+        (
+            f"{be_msg}{extra}\n"
+            "Confirm=A · Back=B · Home=Start · Select=Select\n"
+            "Hold Confirm+Back+Home (~0.5s) to quit"
+        )
+        if ok_be
+        else f"{be_msg}\nROMs: Transfer still works."
+    )
+    tip.setWordWrap(True)
+    tip.setStyleSheet("color:#9ab;font-size:9px;")
+    status = QLabel("")
+    status.setWordWrap(True)
+    status.setStyleSheet("color:#cde;font-size:10px;")
+    lst = QListWidget()
+    lst.setStyleSheet(
+        "QListWidget { background: transparent; border: none; }"
+        "QListWidget::item { padding: 4px; min-height: 22px; }"
+        "QListWidget::item:selected { background:#FFE600; color:#000; }"
+    )
+    play = QPushButton("Play")
+    play.setFixedHeight(28)
+    play.setStyleSheet("font-weight:800;")
+    play.setEnabled(ok_be)
+    recv = QPushButton("Receive ROMs (Wi‑Fi)")
+    recv.setFixedHeight(26)
+    refresh = QPushButton("Reload")
+    refresh.setFixedHeight(24)
+    lay.addWidget(tip)
+    lay.addWidget(status)
+    lay.addWidget(lst, 1)
+    lay.addWidget(play)
+    lay.addWidget(recv)
+    lay.addWidget(refresh)
+    outer.addWidget(list_page, 1)
+
+    state = {"playing": False}
+
+    def chrome_back() -> None:
+        if state["playing"] and play_view.playing:
+            return
+        if state["playing"]:
+            show_list()
+            return
+        on_back()
+
+    chrome = page_chrome(system.title, body, chrome_back, scroll=False)
+    play_view = EmuPlayView(system, on_quit=lambda: None)
+    play_view.setParent(chrome)
+    play_view.hide()
+
+    def _sync_overlay() -> None:
+        play_view.setGeometry(0, 0, chrome.width(), chrome.height())
+        play_view.raise_()
+
+    class _OverlayFilter(QObject):
+        def eventFilter(self, obj, event):  # noqa: N802
+            if obj is chrome and event.type() == QEvent.Resize:
+                if play_view.isVisible():
+                    _sync_overlay()
+            return False
+
+    _filt = _OverlayFilter(chrome)
+    chrome.installEventFilter(_filt)
+
+    def show_list() -> None:
+        state["playing"] = False
+        play_view.stop()
+        play_view.hide()
+        list_page.show()
+        refresh_list()
+
+    def show_play() -> None:
+        state["playing"] = True
+        list_page.hide()
+        _sync_overlay()
+        play_view.show()
+        play_view.raise_()
+        play_view.setFocus(Qt.OtherFocusReason)
+
+    play_view._on_quit = show_list  # type: ignore[method-assign]
+
+    def refresh_list() -> None:
+        lst.clear()
+        roms = list_roms(system)
+        ok, msg = backend_status(system)
+        play.setEnabled(ok and bool(roms))
+        folder = ensure_rom_dir(system)
+        status.setText(f"{msg}\n{len(roms)} ROM(s) · {folder.name}/")
+        if not roms:
+            empty = QListWidgetItem("No ROMs yet\n→ Receive ROMs (Wi‑Fi)")
+            empty.setFlags(Qt.NoItemFlags)
+            lst.addItem(empty)
+            return
+        for p in roms:
+            item = QListWidgetItem(p.name)
+            item.setData(Qt.UserRole, str(p))
+            lst.addItem(item)
+        lst.setCurrentRow(0)
+
+    def launch() -> None:
+        ok, msg = backend_status(system)
+        if not ok:
+            status.setText(msg)
+            return
+        item = lst.currentItem()
+        if item is None:
+            status.setText("Pick a ROM")
+            return
+        path = item.data(Qt.UserRole)
+        if not path:
+            status.setText("Pick a ROM")
+            return
+        rom = Path(str(path))
+        if not rom.is_file():
+            status.setText("ROM missing")
+            return
+        show_play()
+        play_view.start_rom(rom)
+
+    def do_receive() -> None:
+        if on_receive is not None:
+            on_receive()
+        else:
+            status.setText("Open Tools → Transfer · ROMs")
+
+    def on_hardware_back() -> bool:
+        if play_view.isVisible() and play_view.playing:
+            return True
+        return False
+
+    def on_navigate_away() -> None:
+        if state["playing"] or play_view.isVisible() or play_view.playing:
+            show_list()
+
+    lst.itemActivated.connect(lambda _i: launch())
+    play.clicked.connect(launch)
+    refresh.clicked.connect(refresh_list)
+    recv.clicked.connect(do_receive)
+
+    chrome.on_hardware_back = on_hardware_back  # type: ignore[attr-defined]
+    chrome.on_navigate_away = on_navigate_away  # type: ignore[attr-defined]
+    chrome.emu_board = play_view  # type: ignore[attr-defined]
+    chrome.gb_board = play_view  # type: ignore[attr-defined]
+    refresh_list()
+    return chrome

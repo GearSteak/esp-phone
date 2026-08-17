@@ -100,6 +100,11 @@ bash "$ROOT/session/ensure-gb-wrappers.sh" 2>/dev/null || true
 install -m 755 "$ROOT/session/ensure-gb-roms.sh" "$PREFIX/session/ensure-gb-roms.sh"
 install -m 755 "$ROOT/session/ensure-gb-roms.sh" /usr/local/bin/digivice-gb-roms-dir
 bash "$ROOT/session/ensure-gb-roms.sh" 2>/dev/null || true
+if [[ -f "$ROOT/session/ensure-libretro-cores.sh" ]]; then
+  install -m 755 "$ROOT/session/ensure-libretro-cores.sh" "$PREFIX/session/ensure-libretro-cores.sh"
+  install -m 755 "$ROOT/session/ensure-libretro-cores.sh" /usr/local/bin/digivice-libretro-cores
+  bash "$ROOT/session/ensure-libretro-cores.sh" 2>/dev/null || true
+fi
 touch "$USER_HOME/.esp-handset/gb-disabled" 2>/dev/null || true
 chown "$USER_NAME:$USER_NAME" "$USER_HOME/.esp-handset/gb-disabled" 2>/dev/null || true
 install -m 755 "$ROOT/session/install-home-request.sh" "$PREFIX/session/install-home-request.sh"

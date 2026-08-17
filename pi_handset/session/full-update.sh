@@ -109,14 +109,11 @@ else
   log "WARN: linphonecsh still missing after apt"
 fi
 
-# Game Boy / GBC — in-UI PyBoy (Digivice keeps SPI; RetroArch handoff stays disabled)
-log "pip: PyBoy (in-UI Game Boy)…"
+# In-UI emulators — libretro C cores (fast on Pi Zero 2W) + PyBoy GB fallback
+log "pip: PyBoy + numpy (GB fallback)…"
 python3 -m pip install --break-system-packages -q 'pyboy' 'pillow' 'numpy' \
   2>&1 | tee -a "$LOG" | tail -n 15 \
-  || log "WARN: pip pyboy failed — Games→GB Play needs: sudo pip3 install --break-system-packages pyboy"
-# Optional desktop cores (not used by Digivice Play)
-apt-get install -y retroarch libretro-gambatte 2>&1 | tee -a "$LOG" | tail -n 5 \
-  || true
+  || log "WARN: pip pyboy failed — Games→GB Play can use gambatte core instead"
 
 # --- repo ---
 find_repo() {
@@ -331,6 +328,12 @@ if [[ -f "$ROOT/session/ensure-gb-roms.sh" ]]; then
   install -m 755 "$ROOT/session/ensure-gb-roms.sh" "$PREFIX/session/ensure-gb-roms.sh"
   install -m 755 "$ROOT/session/ensure-gb-roms.sh" /usr/local/bin/digivice-gb-roms-dir
   bash "$ROOT/session/ensure-gb-roms.sh" 2>&1 | tee -a "$LOG" || true
+fi
+if [[ -f "$ROOT/session/ensure-libretro-cores.sh" ]]; then
+  install -m 755 "$ROOT/session/ensure-libretro-cores.sh" "$PREFIX/session/ensure-libretro-cores.sh"
+  install -m 755 "$ROOT/session/ensure-libretro-cores.sh" /usr/local/bin/digivice-libretro-cores
+  log "libretro cores (in-UI NES/SMS/Genesis/GBA/GB)…"
+  bash "$ROOT/session/ensure-libretro-cores.sh" 2>&1 | tee -a "$LOG" | tail -n 30 || true
 fi
 # Kill switch: external GB emu blanked SPI — keep off until in-UI emu
 touch "$USER_HOME/.esp-handset/gb-disabled" 2>/dev/null || true

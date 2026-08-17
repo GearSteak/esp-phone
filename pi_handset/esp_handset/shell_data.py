@@ -22,7 +22,7 @@ HOME_APPS: List[AppEntry] = [
     AppEntry("camera", "Camera", "Snap · preview", "◉"),
     AppEntry("browser", "Browser", "Open web", "⎋"),
     AppEntry("media", "Media", "Gallery · notes · GPS", "▶"),
-    AppEntry("games", "Games", "GB · built-ins", "♠"),
+    AppEntry("games", "Games", "Emu · arcade", "♠"),
     AppEntry("tools", "Tools", "Calc · steps", "⚒"),
     AppEntry("email", "Email", "Gmail · Inbox", "@"),
     AppEntry("settings", "Settings", "Device · Linux", "⚙"),
@@ -93,12 +93,19 @@ MEDIA_APPS = [
 
 GAMES_APPS = [
     AppEntry("gb", "Game Boy", "GB / GBC ROMs", "♠"),
+    AppEntry("nes", "NES", "Famicom ROMs", "◆"),
+    AppEntry("sms", "SMS / GG", "Master System · Game Gear", "◎"),
+    AppEntry("genesis", "Genesis", "Mega Drive ROMs", "▶"),
+    AppEntry("gba", "Game Boy Adv", "GBA · gpSP", "■"),
+    AppEntry("chip8", "CHIP-8", "Tiny ROMs · always on", "8"),
     AppEntry("snake", "Snake", "Arcade · high score", "◆"),
     AppEntry("pong", "Pong", "Arcade · vs AI", "○"),
     AppEntry("tetris", "Tetris", "Arcade · stack", "▣"),
     AppEntry("solitaire", "Solitaire", "Klondike cards", "♠"),
     AppEntry("uno", "Uno", "Match color · number", "U"),
 ]
+
+EMU_PAGE_KEYS = ("gb", "nes", "sms", "genesis", "gba", "chip8")
 
 # Settings → Debug hub
 DEBUG_APPS = [

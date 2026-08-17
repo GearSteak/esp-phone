@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Ensure Digivice Game Boy ROM drop-folder exists (no ROMs bundled).
+# Ensure Digivice ROM drop-folders exist (no ROMs bundled).
 #
 #   digivice-gb-roms-dir
-#   → ~/.esp-handset/roms/gb/
-#   → /opt/esp-handset/roms/gb/   (optional shared)
+#   → ~/.esp-handset/roms/{gb,nes,sms,genesis,gba,chip8}/
+#   → /opt/esp-handset/roms/...   (optional shared)
 #
 set +e
 set -u
@@ -29,35 +29,52 @@ resolve_user() {
 
 USER_NAME="$(resolve_user)"
 USER_HOME="$(getent passwd "$USER_NAME" | cut -d: -f6 || echo /home/"$USER_NAME")"
-ROM_USER="$USER_HOME/.esp-handset/roms/gb"
-ROM_OPT="$PREFIX/roms/gb"
 
-mkdir -p "$ROM_USER" "$ROM_OPT" 2>/dev/null || true
+SYSTEMS="gb nes sms genesis gba chip8"
+EXTS_gb=".gb .gbc"
+EXTS_nes=".nes"
+EXTS_sms=".sms .gg"
+EXTS_genesis=".md .gen"
+EXTS_gba=".gba"
+EXTS_chip8=".ch8 .c8"
 
-README_TXT="# Digivice Game Boy / GBC ROMs
+readme_for() {
+  local sys="$1"
+  local exts="$2"
+  cat <<EOF
+# Digivice ${sys} ROMs
 #
-# Drop your own .gb / .gbc files in this folder, then:
-#   Digivice → Games → Game Boy → pick ROM → Play
+# Drop your own ${exts} files in this folder, then:
+#   Digivice → Games → pick system → Play
 #
 # No commercial ROMs are included. Supply your own legally.
 #
-# Also scanned: ~/roms/gb  and  /opt/esp-handset/roms/gb
-"
+# Also scanned: ~/roms/${sys}  and  /opt/esp-handset/roms/${sys}
+EOF
+}
 
-for dir in "$ROM_USER" "$ROM_OPT"; do
-  [[ -d "$dir" ]] || continue
-  if [[ ! -f "$dir/README.txt" ]]; then
-    printf '%s\n' "$README_TXT" >"$dir/README.txt" 2>/dev/null || true
-  fi
+for sys in $SYSTEMS; do
+  ROM_USER="$USER_HOME/.esp-handset/roms/$sys"
+  ROM_OPT="$PREFIX/roms/$sys"
+  mkdir -p "$ROM_USER" "$ROM_OPT" 2>/dev/null || true
+  exts_var="EXTS_${sys}"
+  exts="${!exts_var}"
+  txt="$(readme_for "$sys" "$exts")"
+  for dir in "$ROM_USER" "$ROM_OPT"; do
+    [[ -d "$dir" ]] || continue
+    if [[ ! -f "$dir/README.txt" ]]; then
+      printf '%s\n' "$txt" >"$dir/README.txt" 2>/dev/null || true
+    fi
+  done
 done
 
 if [[ "$(id -u)" -eq 0 ]]; then
   chown -R "$USER_NAME:$USER_NAME" "$USER_HOME/.esp-handset" 2>/dev/null || true
-  chmod 755 "$ROM_USER" "$ROM_OPT" 2>/dev/null || true
+  chmod -R a+rX "$PREFIX/roms" 2>/dev/null || true
 fi
 
-echo "GB ROM folder ready:"
-echo "  $ROM_USER"
-echo "Copy ROMs with (from your PC):"
-echo "  scp game.gb ${USER_NAME}@<pi-ip>:${ROM_USER}/"
+echo "ROM folders ready under:"
+echo "  $USER_HOME/.esp-handset/roms/{gb,nes,sms,genesis,gba,chip8}/"
+echo "Copy with (from your PC):"
+echo "  scp game.gb ${USER_NAME}@<pi-ip>:${USER_HOME}/.esp-handset/roms/gb/"
 exit 0

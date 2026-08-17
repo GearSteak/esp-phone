@@ -202,4 +202,8 @@ class RadialMenu(QWidget):
         if cur.subtitle:
             p.setPen(QColor("#8aa"))
             p.setFont(QFont("DejaVu Sans", 8))
-            p.drawText(8, h - 16, w - 16, 14, Qt.AlignHCenter | Qt.AlignTop, cur.subtitle)
+            p.drawText(8, h - 16, w - 16, 14, Qt.AlignHCenter | Qt.AlignTop, f"{cur.subtitle}  ·  {show_idx + 1}/{n}")
+        else:
+            p.setPen(QColor("#8aa"))
+            p.setFont(QFont("DejaVu Sans", 8))
+            p.drawText(8, h - 16, w - 16, 14, Qt.AlignHCenter | Qt.AlignTop, f"{show_idx + 1}/{n}")

@@ -31,6 +31,7 @@ from esp_handset.shell_data import (
     CLOCK_APPS,
     COMM_APPS,
     DEBUG_APPS,
+    EMU_PAGE_KEYS,
     FOLDER_MAP,
     GAMES_APPS,
     HOME_APPS,
@@ -50,7 +51,7 @@ _GAME_PAGES = {e.key for e in GAMES_APPS}
 _ARCADE_PAGES = {"snake", "pong", "tetris"}
 _CARD_GAME_PAGES = {"solitaire", "uno"}
 # Pad routes to game_shell / GB while on these pages
-_GAMEPAD_PAGES = _ARCADE_PAGES | _CARD_GAME_PAGES | {"gb"}
+_GAMEPAD_PAGES = _ARCADE_PAGES | _CARD_GAME_PAGES | set(EMU_PAGE_KEYS)
 
 __all__ = [
     "PhoneShell",
@@ -605,12 +606,15 @@ class PhoneShell(QMainWindow):
         except Exception:
             pass
 
-    def _gb_play_board(self):
-        """In-UI PyBoy surface when a ROM is running, else None."""
-        if (self._nav[-1] if self._nav else "") != "gb":
+    def _emu_play_board(self):
+        """In-UI emulator surface when a ROM is running, else None."""
+        page_key = self._nav[-1] if self._nav else ""
+        if page_key not in EMU_PAGE_KEYS:
             return None
-        page = self.pages.get("gb")
-        board = getattr(page, "gb_board", None) if page else None
+        page = self.pages.get(page_key)
+        board = getattr(page, "emu_board", None) if page else None
+        if board is None and page is not None:
+            board = getattr(page, "gb_board", None)
         if (
             board is not None
             and board.isVisible()
@@ -650,8 +654,8 @@ class PhoneShell(QMainWindow):
             event.accept()
             return
 
-        # In-UI PyBoy: pad stays in game (Back=B, Home=Start); exit = combo on board
-        gb_board = self._gb_play_board()
+        # In-UI emulator: pad stays in game (Back=B, Home=Start); exit = combo on board
+        gb_board = self._emu_play_board()
         if gb_board is not None and key in (
             Qt.Key_Escape,
             Qt.Key_Home,
@@ -776,8 +780,10 @@ class PhoneShell(QMainWindow):
         page = self.pages.get(page_key)
         if page is not None and page_key not in self._radials and page_key != "home":
             if page_key in _GAMEPAD_PAGES:
-                # Route pad to living game / GB board
-                board = getattr(page, "gb_board", None)
+                # Route pad to living game / emu board
+                board = getattr(page, "emu_board", None) or getattr(
+                    page, "gb_board", None
+                )
                 if (
                     board is not None
                     and board.isVisible()
@@ -916,15 +922,17 @@ class PhoneShell(QMainWindow):
         super().keyPressEvent(event)
 
     def keyReleaseEvent(self, event) -> None:  # noqa: N802
-        gb_board = self._gb_play_board()
+        gb_board = self._emu_play_board()
         if gb_board is not None:
             gb_board.keyReleaseEvent(event)
             event.accept()
             return
         page_key = self._nav[-1] if self._nav else "home"
-        if page_key == "gb":
-            page = self.pages.get("gb")
-            board = getattr(page, "gb_board", None) if page else None
+        if page_key in EMU_PAGE_KEYS:
+            page = self.pages.get(page_key)
+            board = getattr(page, "emu_board", None) if page else None
+            if board is None and page is not None:
+                board = getattr(page, "gb_board", None)
             if (
                 board is not None
                 and board.isVisible()
