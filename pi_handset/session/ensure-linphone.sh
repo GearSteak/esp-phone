@@ -181,12 +181,11 @@ install_linphonec_wrapper() {
     log "wrapper → /usr/local/bin/digivice-linphonec"
   fi
   local cbin=""
-  for cand in \
+    for cand in \
     /usr/bin/linphonec \
     /usr/local/bin/linphonec \
     "$(command -v linphonec 2>/dev/null)" \
-    /usr/bin/linphone-daemon \
-    "$(dpkg -L linphone-cli 2>/dev/null | grep -E '/linphonec$|/linphone-daemon$' | head -n1 || true)"
+    "$(dpkg -L linphone-cli 2>/dev/null | grep '/linphonec$' | grep -v daemon | head -n1 || true)"
   do
     [[ -z "$cand" || "$cand" == *digivice-linphonec* ]] && continue
     if [[ -e "$cand" ]]; then

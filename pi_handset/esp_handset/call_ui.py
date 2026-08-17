@@ -615,7 +615,8 @@ class CallController(QObject):
             elapsed = time.time() - self._ring_started
             if info.phase in ("dialing", "ringing", "early", "active"):
                 self._saw_progress = True
-            if info.phase in ("active", "early"):
+            # Early media is still ringing — do not start the talk timer
+            if info.phase == "active":
                 self._answered = True
                 self._talk_started = time.time()
                 self._phase = "active"
