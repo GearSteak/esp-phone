@@ -278,19 +278,20 @@ def ensure() -> str:
         ]
         last = ""
         for args in attempts:
-            last = _run(args, timeout=12.0)
+            last = _run(args, timeout=8.0)
             print(f"[sip_call] register → {last[:160]!r}", flush=True)
             if re.search(r"(?i)unknown option|invalid option|usage:", last):
                 continue
-            # Wait for REGISTER round-trip
-            for _ in range(8):
-                time.sleep(0.4)
-                st = _run([exe, "status", "register"], timeout=2.5)
+            # Wait briefly for REGISTER round-trip
+            for _ in range(5):
+                time.sleep(0.35)
+                st = _run([exe, "status", "register"], timeout=2.0)
                 if _register_ok(st, user, server):
                     return ""
             if re.search(r"(?i)forbidden|unauthorized|403|401|denied|password", last):
                 return "SIP auth failed — check password"
-        st = _run([exe, "status", "register"], timeout=2.5)
+            break  # one serious attempt is enough; dial may still work
+        st = _run([exe, "status", "register"], timeout=2.0)
         if _register_ok(st, user, server):
             return ""
         print(f"[sip_call] register status still bad: {st[:200]!r}", flush=True)
@@ -449,23 +450,22 @@ def dial_ex(number: str) -> Tuple[bool, str]:
         if _hard_dial_error(out):
             print(f"[sip_call] dial reject: {out[:200]}", flush=True)
             continue
-        # Wait for an outbound call to show up (Zadarma can be slow)
-        for _ in range(16):
-            time.sleep(0.25)
+        # Brief poll, then accept soft/empty success so UI isn't stuck waiting
+        for _ in range(4):
+            time.sleep(0.2)
             info = poll()
             if info.phase in ("dialing", "ringing", "early", "active"):
                 return True, ""
             if info.phase == "error":
                 break
-        # Command didn't hard-fail — treat as started; UI tracks state
-        if out and not _hard_dial_error(out) and not re.search(
-            r"(?i)unknown|invalid|usage|no running", out
+        soft_ok = not _hard_dial_error(out) and not re.search(
+            r"(?i)unknown|invalid|usage|no running", out or ""
+        )
+        if soft_ok or not (out or "").strip() or (out or "").strip().lower() in (
+            "ok",
+            "done",
         ):
-            print(f"[sip_call] dial accepted (no poll yet): {target}", flush=True)
-            return True, ""
-        # Empty success is common for linphonecsh dial
-        if not (out or "").strip() or out.strip().lower() in ("ok", "done"):
-            print(f"[sip_call] dial empty-ok → {target}", flush=True)
+            print(f"[sip_call] dial accepted → {target}", flush=True)
             return True, ""
 
     print(f"[sip_call] dial produced no call; last={last_out[:160]!r}", flush=True)

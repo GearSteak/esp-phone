@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import time
+import threading
 from typing import Callable, Optional
 
 from PyQt5.QtCore import Qt, QTimer, pyqtSignal, QObject
@@ -348,6 +349,7 @@ class CallController(QObject):
     """Outbound (and light inbound watch) call state machine."""
 
     state_changed = pyqtSignal(str)  # ringing|active|ended|idle
+    _dial_finished = pyqtSignal(int, bool, str)  # gen, ok, reason
 
     def __init__(self, shell, on_status: Optional[Callable[[str], None]] = None):
         super().__init__(shell)
@@ -363,11 +365,14 @@ class CallController(QObject):
         self._ring_started = 0.0
         self._ring_timeout_s = 45.0
         self._saw_progress = False  # True once linphone reports dialing/ringing
+        self._dial_gen = 0
+        self._awaiting_dial = False
         self._poll = QTimer(self)
         self._poll.timeout.connect(self._tick)
         self._poll.start(500)
         self._incoming_prompted = False
         self._inbound_entry_id = ""
+        self._dial_finished.connect(self._on_dial_finished)
 
     @property
     def busy(self) -> bool:
@@ -404,15 +409,6 @@ class CallController(QObject):
                 hint = sip_call.missing_hint() or "VoIP tool missing"
                 self.on_status(hint)
                 return False
-        ready = sip_call.ensure()
-        if ready:
-            low = ready.lower()
-            if "no linphonecsh" in low or "daemon failed" in low:
-                self.on_status(ready)
-                return False
-            if "set sip" in low:
-                self.on_status(ready)
-                return False
 
         name = ""
         try:
@@ -431,31 +427,62 @@ class CallController(QObject):
         self._ring_started = time.time()
         self._saw_progress = False
         self._phase = "dialing"
+        self._awaiting_dial = True
+        self._dial_gen += 1
+        gen = self._dial_gen
 
         entry = clog.start(
             direction="out", number=num, name=name, status="dialing"
         )
         self._entry_id = str(entry.get("id") or "")
 
-        ok, reason = sip_call.dial_ex(num)
+        # Show UI immediately — SIP register/dial runs in a worker thread
+        self._show_ringing()
+        ov = getattr(self.shell, "_active_call", None)
+        if ov is not None:
+            ov.set_ringing_hint("Connecting…")
+        self.on_status(f"Calling {num}")
+        self.state_changed.emit("dialing")
+
+        def work() -> None:
+            try:
+                ok, reason = sip_call.dial_ex(num)
+            except Exception as e:
+                print(f"[call] dial_ex failed: {e}", flush=True)
+                ok, reason = False, "Dial error"
+            self._dial_finished.emit(gen, bool(ok), str(reason or ""))
+
+        threading.Thread(target=work, name="sip-dial", daemon=True).start()
+        return True
+
+    def _on_dial_finished(self, gen: int, ok: bool, reason: str) -> None:
+        if gen != self._dial_gen:
+            return
+        self._awaiting_dial = False
+        if self._user_hangup or self._phase not in ("dialing", "ringing"):
+            return
         if not ok:
             clog.finish(self._entry_id, status="failed", duration_s=0)
-            self._phase = "idle"
+            self._phase = "ended"
             self._show_ended("Could not dial", reason or "Check SIP / number / Wi‑Fi")
-            return False
-
+            self.on_status(reason or "Could not dial")
+            self.state_changed.emit("ended")
+            return
         self._phase = "ringing"
         clog.update(self._entry_id, status="ringing")
-        self._show_ringing()
-        self.on_status(f"Calling {num}")
+        ov = getattr(self.shell, "_active_call", None)
+        if ov is not None:
+            ov.set_ringing_hint("Ringing")
+        self.on_status(f"Calling {self._number}")
         self.state_changed.emit("ringing")
-        return True
 
     def hangup(self) -> None:
         if not self.busy and self._phase != "ended":
             sip_call.hangup()
             return
         self._user_hangup = True
+        self._awaiting_dial = False
+        self._dial_gen += 1  # ignore in-flight dial result
         sip_call.hangup()
         if self._phase in ("dialing", "ringing"):
             self._finish("canceled")
@@ -548,6 +575,7 @@ class CallController(QObject):
         self._incoming_prompted = False
         self._inbound_entry_id = ""
         self._saw_progress = False
+        self._awaiting_dial = False
         self.state_changed.emit("idle")
 
     def _tick(self) -> None:
@@ -583,6 +611,7 @@ class CallController(QObject):
                 self._answered = True
                 self._talk_started = time.time()
                 self._phase = "active"
+                self._awaiting_dial = False
                 clog.update(self._entry_id, status="answered", answered=True)
                 self._show_active()
                 self.on_status("Connected")
@@ -590,7 +619,11 @@ class CallController(QObject):
                 return
             if info.phase == "error":
                 raw = (info.raw or "").lower()
+                self._awaiting_dial = False
                 self._finish("busy" if "busy" in raw else "failed")
+                return
+            # Still running linphone dial/register in background — keep overlay
+            if self._awaiting_dial:
                 return
             # Idle too soon usually means dial never started — not "no answer"
             if info.phase in ("ending", "idle"):
