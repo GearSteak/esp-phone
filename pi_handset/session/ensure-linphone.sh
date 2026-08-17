@@ -167,6 +167,45 @@ for a in "$@"; do
   [[ "$a" == "--locate-only" || "$a" == "locate" ]] && LOCATE_ONLY=1
 done
 
+install_linphonec_wrapper() {
+  local wrap_src=""
+  for cand in \
+    "$PREFIX/session/digivice-linphonec.sh" \
+    "$(dirname "$0")/digivice-linphonec.sh" \
+    /opt/esp-handset/session/digivice-linphonec.sh
+  do
+    [[ -f "$cand" ]] && wrap_src="$cand" && break
+  done
+  if [[ -n "$wrap_src" ]]; then
+    install -m 755 "$wrap_src" /usr/local/bin/digivice-linphonec
+    log "wrapper → /usr/local/bin/digivice-linphonec"
+  fi
+  local cbin=""
+  for cand in \
+    /usr/bin/linphonec \
+    /usr/local/bin/linphonec \
+    "$(command -v linphonec 2>/dev/null)" \
+    /usr/bin/linphone-daemon \
+    "$(dpkg -L linphone-cli 2>/dev/null | grep -E '/linphonec$|/linphone-daemon$' | head -n1 || true)"
+  do
+    [[ -z "$cand" || "$cand" == *digivice-linphonec* ]] && continue
+    if [[ -e "$cand" ]]; then
+      cbin="$cand"
+      break
+    fi
+  done
+  if [[ -n "$cbin" ]]; then
+    echo "$cbin" >/etc/esp-handset/linphonec.bin
+    chmod 644 /etc/esp-handset/linphonec.bin 2>/dev/null || true
+    log "linphonec pin $cbin"
+    if [[ ! -e /usr/local/bin/linphonec ]]; then
+      ln -sfn "$cbin" /usr/local/bin/linphonec 2>/dev/null || true
+    fi
+  else
+    log "linphonec binary not found (calls will use linphonecsh)"
+  fi
+}
+
 install_wrapper() {
   local wrap_src=""
   for cand in \
@@ -179,6 +218,7 @@ install_wrapper() {
   if [[ -n "$wrap_src" ]]; then
     install -m 755 "$wrap_src" /usr/local/bin/digivice-linphonecsh
     log "wrapper → /usr/local/bin/digivice-linphonecsh"
+    install_linphonec_wrapper
   else
     # Inline fallback so Update always leaves Digivice a stable binary name
     cat >/usr/local/bin/digivice-linphonecsh <<'WRAP'
@@ -197,6 +237,7 @@ exec "$REAL" "$@"
 WRAP
     chmod 755 /usr/local/bin/digivice-linphonecsh
     log "wrapper → /usr/local/bin/digivice-linphonecsh (inline)"
+    install_linphonec_wrapper
   fi
 }
 

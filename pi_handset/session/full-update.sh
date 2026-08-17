@@ -282,6 +282,10 @@ if [[ -f "$ROOT/session/ensure-linphone.sh" ]]; then
     install -m 755 "$ROOT/session/digivice-linphonecsh.sh" "$PREFIX/session/digivice-linphonecsh.sh"
     install -m 755 "$ROOT/session/digivice-linphonecsh.sh" /usr/local/bin/digivice-linphonecsh
   fi
+  if [[ -f "$ROOT/session/digivice-linphonec.sh" ]]; then
+    install -m 755 "$ROOT/session/digivice-linphonec.sh" "$PREFIX/session/digivice-linphonec.sh"
+    install -m 755 "$ROOT/session/digivice-linphonec.sh" /usr/local/bin/digivice-linphonec
+  fi
   log "Ensuring Linphone (VoIP)…"
   if ! env SUDO_USER="$USER_NAME" DIGIVICE_USER="$USER_NAME" \
       bash /usr/local/bin/digivice-ensure-linphone 2>&1 | tee -a "$LOG"; then

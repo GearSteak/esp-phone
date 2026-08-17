@@ -114,6 +114,7 @@ install_live_from_repo() {
     "ensure-linphone.sh:digivice-ensure-linphone" \
     "ensure-libretro-cores.sh:digivice-libretro-cores" \
     "digivice-linphonecsh.sh:digivice-linphonecsh" \
+    "digivice-linphonec.sh:digivice-linphonec" \
     "digivice-sip-dial.sh:digivice-sip-dial" \
     "digivice-audio-doctor.sh:digivice-audio-doctor" \
     "digivice-audio-usb.sh:digivice-audio-usb" \
@@ -190,6 +191,7 @@ if [[ -d "$STAGE" && -f "$STAGE/.ready" ]]; then
     ensure-gb-wrappers.sh:digivice-ensure-gb \
     ensure-linphone.sh:digivice-ensure-linphone \
     digivice-linphonecsh.sh:digivice-linphonecsh \
+    digivice-linphonec.sh:digivice-linphonec \
     digivice-sip-dial.sh:digivice-sip-dial \
     full-update.sh:digivice-full-update \
     digivice-audio-doctor.sh:digivice-audio-doctor \
@@ -321,12 +323,14 @@ fi
 
 # VoIP: Digivice Settings→Update never ran apt — install linphone here
 export DEBIAN_FRONTEND=noninteractive
-# Always install Digivice's stable VoIP wrapper (even if ensure script missing)
+# Always install Digivice's stable VoIP wrappers (even if ensure script missing)
 if [[ -f "$PREFIX/session/digivice-linphonecsh.sh" ]]; then
   install -m 755 "$PREFIX/session/digivice-linphonecsh.sh" /usr/local/bin/digivice-linphonecsh
-elif [[ -f /usr/local/bin/digivice-ensure-linphone ]]; then
-  true
-else
+fi
+if [[ -f "$PREFIX/session/digivice-linphonec.sh" ]]; then
+  install -m 755 "$PREFIX/session/digivice-linphonec.sh" /usr/local/bin/digivice-linphonec
+fi
+if [[ ! -x /usr/local/bin/digivice-linphonecsh ]]; then
   cat >/usr/local/bin/digivice-linphonecsh <<'WRAP'
 #!/usr/bin/env bash
 set +e
@@ -349,6 +353,12 @@ if command -v linphonecsh >/dev/null 2>&1 || [[ -x /usr/bin/linphonecsh ]]; then
   echo "$REAL" >/etc/esp-handset/linphone.bin
   echo "$REAL" >"$USER_HOME/.esp-handset/linphone.bin" 2>/dev/null || true
   chown "$USER_NAME:$USER_NAME" "$USER_HOME/.esp-handset/linphone.bin" 2>/dev/null || true
+fi
+if command -v linphonec >/dev/null 2>&1 || [[ -e /usr/bin/linphonec ]]; then
+  CREAL="$(command -v linphonec 2>/dev/null || echo /usr/bin/linphonec)"
+  echo "$CREAL" >/etc/esp-handset/linphonec.bin
+  echo "$CREAL" >"$USER_HOME/.esp-handset/linphonec.bin" 2>/dev/null || true
+  chown "$USER_NAME:$USER_NAME" "$USER_HOME/.esp-handset/linphonec.bin" 2>/dev/null || true
 fi
 if [[ -f "$PREFIX/session/ensure-linphone.sh" ]]; then
   install -m 755 "$PREFIX/session/ensure-linphone.sh" /usr/local/bin/digivice-ensure-linphone

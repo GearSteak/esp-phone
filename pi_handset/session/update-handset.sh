@@ -184,6 +184,7 @@ install_tree() {
       "ensure-libretro-cores.sh:digivice-libretro-cores" \
       "ensure-linphone.sh:digivice-ensure-linphone" \
       "digivice-linphonecsh.sh:digivice-linphonecsh" \
+      "digivice-linphonec.sh:digivice-linphonec" \
       "digivice-sip-dial.sh:digivice-sip-dial" \
       "digivice-cm108-wake.sh:digivice-cm108-wake" \
       "digivice-start.sh:digivice-start"
@@ -215,6 +216,7 @@ install_tree() {
       "ensure-cardkb.sh:digivice-ensure-cardkb" \
       "ensure-linphone.sh:digivice-ensure-linphone" \
       "digivice-linphonecsh.sh:digivice-linphonecsh" \
+      "digivice-linphonec.sh:digivice-linphonec" \
       "digivice-sip-dial.sh:digivice-sip-dial" \
       "fix-cursor.sh:digivice-fix-cursor" \
       "restore-desktop-displays.sh:digivice-restore-desktop" \
