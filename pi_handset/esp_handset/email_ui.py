@@ -210,6 +210,129 @@ def _cache_set(messages: List[dict]) -> None:
     )
 
 
+def _collapse_ws(text: str) -> str:
+    return re.sub(r"\s+", " ", (text or "").replace("\xa0", " ")).strip()
+
+
+def _snippet_text(text: str, limit: int = 90) -> str:
+    s = _collapse_ws(text)
+    if not s:
+        return ""
+    if len(s) <= limit:
+        return s
+    return s[: limit - 1].rstrip() + "…"
+
+
+def _strip_html_preview(raw: str) -> str:
+    s = re.sub(r"(?is)<(script|style).*?>.*?</\1>", " ", raw or "")
+    s = re.sub(r"(?is)<br\s*/?>", " ", s)
+    s = re.sub(r"(?is)</p>", " ", s)
+    s = re.sub(r"(?is)<[^>]+>", " ", s)
+    s = (
+        s.replace("&nbsp;", " ")
+        .replace("&amp;", "&")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", '"')
+    )
+    return _collapse_ws(s)
+
+
+def _decode_part_bytes(payload: bytes, charset: Optional[str]) -> str:
+    for enc in ((charset or "").strip(), "utf-8", "latin-1"):
+        if not enc:
+            continue
+        try:
+            return payload.decode(enc, errors="replace")
+        except Exception:
+            continue
+    return payload.decode("utf-8", errors="replace")
+
+
+def _extract_text(msg) -> str:
+    """Prefer text/plain; fall back to lightly stripped HTML."""
+    if msg.is_multipart():
+        html_fallback = ""
+        for part in msg.walk():
+            ctype = part.get_content_type()
+            disp = str(part.get("Content-Disposition") or "")
+            if "attachment" in disp.lower():
+                continue
+            try:
+                payload = part.get_payload(decode=True) or b""
+            except Exception:
+                continue
+            if not payload:
+                continue
+            charset = part.get_content_charset() or "utf-8"
+            if ctype == "text/plain":
+                return _decode_part_bytes(payload, charset).strip()
+            if ctype == "text/html" and not html_fallback:
+                html_fallback = _strip_html_preview(
+                    _decode_part_bytes(payload, charset)
+                )
+        return html_fallback or "(HTML-only message)"
+    try:
+        payload = msg.get_payload(decode=True) or b""
+        charset = msg.get_content_charset() or "utf-8"
+        text = _decode_part_bytes(payload, charset).strip()
+        if (msg.get_content_type() or "").lower() == "text/html":
+            return _strip_html_preview(text)
+        return text
+    except Exception:
+        return str(msg.get_payload())[:2000]
+
+
+def _fetch_payload_parts(msg_data) -> List[bytes]:
+    """Collect byte payloads from an imaplib fetch response."""
+    out: List[bytes] = []
+    if not msg_data:
+        return out
+    for part in msg_data:
+        if isinstance(part, tuple) and len(part) >= 2:
+            blob = part[1]
+            if isinstance(blob, (bytes, bytearray)):
+                out.append(bytes(blob))
+        elif isinstance(part, (bytes, bytearray)):
+            # metadata-only lines — ignore
+            continue
+    return out
+
+
+def _flags_from_fetch(msg_data) -> str:
+    flags = ""
+    if not msg_data:
+        return flags
+    for part in msg_data:
+        meta = part[0] if isinstance(part, tuple) and part else part
+        if isinstance(meta, (bytes, bytearray)):
+            flags += meta.decode("utf-8", errors="replace")
+        elif isinstance(meta, str):
+            flags += meta
+    return flags
+
+
+def _uid_str(uid) -> str:
+    if isinstance(uid, (bytes, bytearray)):
+        return uid.decode("utf-8", errors="replace")
+    return str(uid)
+
+
+def _bytes_to_snippet(raw: bytes, limit: int = 90) -> str:
+    if not raw:
+        return ""
+    text = _decode_part_bytes(raw, "utf-8")
+    # Quoted-printable leftovers / MIME noise — keep readable preview
+    if re.search(r"(?i)<html|</p>|<br\s*/?>", text[:800]):
+        text = _strip_html_preview(text)
+    # If we got a MIME multipart blob, strip boundary lines
+    if text.lstrip().startswith("--") or "Content-Type:" in text[:120]:
+        text = re.sub(r"(?im)^--.*$", " ", text)
+        text = re.sub(r"(?im)^Content-.*$", " ", text)
+        text = _strip_html_preview(text)
+    return _snippet_text(text, limit=limit)
+
+
 class Avatar(QWidget):
     def __init__(self, letter: str, color: str, parent=None):
         super().__init__(parent)
@@ -476,6 +599,19 @@ def make_email_page(on_back: Callable[[], None]) -> QWidget:
         stack.setCurrentWidget(inbox)
         lst.setFocus(Qt.OtherFocusReason)
 
+    def _reader_preview(msg: dict) -> str:
+        body = str(msg.get("body") or "").strip()
+        if body:
+            return body
+        snip = str(msg.get("snippet") or "").strip()
+        if snip.casefold() in _PLACEHOLDER_SNIPS:
+            snip = ""
+        if snip:
+            return snip
+        if msg.get("uid"):
+            return "Loading…"
+        return "Open Refresh to load body."
+
     def _open_reader(msg: dict) -> None:
         name = msg.get("from_name") or "Unknown"
         # rebuild avatar
@@ -488,11 +624,11 @@ def make_email_page(on_back: Callable[[], None]) -> QWidget:
         addr = msg.get("from_email") or ""
         r_from.setText(f"{name}\n{addr}" if addr else name)
         r_when.setText(str(msg.get("when_full") or msg.get("when") or ""))
-        body_txt = str(msg.get("body") or msg.get("snippet") or "Open Refresh to load body.")
-        r_body.setText(body_txt)
+        r_body.setText(_reader_preview(msg))
         stack.setCurrentWidget(reader)
-        # Lazy body fetch
-        if not msg.get("body") and msg.get("uid"):
+        r_back.setFocus(Qt.OtherFocusReason)
+        # Lazy body fetch via stable IMAP UID
+        if not str(msg.get("body") or "").strip() and msg.get("uid"):
             QTimer.singleShot(50, lambda m=msg: _fetch_body(m))
 
     def _fetch_body(msg: dict) -> None:
@@ -500,54 +636,61 @@ def make_email_page(on_back: Callable[[], None]) -> QWidget:
         user = em.get("user") or ""
         password = em.get("pass") or ""
         host = em.get("host") or "imap.gmail.com"
-        uid = msg.get("uid")
+        uid = _uid_str(msg.get("uid") or "")
         if not user or not password or not uid:
+            if stack.currentWidget() is reader:
+                r_body.setText("(Missing account or message id)")
             return
         try:
-            uid_b = uid.encode() if isinstance(uid, str) else uid
+            uid_b = uid.encode("utf-8")
             M = imaplib.IMAP4_SSL(host, 993)
             M.login(user, password)
             M.select("INBOX")
-            typ, data = M.fetch(uid_b, "(RFC822)")
+            # Must use UID FETCH — list sync stores UIDs, not sequence numbers
+            typ, data = M.uid("fetch", uid_b, "(RFC822)")
             M.logout()
-            if typ != "OK" or not data or not data[0]:
+            payloads = _fetch_payload_parts(data)
+            if typ != "OK" or not payloads:
+                if stack.currentWidget() is reader:
+                    r_body.setText(
+                        "(Could not load body)\n"
+                        f"UID FETCH failed for {uid}\n"
+                        "Try ↻ Refresh, then open again.\n\n"
+                        f"{msg.get('snippet') or ''}"
+                    )
                 return
-            raw = data[0][1]
+            raw = payloads[0]
             parsed = email_lib.message_from_bytes(raw)
             text = _extract_text(parsed)
             msg["body"] = text[:4000]
+            snip = _snippet_text(text)
+            if snip:
+                msg["snippet"] = snip
             # update cache
             for m in state["messages"]:
-                if m.get("uid") == uid:
+                if _uid_str(m.get("uid") or "") == uid:
                     m["body"] = msg["body"]
+                    if snip:
+                        m["snippet"] = snip
                     m["unread"] = False
             _cache_set(state["messages"])
             if stack.currentWidget() is reader:
-                r_body.setText(msg["body"])
+                r_body.setText(msg["body"] or "(empty message)")
+            # Refresh list row snippets without yanking focus off reader chrome
+            cur = lst.currentRow()
             _fill_list(state["messages"])
+            if 0 <= cur < lst.count():
+                lst.setCurrentRow(cur)
         except Exception as e:
             if stack.currentWidget() is reader:
-                r_body.setText(f"(Could not load body)\n{e}\n\n{msg.get('snippet') or ''}")
-
-    def _extract_text(msg) -> str:
-        if msg.is_multipart():
-            for part in msg.walk():
-                ctype = part.get_content_type()
-                disp = str(part.get("Content-Disposition") or "")
-                if ctype == "text/plain" and "attachment" not in disp.lower():
-                    try:
-                        payload = part.get_payload(decode=True) or b""
-                        charset = part.get_content_charset() or "utf-8"
-                        return payload.decode(charset, errors="replace").strip()
-                    except Exception:
-                        continue
-            return "(HTML-only message)"
-        try:
-            payload = msg.get_payload(decode=True) or b""
-            charset = msg.get_content_charset() or "utf-8"
-            return payload.decode(charset, errors="replace").strip()
-        except Exception:
-            return str(msg.get_payload())[:2000]
+                snip = str(msg.get("snippet") or "")
+                if snip.casefold() in _PLACEHOLDER_SNIPS:
+                    snip = ""
+                r_body.setText(
+                    f"(Could not load body)\n{e}\n"
+                    "Try ↻ Refresh, then open again.\n\n"
+                    f"{snip}"
+                )
 
     def do_fetch() -> None:
         if state["busy"]:
@@ -574,40 +717,60 @@ def make_email_page(on_back: Callable[[], None]) -> QWidget:
         def work():
             messages: List[dict] = []
             err = ""
+            # Keep previously opened bodies across refresh (match by UID)
+            prev_body = {
+                _uid_str(m.get("uid") or ""): str(m.get("body") or "")
+                for m in state["messages"]
+                if m.get("uid") and m.get("body")
+            }
             try:
                 M = imaplib.IMAP4_SSL(host, 993)
                 M.login(user, password)
                 M.select("INBOX")
-                typ, data = M.search(None, "ALL")
+                # Stable UIDs — sequence numbers break on a later connection
+                typ, data = M.uid("search", None, "ALL")
+                if typ != "OK" or not data or data[0] is None:
+                    raise RuntimeError("UID SEARCH failed")
                 ids = data[0].split()[-20:]
                 for num in reversed(ids):
-                    typ, msg_data = M.fetch(
+                    uid_s = _uid_str(num)
+                    # Header + first MIME part peek for list snippet (UID FETCH)
+                    typ, msg_data = M.uid(
+                        "fetch",
                         num,
-                        "(FLAGS BODY.PEEK[HEADER.FIELDS (SUBJECT FROM DATE)])",
+                        "(FLAGS BODY.PEEK[HEADER.FIELDS (SUBJECT FROM DATE)]"
+                        " BODY.PEEK[1]<0.800>)",
                     )
-                    flags = ""
-                    raw = b""
-                    if msg_data:
-                        for part in msg_data:
-                            if isinstance(part, tuple) and len(part) >= 2:
-                                meta = part[0]
-                                if isinstance(meta, (bytes, bytearray)):
-                                    flags += meta.decode("utf-8", errors="replace")
-                                if isinstance(part[1], (bytes, bytearray)):
-                                    raw = bytes(part[1])
-                            elif isinstance(part, (bytes, bytearray)):
-                                flags += part.decode("utf-8", errors="replace")
-                    hdr = email_lib.message_from_bytes(raw) if raw else None
+                    if typ != "OK" or not msg_data:
+                        typ, msg_data = M.uid(
+                            "fetch",
+                            num,
+                            "(FLAGS BODY.PEEK[HEADER.FIELDS (SUBJECT FROM DATE)])",
+                        )
+                    flags = _flags_from_fetch(msg_data)
+                    payloads = _fetch_payload_parts(msg_data)
+                    hdr_raw = payloads[0] if payloads else b""
+                    peek_raw = payloads[1] if len(payloads) > 1 else b""
+                    hdr = (
+                        email_lib.message_from_bytes(hdr_raw) if hdr_raw else None
+                    )
                     subj = _decode_hdr(hdr["Subject"]) if hdr else ""
                     frm = _decode_hdr(hdr["From"]) if hdr else ""
                     date_h = _decode_hdr(hdr["Date"]) if hdr else ""
                     dt = _parse_date(date_h)
                     unread = "\\Seen" not in flags
-                    uid_s = (
-                        num.decode()
-                        if isinstance(num, (bytes, bytearray))
-                        else str(num)
-                    )
+                    snip = _bytes_to_snippet(peek_raw)
+                    if not snip:
+                        # TEXT section fallback (single-part / some servers)
+                        try:
+                            typ2, peek_data = M.uid(
+                                "fetch", num, "(BODY.PEEK[TEXT]<0.800>)"
+                            )
+                            peek2 = _fetch_payload_parts(peek_data)
+                            if typ2 == "OK" and peek2:
+                                snip = _bytes_to_snippet(peek2[0])
+                        except Exception:
+                            snip = ""
                     messages.append(
                         {
                             "uid": uid_s,
@@ -616,9 +779,9 @@ def make_email_page(on_back: Callable[[], None]) -> QWidget:
                             "from_email": _from_email(frm),
                             "when": _fmt_when(dt),
                             "when_full": date_h,
-                            "snippet": "Tap to open",
+                            "snippet": snip,
                             "unread": unread,
-                            "body": "",
+                            "body": prev_body.get(uid_s, ""),
                         }
                     )
                 M.logout()
@@ -634,7 +797,7 @@ def make_email_page(on_back: Callable[[], None]) -> QWidget:
             refresh.setEnabled(True)
         if err:
             status.setText("Sync failed")
-            empty.setText(f"Couldn't sync\n\n{err}")
+            empty.setText(f"Couldn't sync\n\n{_auth_hint(err, user)}")
             if not state["messages"]:
                 lst.hide()
                 empty.show()
@@ -644,8 +807,11 @@ def make_email_page(on_back: Callable[[], None]) -> QWidget:
         store.push_notif("Email", f"{len(messages)} in Inbox", "email", toast=False)
         status.setText("Updated just now")
 
-    def on_item(_item: QListWidgetItem) -> None:
-        row = lst.currentRow()
+    def on_item(item: Optional[QListWidgetItem] = None) -> None:
+        # Digi Confirm emits itemActivated; touch emits itemClicked
+        row = lst.row(item) if item is not None else lst.currentRow()
+        if row < 0:
+            row = lst.currentRow()
         if 0 <= row < len(state["messages"]):
             _open_reader(state["messages"][row])
 
