@@ -161,9 +161,67 @@ install_cli() {
 }
 
 DOCTOR=0
+LOCATE_ONLY=0
 for a in "$@"; do
   [[ "$a" == "--doctor" || "$a" == "doctor" ]] && DOCTOR=1
+  [[ "$a" == "--locate-only" || "$a" == "locate" ]] && LOCATE_ONLY=1
 done
+
+install_wrapper() {
+  local wrap_src=""
+  for cand in \
+    "$PREFIX/session/digivice-linphonecsh.sh" \
+    "$(dirname "$0")/digivice-linphonecsh.sh" \
+    /opt/esp-handset/session/digivice-linphonecsh.sh
+  do
+    [[ -f "$cand" ]] && wrap_src="$cand" && break
+  done
+  if [[ -n "$wrap_src" ]]; then
+    install -m 755 "$wrap_src" /usr/local/bin/digivice-linphonecsh
+    log "wrapper → /usr/local/bin/digivice-linphonecsh"
+  else
+    # Inline fallback so Update always leaves Digivice a stable binary name
+    cat >/usr/local/bin/digivice-linphonecsh <<'WRAP'
+#!/usr/bin/env bash
+set +e
+REAL=""
+for hint in /etc/esp-handset/linphone.bin "${HOME}/.esp-handset/linphone.bin"; do
+  [[ -f "$hint" ]] || continue
+  cand="$(tr -d '[:space:]' <"$hint" 2>/dev/null || true)"
+  [[ -n "$cand" && -x "$cand" ]] && REAL="$cand" && break
+done
+[[ -z "$REAL" && -x /usr/bin/linphonecsh ]] && REAL=/usr/bin/linphonecsh
+[[ -z "$REAL" ]] && REAL="$(dpkg -L linphone-cli 2>/dev/null | grep '/linphonecsh$' | head -n1 || true)"
+[[ -n "$REAL" && -e "$REAL" ]] || { echo "linphonecsh not found" >&2; exit 127; }
+exec "$REAL" "$@"
+WRAP
+    chmod 755 /usr/local/bin/digivice-linphonecsh
+    log "wrapper → /usr/local/bin/digivice-linphonecsh (inline)"
+  fi
+}
+
+pin_bin() {
+  local bin="$1"
+  [[ -n "$bin" && -e "$bin" ]] || return 1
+  write_status "ok $bin"
+  echo "$bin" >/etc/esp-handset/linphone.bin
+  chmod 644 /etc/esp-handset/linphone.bin 2>/dev/null || true
+  RUN_AS="${SUDO_USER:-${DIGIVICE_USER:-}}"
+  if [[ -n "$RUN_AS" && "$RUN_AS" != "root" ]]; then
+    HOME_AS="$(getent passwd "$RUN_AS" | cut -d: -f6)"
+    if [[ -n "$HOME_AS" ]]; then
+      mkdir -p "$HOME_AS/.esp-handset"
+      echo "$bin" >"$HOME_AS/.esp-handset/linphone.bin"
+      chown "$RUN_AS:$RUN_AS" "$HOME_AS/.esp-handset/linphone.bin" 2>/dev/null || true
+    fi
+  fi
+  ln -sfn "$bin" /usr/local/bin/linphonecsh 2>/dev/null || true
+  if [[ ! -e /usr/bin/linphonecsh ]]; then
+    ln -sfn "$bin" /usr/bin/linphonecsh 2>/dev/null || true
+  fi
+  install_wrapper
+  return 0
+}
 
 if [[ "$DOCTOR" -eq 1 ]]; then
   doctor
@@ -171,9 +229,29 @@ if [[ "$DOCTOR" -eq 1 ]]; then
 fi
 
 log "=== ensure start $(date -Is 2>/dev/null || date) ==="
+install_wrapper
+
 if have_bin; then
-  log "already present: $(command -v linphonecsh 2>/dev/null || echo /usr/bin/linphonecsh)"
+  BIN="$(command -v linphonecsh 2>/dev/null || echo /usr/bin/linphonecsh)"
+  [[ -x /usr/bin/linphonecsh ]] && BIN=/usr/bin/linphonecsh
+  log "already present: $BIN"
+  pin_bin "$BIN"
+  if [[ "$LOCATE_ONLY" -eq 1 ]]; then
+    exit 0
+  fi
 else
+  if [[ "$LOCATE_ONLY" -eq 1 ]]; then
+    # Still try dpkg path without apt
+    BIN="$(dpkg -L linphone-cli 2>/dev/null | grep '/linphonecsh$' | head -n1 || true)"
+    if [[ -n "$BIN" && -e "$BIN" ]]; then
+      pin_bin "$BIN"
+      log "locate-only OK $BIN"
+      exit 0
+    fi
+    log "locate-only: not found"
+    write_status "missing"
+    exit 2
+  fi
   install_cli
 fi
 
@@ -184,40 +262,18 @@ if ! have_bin; then
   echo ""
   echo "====================================================="
   echo " Digivice VoIP FAILED: linphonecsh not installed"
-  echo " Paste this output to debug:"
-  echo "   sudo digivice-ensure-linphone --doctor"
-  echo " Log: $LOG"
   echo "====================================================="
   exit 2
 fi
 
 BIN="$(command -v linphonecsh 2>/dev/null || echo /usr/bin/linphonecsh)"
+[[ -x /usr/bin/linphonecsh ]] && BIN=/usr/bin/linphonecsh
 log "OK $BIN"
-write_status "ok $BIN"
+pin_bin "$BIN"
 
 RUN_AS="${SUDO_USER:-}"
 if [[ -z "$RUN_AS" || "$RUN_AS" == "root" ]]; then
   RUN_AS="${DIGIVICE_USER:-}"
-fi
-
-# Absolute path Digivice reads first (avoids PATH mismatches)
-echo "$BIN" >/etc/esp-handset/linphone.bin
-chmod 644 /etc/esp-handset/linphone.bin 2>/dev/null || true
-# User-writable copy (Digivice can refresh this without root)
-if [[ -n "$RUN_AS" && "$RUN_AS" != "root" ]]; then
-  HOME_AS="$(getent passwd "$RUN_AS" | cut -d: -f6)"
-  if [[ -n "$HOME_AS" ]]; then
-    mkdir -p "$HOME_AS/.esp-handset"
-    echo "$BIN" >"$HOME_AS/.esp-handset/linphone.bin"
-    chown "$RUN_AS:$RUN_AS" "$HOME_AS/.esp-handset/linphone.bin" 2>/dev/null || true
-  fi
-fi
-# Symlink into /usr/local/bin if installed elsewhere
-if [[ "$BIN" != /usr/local/bin/linphonecsh && "$BIN" != /usr/bin/linphonecsh ]]; then
-  ln -sfn "$BIN" /usr/local/bin/linphonecsh 2>/dev/null || true
-fi
-if [[ ! -e /usr/bin/linphonecsh && -x "$BIN" ]]; then
-  ln -sfn "$BIN" /usr/bin/linphonecsh 2>/dev/null || true
 fi
 
 # Warm daemon as Digivice user (pipe is per-uid)

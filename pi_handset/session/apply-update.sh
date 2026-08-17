@@ -112,6 +112,7 @@ install_live_from_repo() {
     "ensure-buttons.sh:digivice-ensure-buttons" \
     "ensure-cardkb.sh:digivice-ensure-cardkb" \
     "ensure-linphone.sh:digivice-ensure-linphone" \
+    "digivice-linphonecsh.sh:digivice-linphonecsh" \
     "digivice-audio-doctor.sh:digivice-audio-doctor" \
     "digivice-audio-usb.sh:digivice-audio-usb" \
     "digivice-audio-fix.sh:digivice-audio-fix" \
@@ -186,6 +187,7 @@ if [[ -d "$STAGE" && -f "$STAGE/.ready" ]]; then
     digivice-stop-gb.sh:digivice-stop-gb \
     ensure-gb-wrappers.sh:digivice-ensure-gb \
     ensure-linphone.sh:digivice-ensure-linphone \
+    digivice-linphonecsh.sh:digivice-linphonecsh \
     full-update.sh:digivice-full-update \
     digivice-audio-doctor.sh:digivice-audio-doctor \
     digivice-audio-usb.sh:digivice-audio-usb \
@@ -316,10 +318,40 @@ fi
 
 # VoIP: Digivice Settings→Update never ran apt — install linphone here
 export DEBIAN_FRONTEND=noninteractive
+# Always install Digivice's stable VoIP wrapper (even if ensure script missing)
+if [[ -f "$PREFIX/session/digivice-linphonecsh.sh" ]]; then
+  install -m 755 "$PREFIX/session/digivice-linphonecsh.sh" /usr/local/bin/digivice-linphonecsh
+elif [[ -f /usr/local/bin/digivice-ensure-linphone ]]; then
+  true
+else
+  cat >/usr/local/bin/digivice-linphonecsh <<'WRAP'
+#!/usr/bin/env bash
+set +e
+REAL=""
+for hint in /etc/esp-handset/linphone.bin "${HOME}/.esp-handset/linphone.bin"; do
+  [[ -f "$hint" ]] || continue
+  cand="$(tr -d '[:space:]' <"$hint" 2>/dev/null || true)"
+  [[ -n "$cand" && -x "$cand" ]] && REAL="$cand" && break
+done
+[[ -z "$REAL" && -x /usr/bin/linphonecsh ]] && REAL=/usr/bin/linphonecsh
+[[ -z "$REAL" ]] && REAL="$(dpkg -L linphone-cli 2>/dev/null | grep '/linphonecsh$' | head -n1 || true)"
+[[ -n "$REAL" && -e "$REAL" ]] || exit 127
+exec "$REAL" "$@"
+WRAP
+  chmod 755 /usr/local/bin/digivice-linphonecsh
+fi
+# Pin path if package already present
+if command -v linphonecsh >/dev/null 2>&1 || [[ -x /usr/bin/linphonecsh ]]; then
+  REAL="$(command -v linphonecsh 2>/dev/null || echo /usr/bin/linphonecsh)"
+  echo "$REAL" >/etc/esp-handset/linphone.bin
+  echo "$REAL" >"$USER_HOME/.esp-handset/linphone.bin" 2>/dev/null || true
+  chown "$USER_NAME:$USER_NAME" "$USER_HOME/.esp-handset/linphone.bin" 2>/dev/null || true
+fi
 if [[ -f "$PREFIX/session/ensure-linphone.sh" ]]; then
   install -m 755 "$PREFIX/session/ensure-linphone.sh" /usr/local/bin/digivice-ensure-linphone
   log "Ensuring linphone-cli (VoIP)…"
-  SUDO_USER="$USER_NAME" bash /usr/local/bin/digivice-ensure-linphone >>"$LOG" 2>&1 \
+  SUDO_USER="$USER_NAME" DIGIVICE_USER="$USER_NAME" \
+    bash /usr/local/bin/digivice-ensure-linphone >>"$LOG" 2>&1 \
     || log "WARN: digivice-ensure-linphone failed — check $LOG"
 elif ! command -v linphonecsh >/dev/null 2>&1 && [[ ! -x /usr/bin/linphonecsh ]]; then
   log "Installing linphone-cli (no ensure script yet)…"

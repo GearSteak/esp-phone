@@ -182,6 +182,7 @@ install_tree() {
       "ensure-gb-wrappers.sh:digivice-ensure-gb" \
       "ensure-gb-roms.sh:digivice-gb-roms-dir" \
       "ensure-linphone.sh:digivice-ensure-linphone" \
+      "digivice-linphonecsh.sh:digivice-linphonecsh" \
       "digivice-cm108-wake.sh:digivice-cm108-wake" \
       "digivice-start.sh:digivice-start"
     do
@@ -211,6 +212,7 @@ install_tree() {
       "ensure-buttons.sh:digivice-ensure-buttons" \
       "ensure-cardkb.sh:digivice-ensure-cardkb" \
       "ensure-linphone.sh:digivice-ensure-linphone" \
+      "digivice-linphonecsh.sh:digivice-linphonecsh" \
       "fix-cursor.sh:digivice-fix-cursor" \
       "restore-desktop-displays.sh:digivice-restore-desktop" \
       "hdmi-hotplug.sh:digivice-hdmi-hotplug" \

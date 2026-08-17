@@ -13,6 +13,7 @@ from typing import Dict, List, Optional
 _ensure_lock = threading.Lock()
 _ensured_once = False
 _bin_cache: Optional[str] = None
+_WRAPPER = "/usr/local/bin/digivice-linphonecsh"
 _BIN_HINTS = (
     Path("/etc/esp-handset/linphone.bin"),
     Path.home() / ".esp-handset" / "linphone.bin",
@@ -43,8 +44,31 @@ def _remember_bin(path: str) -> None:
             continue
 
 
+def _locate_via_sudo() -> None:
+    """Ask passwordless ensure to pin the binary (no apt if already installed)."""
+    for cmd in (
+        ["sudo", "-n", "/usr/local/bin/digivice-ensure-linphone", "--locate-only"],
+        ["sudo", "-n", "digivice-ensure-linphone", "--locate-only"],
+    ):
+        try:
+            subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=20,
+                check=False,
+            )
+            return
+        except Exception:
+            continue
+
+
 def _discover_bin() -> Optional[str]:
     """Find linphonecsh even when Digivice PATH is minimal."""
+    # Prefer Digivice wrapper (always on handset PATH)
+    if _is_exe(_WRAPPER) or _exists(_WRAPPER):
+        return _WRAPPER
+
     for hint_path in _BIN_HINTS:
         try:
             if hint_path.is_file():
@@ -60,7 +84,6 @@ def _discover_bin() -> Optional[str]:
     if which:
         candidates.append(which)
 
-    # Login-shell PATH (SSH user may have different PATH than Digivice)
     try:
         r = subprocess.run(
             ["bash", "-lc", "command -v linphonecsh"],
@@ -75,7 +98,6 @@ def _discover_bin() -> Optional[str]:
     except Exception:
         pass
 
-    # dpkg file list
     for pkg in ("linphone-cli", "linphone-nogtk", "linphone"):
         try:
             r = subprocess.run(
@@ -115,6 +137,8 @@ def _discover_bin() -> Optional[str]:
         if not p or p in seen:
             continue
         seen.add(p)
+        if "digivice-linphonecsh" in p:
+            continue
         if _is_exe(p) or _exists(p):
             return p
     return None
@@ -125,9 +149,13 @@ def _bin() -> Optional[str]:
     if _bin_cache and _exists(_bin_cache):
         return _bin_cache
     found = _discover_bin()
+    if not found:
+        _locate_via_sudo()
+        found = _discover_bin()
     if found:
         _bin_cache = found
-        _remember_bin(found)
+        if found != _WRAPPER:
+            _remember_bin(found)
     return found
 
 
@@ -136,12 +164,11 @@ def available() -> bool:
 
 
 def missing_hint() -> str:
-    # Re-probe once in case PATH/dpkg changed since boot
     global _bin_cache
     _bin_cache = None
     if _bin():
         return ""
-    return "No linphonecsh — Settings → Update"
+    return "VoIP tool missing — Update Digivice"
 
 
 def _run(args: List[str], timeout: float = 3.0) -> str:
