@@ -266,6 +266,42 @@ def _dpkg_bin(*suffixes: str) -> Optional[str]:
     return None
 
 
+def _is_csh_wrapper(path: str) -> bool:
+    if not path:
+        return True
+    try:
+        real = os.path.realpath(path)
+    except OSError:
+        real = path
+    return "digivice-linphonecsh" in real.lower() or "digivice-linphonecsh" in path.lower()
+
+
+def _find_via_find(name: str) -> Optional[str]:
+    try:
+        r = subprocess.run(
+            [
+                "find",
+                "/usr/bin",
+                "/usr/local/bin",
+                "/usr/lib",
+                "/usr/libexec",
+                "-name",
+                name,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=4.0,
+            check=False,
+        )
+    except Exception:
+        return None
+    for line in (r.stdout or "").splitlines():
+        line = line.strip()
+        if line and _exists(line) and not _is_csh_wrapper(line):
+            return line
+    return None
+
+
 def _discover_linphonec() -> Optional[str]:
     pinned = _read_pin("linphonec.bin")
     if pinned and _is_linphonec_cli(pinned):
@@ -291,22 +327,24 @@ def _discover_linphonec() -> Optional[str]:
             return hit[0].strip()
     except Exception:
         pass
-    return _dpkg_bin("/linphonec")
+    return _dpkg_bin("/linphonec") or _find_via_find("linphonec")
 
 
 def _discover_csh() -> Optional[str]:
     pinned = _read_pin("linphone.bin")
-    if pinned:
+    if pinned and _exists(pinned) and not _is_csh_wrapper(pinned):
         return pinned
     for p in (
-        "/usr/local/bin/digivice-linphonecsh",
-        shutil.which("linphonecsh"),
         "/usr/bin/linphonecsh",
         "/usr/local/bin/linphonecsh",
+        shutil.which("linphonecsh"),
     ):
-        if p and _exists(p):
+        if p and _exists(p) and not _is_csh_wrapper(p):
             return p
-    return _dpkg_bin("/linphonecsh")
+    hit = _dpkg_bin("/linphonecsh") or _find_via_find("linphonecsh")
+    if hit:
+        return hit
+    return None
 
 
 def available() -> bool:
@@ -866,45 +904,88 @@ def poll() -> CallInfo:
     return CallInfo()
 
 
+def _sudo_ensure_linphone(timeout: float = 55.0) -> str:
+    """Install/find real linphonecsh. Digivice has passwordless sudo for this."""
+    cmds = (
+        ["sudo", "-n", "digivice-ensure-linphone"],
+        ["sudo", "-n", "/usr/local/bin/digivice-ensure-linphone"],
+        ["sudo", "-n", "/opt/esp-handset/session/ensure-linphone.sh"],
+    )
+    last = "ensure not available"
+    for cmd in cmds:
+        _log(f"ensure {' '.join(cmd)}")
+        try:
+            r = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                check=False,
+            )
+        except subprocess.TimeoutExpired:
+            return "ensure timed out — Test SIP again"
+        except FileNotFoundError:
+            continue
+        except Exception as e:
+            last = str(e)
+            continue
+        out = ((r.stdout or "") + (r.stderr or "")).strip()
+        _log(f"ensure rc={r.returncode} {(out or '')[-120:]}")
+        return out[-400:] or f"ensure rc={r.returncode}"
+    return last
+
+
 def doctor() -> str:
-    """Fast SIP check for the 2\" screen — no 20s ensure() hang."""
+    """SIP check for the 2\" screen. Installs linphone-cli if the real binary is missing."""
     env = _sip_env()
     user = (env.get("SIP_USER") or "").strip() or "?"
     server = (env.get("SIP_SERVER") or "").strip() or "?"
     lines = [
         f"linphonec: {_discover_linphonec() or 'MISSING'}",
-        f"linphonecsh: {_discover_csh() or 'none'}",
+        f"linphonecsh: {_discover_csh() or 'MISSING'}",
         f"sip: {user}@{server}",
     ]
+    csh = _discover_csh()
+    if not csh:
+        lines.append("Installing linphone-cli…")
+        inst = _sudo_ensure_linphone(55.0)
+        if inst:
+            lines.append(inst.replace("\n", " ")[:180])
+        csh = _discover_csh()
+        lines.append(f"linphonecsh now: {csh or 'STILL MISSING'}")
     eng = _engine()
     lines.append(f"proc: {'up' if eng.alive() else 'down'}")
     lines.append(f"cli-registered: {eng.registered}")
     result = "NOT REGISTERED"
-    csh = _discover_csh()
     if csh:
         st = _csh_cmd("status", "register", timeout=3.0)
         compact = (st or "").replace("\n", " ").strip()
-        if re.search(r"(?i)no running|not running|failed to connect", compact):
-            lines.append("daemon: not running")
+        if re.search(r"(?i)linphonecsh not found", compact):
+            lines.append("wrapper: real linphonecsh still missing")
+            result = "LINPHONE NOT INSTALLED"
+        elif re.search(r"(?i)no running|not running|failed to connect", compact):
+            lines.append("daemon: not running (Save SIP to register)")
+            result = "NOT REGISTERED"
         elif compact:
             lines.append(f"register: {compact[:140]}")
+            ok = bool(
+                re.search(
+                    r"(?i)identity=|registered to|RegistrationOk|successful",
+                    compact,
+                )
+            )
+            if "registered=-1" in compact and "identity" not in compact.lower():
+                ok = False
+            if eng.registered:
+                ok = True
+            result = "REGISTERED" if ok else "NOT REGISTERED"
         else:
             lines.append("register: (empty)")
-        ok = bool(
-            re.search(
-                r"(?i)identity=|registered to|RegistrationOk|successful",
-                compact,
-            )
-        )
-        if "registered=-1" in compact and "identity" not in compact.lower():
-            ok = False
-        if eng.registered:
-            ok = True
-        result = "REGISTERED" if ok else "NOT REGISTERED"
+            result = "REGISTERED" if eng.registered else "NOT REGISTERED"
     elif eng.registered:
         result = "REGISTERED"
     else:
-        result = "NO VOIP TOOL"
+        result = "LINPHONE NOT INSTALLED"
     if _last_error:
         lines.append(f"last: {_last_error}")
     lines.insert(0, f"RESULT: {result}")

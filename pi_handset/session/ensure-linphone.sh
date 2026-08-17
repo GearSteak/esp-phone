@@ -22,9 +22,46 @@ if [[ "$(id -u)" -ne 0 ]]; then
 fi
 
 have_bin() {
-  command -v linphonecsh >/dev/null 2>&1 && return 0
-  [[ -x /usr/bin/linphonecsh ]] && return 0
-  [[ -x /usr/local/bin/linphonecsh ]] && return 0
+  local p r
+  for p in /usr/bin/linphonecsh /usr/local/bin/linphonecsh \
+    "$(command -v linphonecsh 2>/dev/null)"
+  do
+    [[ -z "$p" || ! -e "$p" ]] && continue
+    [[ "$p" == *digivice-linphonecsh* ]] && continue
+    r="$(readlink -f "$p" 2>/dev/null || echo "$p")"
+    [[ "$r" == *digivice-linphonecsh* ]] && continue
+    return 0
+  done
+  p="$(dpkg -L linphone-cli linphone-nogtk linphone 2>/dev/null \
+    | grep '/linphonecsh$' | grep -v digivice | head -n1 || true)"
+  [[ -n "$p" && -e "$p" ]] && return 0
+  return 1
+}
+
+real_csh() {
+  local p r
+  for p in /usr/bin/linphonecsh /usr/local/bin/linphonecsh \
+    "$(command -v linphonecsh 2>/dev/null)"
+  do
+    [[ -z "$p" || ! -e "$p" ]] && continue
+    [[ "$p" == *digivice-linphonecsh* ]] && continue
+    r="$(readlink -f "$p" 2>/dev/null || echo "$p")"
+    [[ "$r" == *digivice-linphonecsh* ]] && continue
+    echo "$p"
+    return 0
+  done
+  p="$(dpkg -L linphone-cli linphone-nogtk linphone 2>/dev/null \
+    | grep '/linphonecsh$' | grep -v digivice | head -n1 || true)"
+  if [[ -n "$p" && -e "$p" ]]; then
+    echo "$p"
+    return 0
+  fi
+  p="$(find /usr/bin /usr/local/bin /usr/lib /usr/libexec -name linphonecsh 2>/dev/null \
+    | grep -v digivice | head -n1 || true)"
+  if [[ -n "$p" && -e "$p" ]]; then
+    echo "$p"
+    return 0
+  fi
   return 1
 }
 
@@ -243,6 +280,10 @@ WRAP
 pin_bin() {
   local bin="$1"
   [[ -n "$bin" && -e "$bin" ]] || return 1
+  [[ "$bin" == *digivice-linphonecsh* ]] && return 1
+  local resolved
+  resolved="$(readlink -f "$bin" 2>/dev/null || echo "$bin")"
+  [[ "$resolved" == *digivice-linphonecsh* ]] && return 1
   write_status "ok $bin"
   echo "$bin" >/etc/esp-handset/linphone.bin
   chmod 644 /etc/esp-handset/linphone.bin 2>/dev/null || true
@@ -272,8 +313,7 @@ log "=== ensure start $(date -Is 2>/dev/null || date) ==="
 install_wrapper
 
 if have_bin; then
-  BIN="$(command -v linphonecsh 2>/dev/null || echo /usr/bin/linphonecsh)"
-  [[ -x /usr/bin/linphonecsh ]] && BIN=/usr/bin/linphonecsh
+  BIN="$(real_csh)"
   log "already present: $BIN"
   pin_bin "$BIN"
   if [[ "$LOCATE_ONLY" -eq 1 ]]; then
@@ -281,8 +321,7 @@ if have_bin; then
   fi
 else
   if [[ "$LOCATE_ONLY" -eq 1 ]]; then
-    # Still try dpkg path without apt
-    BIN="$(dpkg -L linphone-cli 2>/dev/null | grep '/linphonecsh$' | head -n1 || true)"
+    BIN="$(real_csh || true)"
     if [[ -n "$BIN" && -e "$BIN" ]]; then
       pin_bin "$BIN"
       log "locate-only OK $BIN"
@@ -306,8 +345,7 @@ if ! have_bin; then
   exit 2
 fi
 
-BIN="$(command -v linphonecsh 2>/dev/null || echo /usr/bin/linphonecsh)"
-[[ -x /usr/bin/linphonecsh ]] && BIN=/usr/bin/linphonecsh
+BIN="$(real_csh)"
 log "OK $BIN"
 pin_bin "$BIN"
 
