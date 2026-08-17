@@ -29,28 +29,23 @@ PHOTOS = Path.home() / "Pictures" / "phone"
 UPLOAD_PORT = 8765
 
 # dest_key → (label, folder, allowed suffixes or None = common docs/media)
-_ROM_EXTS = (
-    ".gb",
-    ".gbc",
-    ".sgb",
-    ".nes",
-    ".fds",
-    ".unf",
-    ".unif",
-    ".sms",
-    ".gg",
-    ".sg",
-    ".md",
-    ".gen",
-    ".smd",
-    ".bin",
-    ".gba",
-    ".agb",
-    ".mb",
-    ".ch8",
-    ".c8",
-    ".chip8",
+# Digivice row stays Photos / ROMs / Files; the web form lists every console.
+_ROM_SYSTEMS: Tuple[Tuple[str, str, str, Tuple[str, ...]], ...] = (
+    ("rom_gb", "Game Boy", "gb", (".gb", ".gbc", ".sgb")),
+    ("rom_nes", "NES", "nes", (".nes", ".fds", ".unf", ".unif")),
+    ("rom_sms", "SMS / GG", "sms", (".sms", ".gg", ".sg")),
+    ("rom_genesis", "Genesis", "genesis", (".md", ".gen", ".smd", ".bin")),
+    ("rom_gba", "GBA", "gba", (".gba", ".agb", ".mb")),
+    ("rom_chip8", "CHIP-8", "chip8", (".ch8", ".c8", ".chip8")),
 )
+
+_ROM_EXTS = tuple(
+    dict.fromkeys(ext for _k, _l, _f, exts in _ROM_SYSTEMS for ext in exts)
+)
+_ROM_FOLDER = {
+    ext: folder for _k, _l, folder, exts in _ROM_SYSTEMS for ext in exts
+}
+_ROM_ZIP = (".zip",)
 
 DESTINATIONS: Dict[str, Tuple[str, Path, Optional[Tuple[str, ...]]]] = {
     "photos": (
@@ -59,16 +54,20 @@ DESTINATIONS: Dict[str, Tuple[str, Path, Optional[Tuple[str, ...]]]] = {
         (".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif"),
     ),
     "roms": (
-        "ROMs",
+        "ROMs · auto",
         DATA / "roms",
         _ROM_EXTS,
     ),
-    "files": (
-        "Files",
-        DATA / "inbox",
-        None,
-    ),
 }
+for _rk, _rl, _rf, _re in _ROM_SYSTEMS:
+    DESTINATIONS[_rk] = (_rl, DATA / "roms" / _rf, _re + _ROM_ZIP)
+DESTINATIONS["files"] = (
+    "Files",
+    DATA / "inbox",
+    None,
+)
+
+DIGI_DEST_KEYS = ("photos", "roms", "files")
 
 _FILES_OK = (
     ".jpg",
@@ -85,13 +84,20 @@ _FILES_OK = (
     ".gbc",
     ".sgb",
     ".nes",
+    ".fds",
+    ".unf",
     ".sms",
     ".gg",
+    ".sg",
     ".md",
     ".gen",
+    ".smd",
+    ".bin",
     ".gba",
+    ".agb",
     ".ch8",
     ".c8",
+    ".chip8",
     ".mp3",
     ".wav",
     ".ogg",
@@ -101,33 +107,28 @@ _FILES_OK = (
 
 _IMG_EXT = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif"}
 
-_ROM_FOLDER = {
-    ".gb": "gb",
-    ".gbc": "gb",
-    ".sgb": "gb",
-    ".nes": "nes",
-    ".fds": "nes",
-    ".unf": "nes",
-    ".unif": "nes",
-    ".sms": "sms",
-    ".gg": "sms",
-    ".sg": "sms",
-    ".md": "genesis",
-    ".gen": "genesis",
-    ".smd": "genesis",
-    ".bin": "genesis",
-    ".gba": "gba",
-    ".agb": "gba",
-    ".mb": "gba",
-    ".ch8": "chip8",
-    ".c8": "chip8",
-    ".chip8": "chip8",
-}
+_ROM_ACCEPT = ",".join(_ROM_EXTS + _ROM_ZIP)
+
+_MAX_UPLOAD = 48 * 1024 * 1024
 
 
 def _rom_folder_for(name: str) -> Path:
     sub = _ROM_FOLDER.get(Path(name).suffix.lower(), "gb")
     return DATA / "roms" / sub
+
+
+def _dest_folder(dest_key: str, filename: str) -> Path:
+    """Folder to write into — auto ROMs split by extension."""
+    _label, folder, _allowed = DESTINATIONS[dest_key]
+    if dest_key == "roms":
+        return _rom_folder_for(filename)
+    return folder
+
+
+def _ext_hint(allowed: Optional[Tuple[str, ...]]) -> str:
+    if not allowed:
+        return "docs / media"
+    return " ".join(allowed[:6])
 
 MODEM_REPORT = DATA / "modem-doctor.txt"
 MODEM_REPORT_TMP = Path("/tmp/digivice-modem-doctor.txt")
@@ -323,14 +324,14 @@ class _UploadSignals(QObject):
 
 
 def _parse_multipart(content_type: str, body: bytes):
+    """Return (dest_key, [(filename, bytes), ...])."""
     if "multipart/form-data" not in content_type or "boundary=" not in content_type:
-        return None, None, None
+        return None, []
     boundary = content_type.split("boundary=", 1)[-1].strip().encode("ascii", "ignore")
     if not boundary:
-        return None, None, None
+        return None, []
     dest_key = None
-    filename = None
-    filedata = None
+    files: List[Tuple[str, bytes]] = []
     for part in body.split(b"--" + boundary):
         if b"Content-Disposition" not in part:
             continue
@@ -344,6 +345,7 @@ def _parse_multipart(content_type: str, body: bytes):
             dest_key = data.decode("utf-8", "replace").strip()
             continue
         if 'name="file"' in hdr or 'name="rom"' in hdr:
+            filename = "upload.bin"
             for line in header.split(b"\r\n"):
                 if b"filename=" in line:
                     try:
@@ -351,8 +353,9 @@ def _parse_multipart(content_type: str, body: bytes):
                         filename = raw.split("filename=", 1)[-1].strip().strip('"')
                     except Exception:
                         filename = "upload.bin"
-            filedata = data
-    return dest_key, filename, filedata
+            if filename and data:
+                files.append((filename, data))
+    return dest_key, files
 
 
 _CSS = """
@@ -456,9 +459,12 @@ def _make_handler(get_dest: Callable[[], str], signals: _UploadSignals):
         def _page_home(self) -> None:
             cur = get_dest()
             opts = []
-            for key, (label, _folder, _) in DESTINATIONS.items():
+            for key, (label, _folder, allowed) in DESTINATIONS.items():
                 sel = " selected" if key == cur else ""
-                opts.append(f'<option value="{key}"{sel}>{html.escape(label)}</option>')
+                hint = _ext_hint(allowed)
+                opts.append(
+                    f'<option value="{key}"{sel}>{html.escape(label)} — {html.escape(hint)}</option>'
+                )
             browse_links = []
             for key, (label, folder, _) in DESTINATIONS.items():
                 n = len(_list_folder(key))
@@ -466,6 +472,9 @@ def _make_handler(get_dest: Callable[[], str], signals: _UploadSignals):
                     f'<a class="btn" style="margin-top:8px;display:block;" href="/browse/{key}">'
                     f"Get {html.escape(label)} ({n})</a>"
                 )
+            rom_help = " · ".join(
+                f"{lab} ({' '.join(exts[:4])})" for _k, lab, _f, exts in _ROM_SYSTEMS
+            )
             report = _modem_report_path()
             if report is not None:
                 try:
@@ -499,15 +508,16 @@ def _make_handler(get_dest: Callable[[], str], signals: _UploadSignals):
 
 <div class="box">
 <h2>↑ Send to Digivice</h2>
+<p class="muted">{html.escape(rom_help)}. Pick the console, or “ROMs · auto” to sort by extension.</p>
 <form method="POST" enctype="multipart/form-data" action="/upload">
 <label>Save to</label>
 <select name="dest">{"".join(opts)}</select>
-<label>File</label>
-<input type="file" name="file" required>
+<label>ROM / file (you can pick several)</label>
+<input type="file" name="file" accept="{html.escape(_ROM_ACCEPT)},image/*,.zip" multiple required>
 <button type="submit">Send to Digivice</button>
 </form>
 </div>
-<p class="muted">Photos → Pictures/phone · ROMs → roms/gb,nes,sms,… · Files → inbox</p>
+<p class="muted">Photos → Pictures/phone · each console → roms/gb, nes, sms, genesis, gba, chip8 · Files → inbox</p>
 """
             self._html("Digivice Transfer", inner)
 
@@ -668,49 +678,62 @@ def _make_handler(get_dest: Callable[[], str], signals: _UploadSignals):
                 length = int(self.headers.get("Content-Length", "0"))
             except ValueError:
                 length = 0
-            if length <= 0 or length > 32 * 1024 * 1024:
+            if length <= 0 or length > _MAX_UPLOAD:
                 signals.failed.emit("File too large / empty")
-                self._reply(400, "Bad size (max 32MB)")
+                self._reply(400, "Bad size (max 48MB)")
                 return
             raw = self.rfile.read(length)
             ctype = self.headers.get("Content-Type", "")
-            dest_key, filename, filedata = _parse_multipart(ctype, raw)
+            dest_key, files = _parse_multipart(ctype, raw)
             if not dest_key or dest_key not in DESTINATIONS:
                 dest_key = get_dest()
             if dest_key not in DESTINATIONS:
                 dest_key = "files"
-            label, folder, allowed = DESTINATIONS[dest_key]
-            safe = _safe_name(filename or "", allowed)
-            if not safe or not filedata:
-                allow = ", ".join(allowed) if allowed else ", ".join(_FILES_OK[:8]) + "…"
-                signals.failed.emit("Wrong file type")
-                self._reply(
-                    400,
-                    f"That type isn’t allowed for {html.escape(label)}. Try: {html.escape(allow)}",
-                )
+            if not files:
+                signals.failed.emit("No file in upload")
+                self._reply(400, "No file attached")
                 return
-            try:
-                if dest_key == "roms":
-                    folder = _rom_folder_for(safe)
-                folder.mkdir(parents=True, exist_ok=True)
-                out = folder / safe
-                if out.exists():
-                    stem, ext = out.stem, out.suffix
-                    n = 2
-                    while out.exists():
-                        out = folder / f"{stem}_{n}{ext}"
-                        n += 1
-                out.write_bytes(filedata)
-                signals.got_file.emit(f"{label}: {out.name}")
-                self._reply(
-                    200,
-                    f"OK — saved <b>{html.escape(out.name)}</b> to {html.escape(label)}.<br>"
-                    f'<a style="color:#9cf;" href="/">Home</a> · '
-                    f'<a style="color:#9cf;" href="/browse/{dest_key}">Browse {html.escape(label)}</a>',
-                )
-            except Exception as e:
-                signals.failed.emit(str(e)[:50])
-                self._reply(500, f"Save failed: {html.escape(str(e)[:80])}")
+            label, _folder, allowed = DESTINATIONS[dest_key]
+            saved: List[str] = []
+            errors: List[str] = []
+            for filename, filedata in files:
+                if not filedata:
+                    continue
+                safe = _safe_name(filename or "", allowed)
+                if not safe:
+                    allow = ", ".join(allowed) if allowed else ", ".join(_FILES_OK[:8]) + "…"
+                    errors.append(f"{filename or '?'}: need {allow}")
+                    continue
+                try:
+                    folder = _dest_folder(dest_key, safe)
+                    folder.mkdir(parents=True, exist_ok=True)
+                    out = folder / safe
+                    if out.exists():
+                        stem, ext = out.stem, out.suffix
+                        n = 2
+                        while out.exists():
+                            out = folder / f"{stem}_{n}{ext}"
+                            n += 1
+                    out.write_bytes(filedata)
+                    saved.append(f"{out.name} → {folder.name}")
+                except Exception as e:
+                    errors.append(f"{safe}: {str(e)[:40]}")
+            if saved:
+                signals.got_file.emit(f"{label}: " + ", ".join(saved))
+            if errors and not saved:
+                signals.failed.emit(errors[0][:80])
+                self._reply(400, html.escape("; ".join(errors)[:400]))
+                return
+            extra = (
+                f"<p class='muted'>{html.escape('; '.join(errors))}</p>" if errors else ""
+            )
+            names = "<br>".join(html.escape(s) for s in saved)
+            self._reply(
+                200,
+                f"OK — saved to {html.escape(label)}:<br>{names}{extra}<br>"
+                f'<a style="color:#9cf;" href="/">Home</a> · '
+                f'<a style="color:#9cf;" href="/browse/{dest_key}">Browse {html.escape(label)}</a>',
+            )
 
         def _reply(self, code: int, msg: str) -> None:
             body = f"""<!DOCTYPE html><html><body style="font-family:sans-serif;
@@ -740,15 +763,16 @@ def make_wifi_transfer_page(
     lay.setContentsMargins(2, 2, 2, 2)
     lay.setSpacing(3)
 
-    tip = QLabel("Start · open link on PC · Get Photos / modem report")
+    tip = QLabel("Start · PC: pick GB/NES/SMS/Genesis/GBA/CHIP-8")
     tip.setWordWrap(True)
     tip.setStyleSheet("color:#9ab;font-size:9px;")
 
     dest_row = QHBoxLayout()
     dest_row.setSpacing(2)
     dest_btns: Dict[str, QPushButton] = {}
-    for key, (label, _folder, _a) in DESTINATIONS.items():
-        b = QPushButton(label)
+    _digi_labs = {"photos": "Photos", "roms": "ROMs", "files": "Files"}
+    for key in DIGI_DEST_KEYS:
+        b = QPushButton(_digi_labs.get(key, DESTINATIONS[key][0]))
         b.setFixedHeight(26)
         b.setStyleSheet("font-size:11px; font-weight:700;")
         b.setCheckable(True)
@@ -794,8 +818,11 @@ def make_wifi_transfer_page(
     server_holder: dict = {"httpd": None}
 
     def _paint_dest() -> None:
+        shown = state["dest"]
+        if shown.startswith("rom_"):
+            shown = "roms"
         for key, b in dest_btns.items():
-            on = key == state["dest"]
+            on = key == shown
             b.setChecked(on)
             b.setStyleSheet(
                 "font-size:11px; font-weight:800; background:#FFE600; color:#000;"
@@ -807,9 +834,10 @@ def make_wifi_transfer_page(
         if key in DESTINATIONS:
             state["dest"] = key
             _paint_dest()
-            label, folder, _ = DESTINATIONS[key]
+            label, folder, allowed = DESTINATIONS[key]
             n = len(_list_folder(key))
-            status.setText(f"{label} · {n} on device\n{folder}")
+            hint = _ext_hint(allowed)
+            status.setText(f"{label} · {n} on device\n{hint}\n{folder}")
 
     def stop_server() -> None:
         httpd = server_holder.get("httpd")

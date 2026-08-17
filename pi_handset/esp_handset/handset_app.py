@@ -595,16 +595,22 @@ def build_app(bridge: Optional[EspBridge], modem: Optional[Sim7600]) -> PhoneShe
     transfer_page = wifi_transfer.make_wifi_transfer_page(back)
     shell.register_page("wifi_transfer", transfer_page)
 
-    def open_rom_transfer() -> None:
+    def open_rom_transfer(system_key: str = "roms") -> None:
         page = shell.pages.get("wifi_transfer")
         setter = getattr(page, "set_transfer_dest", None)
+        dest = f"rom_{system_key}" if system_key in emu_ui.SYSTEMS else "roms"
+        if dest not in wifi_transfer.DESTINATIONS:
+            dest = "roms"
         if callable(setter):
-            setter("roms")
+            setter(dest)
         shell.go("wifi_transfer")
 
     for _ek, _esys in emu_ui.SYSTEMS.items():
         shell.register_page(
-            _ek, emu_ui.make_emu_page(_esys, back, on_receive=open_rom_transfer)
+            _ek,
+            emu_ui.make_emu_page(
+                _esys, back, on_receive=lambda k=_ek: open_rom_transfer(k)
+            ),
         )
     shell.register_page("snake", games_ui.make_snake(back))
     shell.register_page("pong", games_ui.make_pong(back))
