@@ -2556,13 +2556,13 @@ def make_update_page(on_back: Callable[[], None]) -> QWidget:
     body = QWidget()
     lay = QVBoxLayout(body)
     tip = QLabel(
-        "Pull → install VoIP/GPIO fixes → restart.\n"
-        "No SSH needed. Keep Wi‑Fi on.\n"
+        "Confirm in Settings starts update.\n"
+        "Pull → install → restart. Keep Wi‑Fi on.\n"
         "May take several minutes (apt)."
     )
     tip.setWordWrap(True)
     tip.setStyleSheet("color:#9ab;font-size:10px;")
-    status = QLabel("Ready.")
+    status = QLabel("Opening…")
     status.setWordWrap(True)
     meta = QLabel("")
     meta.setWordWrap(True)
@@ -2571,7 +2571,7 @@ def make_update_page(on_back: Callable[[], None]) -> QWidget:
     log.setReadOnly(True)
     log.setMinimumHeight(100)
     log.setStyleSheet("font-size:9px; font-family: monospace;")
-    update_btn = QPushButton("Update Digivice")
+    update_btn = QPushButton("Retry update")
     update_btn.setStyleSheet("font-weight:700; min-height:36px;")
     lay.addWidget(tip)
     lay.addWidget(status)
@@ -2808,7 +2808,19 @@ def make_update_page(on_back: Callable[[], None]) -> QWidget:
         watchdog.start(10 * 60 * 1000)
 
     update_btn.clicked.connect(do_update)
-    return page_chrome("Update", body, on_back)
+
+    chrome = page_chrome("Update", body, on_back)
+
+    def on_page_show() -> None:
+        # Settings → Update Confirm lands here — start immediately (no second press)
+        if proc.state() != QProcess.NotRunning or applying["on"]:
+            return
+        status.setText("Starting update…")
+        QTimer.singleShot(120, do_update)
+
+    chrome.on_page_show = on_page_show  # type: ignore[attr-defined]
+    chrome.digi_activate = lambda: (do_update(), True)[1]  # type: ignore[attr-defined]
+    return chrome
 
 
 def make_mouse_page(on_back: Callable[[], None]) -> QWidget:

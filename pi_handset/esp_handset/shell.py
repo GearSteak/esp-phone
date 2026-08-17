@@ -473,6 +473,13 @@ class PhoneShell(QMainWindow):
         else:
             # Keep focus on the page control (do NOT steal to shell — breaks Confirm/lists)
             digi_nav.ensure_page_focus(self.pages[key])
+        page = self.pages[key]
+        on_show = getattr(page, "on_page_show", None)
+        if callable(on_show):
+            try:
+                on_show()
+            except Exception:
+                pass
         self._sync_title()
 
     def back(self) -> None:
