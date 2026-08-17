@@ -587,6 +587,16 @@ class PhoneShell(QMainWindow):
             return
         widget.setFocus(Qt.OtherFocusReason)
         digi_nav.ensure_visible(widget)
+        try:
+            # Keep digi yellow ring so you can see which field is live
+            digi_nav.clear_highlights(widget.window() if widget.window() else widget)
+            digi_nav._highlight(widget, True)
+        except Exception:
+            pass
+        try:
+            self.set_status_right("Typing · Back exits")
+        except Exception:
+            pass
 
     def _gb_play_board(self):
         """In-UI PyBoy surface when a ROM is running, else None."""

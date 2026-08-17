@@ -53,8 +53,10 @@ def _is_typing_key(event) -> bool:
 class _KioskKeyFilter(QObject):
     """Route nav keys to Digivice; let CardKB/BT type into text fields.
 
-    When a typing key arrives and digi-highlight is on a text field (or one exists
-    on the page), focus that field so Bluetooth / CardKB input lands there.
+    Important: in kiosk mode the HDMI ScaledScreenHost owns X focus, while
+    QLineEdits live on the off-screen phone canvas. Returning False from this
+    filter delivers the key to the *host*, which never inserts into the field.
+    Always sendEvent() typing keys to the real QLineEdit and accept them.
     """
 
     def __init__(self, shell: object):
@@ -87,6 +89,33 @@ class _KioskKeyFilter(QObject):
         except Exception:
             pass
         return None
+
+    def _deliver_to_field(self, field, event) -> bool:
+        """Insert / edit in field even when X focus is on the kiosk host."""
+        try:
+            if not field.hasFocus():
+                field.setFocus(Qt.OtherFocusReason)
+            from esp_handset import digi_nav
+
+            digi_nav.ensure_visible(field)
+        except Exception:
+            pass
+        # Do not reuse the in-flight event object — clone for the field
+        try:
+            from PyQt5.QtGui import QKeyEvent
+
+            clone = QKeyEvent(
+                QEvent.KeyPress,
+                event.key(),
+                event.modifiers(),
+                event.text(),
+                event.isAutoRepeat(),
+                event.count(),
+            )
+            QApplication.sendEvent(field, clone)
+        except Exception:
+            QApplication.sendEvent(field, event)
+        return True
 
     def eventFilter(self, obj, event):  # noqa: N802
         et = event.type()
@@ -122,14 +151,20 @@ class _KioskKeyFilter(QObject):
         ):
             self._shell.keyPressEvent(event)
             return True
+
         w = QApplication.focusWidget()
+
+        # Already typing into a field (Confirm on QLineEdit) — keep keys there
         if isinstance(w, _TEXT_TYPES):
-            # Digivice Home / Back still leave the field
             if key in (Qt.Key_Escape, Qt.Key_Home):
+                try:
+                    w.clearFocus()
+                except Exception:
+                    pass
                 self._shell.keyPressEvent(event)
                 return True
-            # Prefer typing: Left/Right move caret inside the field
-            return False
+            # Left/Right/Backspace/letters must go to the field, not the host
+            return self._deliver_to_field(w, event)
 
         # In-UI Game Boy / arcade: let the board keep focus for pad keys
         if w is not None and (
@@ -141,13 +176,11 @@ class _KioskKeyFilter(QObject):
                 return True
             return False
 
-        # Not in a text field: CardKB/BT printable → focus a text field and deliver
+        # Not in a text field: CardKB/BT printable → focus digi-highlighted field
         if _is_typing_key(event):
             target = self._text_target()
             if target is not None:
-                target.setFocus(Qt.OtherFocusReason)
-                QApplication.sendEvent(target, event)
-                return True
+                return self._deliver_to_field(target, event)
             return False
 
         pad = {

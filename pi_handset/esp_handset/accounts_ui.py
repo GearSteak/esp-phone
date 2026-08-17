@@ -44,6 +44,8 @@ def _field(placeholder: str = "", *, password: bool = False) -> QLineEdit:
     ed.setStyleSheet(_FIELD)
     ed.setMinimumHeight(32)
     ed.setFocusPolicy(Qt.StrongFocus)
+    # Digivice: Confirm focuses for CardKB; Escape leaves (kiosk filter)
+    ed.setToolTip("Confirm to type · Back to leave")
     if password:
         ed.setEchoMode(QLineEdit.Password)
     return ed
@@ -141,7 +143,7 @@ def make_sip_account_page(on_back: Callable[[], None]) -> QWidget:
     lay.setContentsMargins(6, 4, 6, 6)
     lay.setSpacing(6)
     lay.addWidget(
-        _header("SIP / VoIP", "Softphone login for Digivice Calls")
+        _header("SIP / VoIP", "Confirm on a field to type · Back leaves the field")
     )
     vals = _read_sip()
     server = _field("sip.example.com")
@@ -186,7 +188,7 @@ def make_email_account_page(on_back: Callable[[], None]) -> QWidget:
     lay.addWidget(
         _header(
             "Email",
-            "Gmail: use an App Password (not your normal login)",
+            "Confirm on a field to type · Gmail needs an App Password",
         )
     )
     em = store.load(
@@ -244,7 +246,10 @@ def make_ai_account_page(on_back: Callable[[], None]) -> QWidget:
     lay.setContentsMargins(6, 4, 6, 6)
     lay.setSpacing(6)
     lay.addWidget(
-        _header("AI · Ollama", "Local or LAN Ollama endpoint for Digivice AI")
+        _header(
+            "AI · Ollama",
+            "Confirm on a field to type · local or LAN Ollama",
+        )
     )
     cfg = store.load(
         "ollama.json",

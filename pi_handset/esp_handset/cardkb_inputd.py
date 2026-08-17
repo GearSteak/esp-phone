@@ -117,6 +117,7 @@ class XInject:
         self.auth = _find_xauthority()
         self.xdotool = _which("xdotool")
         self.ok = bool(self.xdotool)
+        self._last_focus_try = 0.0
         if self.ok:
             log(
                 f"X inject ON display={self.display} "
@@ -147,14 +148,43 @@ class XInject:
         except Exception:
             pass
 
+    def ensure_digivice_focus(self) -> None:
+        """Bring Digivice (or its HDMI host) to the front so type/key land."""
+        now = time.monotonic()
+        if now - self._last_focus_try < 0.35:
+            return
+        self._last_focus_try = now
+        # Title set by PhoneShell / ScaledScreenHost
+        for pattern in ("ESP Digivice", "Digivice", "handset_app"):
+            self._run(
+                [
+                    "search",
+                    "--name",
+                    pattern,
+                    "windowactivate",
+                    "--sync",
+                ]
+            )
+
     def key_named(self, name: str) -> None:
-        if name:
-            self._run(["key", "--clearmodifiers", name])
+        if not name:
+            return
+        self.ensure_digivice_focus()
+        self._run(["key", "--clearmodifiers", name])
 
     def type_char(self, ch: str) -> None:
         if not ch:
             return
-        # type is more reliable for letters than synthesizing Shift+key
+        self.ensure_digivice_focus()
+        # Prefer per-key for letters/digits (more reliable than `type` on Pi)
+        if len(ch) == 1 and (ch.isalnum() or ch == " "):
+            if ch == " ":
+                self._run(["key", "--clearmodifiers", "space"])
+            elif ch.isupper():
+                self._run(["key", "--clearmodifiers", f"shift+{ch.lower()}"])
+            else:
+                self._run(["key", "--clearmodifiers", ch])
+            return
         self._run(["type", "--clearmodifiers", "--delay", "1", "--", ch])
 
 
