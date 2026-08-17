@@ -111,6 +111,29 @@ if [[ ${rc:-1} -eq 0 && -f "${PREFIX}.staging/.ready" ]]; then
   for h in /home/*/.esp-handset; do
     [[ -d "$h" ]] && echo "staged $(date -Iseconds)" >"$h/last_gui_update" 2>/dev/null || true
   done
+  # VoIP: install/find linphonecsh during Settings→Update (no SSH needed)
+  ENSURE=""
+  for cand in \
+    "${REPO:-}/pi_handset/session/ensure-linphone.sh" \
+    "${PREFIX}.staging/session/ensure-linphone.sh" \
+    "$PREFIX/session/ensure-linphone.sh" \
+    /usr/local/bin/digivice-ensure-linphone
+  do
+    if [[ -n "$cand" && -f "$cand" ]]; then
+      ENSURE="$cand"
+      break
+    fi
+  done
+  if [[ -n "$ENSURE" ]]; then
+    echo "[gui-update] ensuring Linphone (VoIP)…"
+    install -m 755 "$ENSURE" /usr/local/bin/digivice-ensure-linphone 2>/dev/null || true
+    RUN_AS="${SUDO_USER:-}"
+    [[ -z "$RUN_AS" || "$RUN_AS" == "root" ]] && RUN_AS="$(logname 2>/dev/null || true)"
+    SUDO_USER="${RUN_AS:-pi}" DIGIVICE_USER="${RUN_AS:-pi}" \
+      bash /usr/local/bin/digivice-ensure-linphone \
+      >>"${HOME:-/tmp}/.esp-handset/linphone-ensure.log" 2>&1 \
+      || echo "[gui-update] WARN: ensure-linphone failed (apply will retry)"
+  fi
   # Intentionally do NOT schedule apply here — double-apply + pkill crashed Pi Zero.
   exit 0
 fi

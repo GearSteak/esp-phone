@@ -2556,9 +2556,9 @@ def make_update_page(on_back: Callable[[], None]) -> QWidget:
     body = QWidget()
     lay = QVBoxLayout(body)
     tip = QLabel(
-        "Pull → stage → quit → swap → relaunch.\n"
-        "Installs Linphone for calls if missing.\n"
-        "Stay on Wi‑Fi · can take several minutes."
+        "Pull → install VoIP/GPIO fixes → restart.\n"
+        "No SSH needed. Keep Wi‑Fi on.\n"
+        "May take several minutes (apt)."
     )
     tip.setWordWrap(True)
     tip.setStyleSheet("color:#9ab;font-size:10px;")

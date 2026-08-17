@@ -13,7 +13,10 @@ from typing import Dict, List, Optional
 _ensure_lock = threading.Lock()
 _ensured_once = False
 _bin_cache: Optional[str] = None
-_BIN_HINT = Path("/etc/esp-handset/linphone.bin")
+_BIN_HINTS = (
+    Path("/etc/esp-handset/linphone.bin"),
+    Path.home() / ".esp-handset" / "linphone.bin",
+)
 
 
 def _is_exe(path: str) -> bool:
@@ -30,16 +33,26 @@ def _exists(path: str) -> bool:
         return False
 
 
+def _remember_bin(path: str) -> None:
+    """Persist absolute path for next Digivice boot (user + system hint)."""
+    for hint in _BIN_HINTS:
+        try:
+            hint.parent.mkdir(parents=True, exist_ok=True)
+            hint.write_text(path + "\n", encoding="utf-8")
+        except OSError:
+            continue
+
+
 def _discover_bin() -> Optional[str]:
     """Find linphonecsh even when Digivice PATH is minimal."""
-    # 1) Hint file written by digivice-ensure-linphone
-    try:
-        if _BIN_HINT.is_file():
-            hint = _BIN_HINT.read_text(encoding="utf-8", errors="replace").strip()
-            if _exists(hint):
-                return hint
-    except OSError:
-        pass
+    for hint_path in _BIN_HINTS:
+        try:
+            if hint_path.is_file():
+                hint = hint_path.read_text(encoding="utf-8", errors="replace").strip()
+                if _exists(hint):
+                    return hint
+        except OSError:
+            pass
 
     candidates: List[str] = []
 
@@ -81,7 +94,6 @@ def _discover_bin() -> Optional[str]:
         except Exception:
             continue
 
-    # Hard-coded + current user home bin
     home_bin = ""
     try:
         home_bin = str(Path.home() / ".local" / "bin" / "linphonecsh")
@@ -115,11 +127,7 @@ def _bin() -> Optional[str]:
     found = _discover_bin()
     if found:
         _bin_cache = found
-        try:
-            _BIN_HINT.parent.mkdir(parents=True, exist_ok=True)
-            _BIN_HINT.write_text(found + "\n", encoding="utf-8")
-        except OSError:
-            pass
+        _remember_bin(found)
     return found
 
 
@@ -133,7 +141,7 @@ def missing_hint() -> str:
     _bin_cache = None
     if _bin():
         return ""
-    return "No linphonecsh — SSH: which linphonecsh"
+    return "No linphonecsh — Settings → Update"
 
 
 def _run(args: List[str], timeout: float = 3.0) -> str:
