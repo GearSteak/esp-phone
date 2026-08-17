@@ -16,6 +16,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
+try:
+    import fcntl
+    import pty
+except ImportError:
+    fcntl = None  # type: ignore
+    pty = None  # type: ignore
+
 _log_lock = threading.Lock()
 _eng_lock = threading.Lock()
 _csh_lock = threading.Lock()
@@ -387,7 +394,7 @@ def _phase_from_line(line: str, current: str) -> str:
 
 
 class LinphoneEngine:
-    """One long-lived `linphonec -c rc` with commands on stdin."""
+    """One long-lived `linphonec -c rc` with commands on stdin (PTY so output isn't stuck)."""
 
     def __init__(self) -> None:
         self.proc: Optional[subprocess.Popen] = None
@@ -397,38 +404,98 @@ class LinphoneEngine:
         self._lock = threading.Lock()
         self._reader: Optional[threading.Thread] = None
         self.bin = ""
+        self._pty: Optional[int] = None
 
     def alive(self) -> bool:
         return self.proc is not None and self.proc.poll() is None
 
-    def _read_loop(self) -> None:
-        proc = self.proc
-        if proc is None or proc.stdout is None:
+    def _handle_line(self, line: str) -> None:
+        if not line:
             return
+        _log(f"linphonec | {line[:200]}")
+        with self._lock:
+            self.lines.append(line)
+            low = line.lower()
+            if re.search(
+                r"(?i)registration (successful|ok)|registered to|"
+                r"identity=|LinphoneRegistrationOk",
+                line,
+            ):
+                self.registered = True
+            if re.search(
+                r"(?i)registration failed|unregistered|registered=-1",
+                line,
+            ):
+                if "successful" not in low:
+                    self.registered = False
+            self.phase = _phase_from_line(line, self.phase)
+
+    def _read_loop(self) -> None:
         try:
+            if self._pty is not None:
+                buf = ""
+                while self.alive():
+                    try:
+                        chunk = os.read(self._pty, 1024)
+                    except BlockingIOError:
+                        time.sleep(0.05)
+                        continue
+                    except OSError:
+                        break
+                    if not chunk:
+                        time.sleep(0.05)
+                        continue
+                    buf += chunk.decode("utf-8", "replace")
+                    buf = buf.replace("\r\n", "\n").replace("\r", "\n")
+                    while "\n" in buf:
+                        line, buf = buf.split("\n", 1)
+                        self._handle_line(line.strip())
+                return
+            proc = self.proc
+            if proc is None or proc.stdout is None:
+                return
             for raw in proc.stdout:
-                line = (raw or "").rstrip()
-                if not line:
-                    continue
-                _log(f"linphonec | {line[:200]}")
-                with self._lock:
-                    self.lines.append(line)
-                    low = line.lower()
-                    if re.search(
-                        r"(?i)registration (successful|ok)|registered to|"
-                        r"identity=|LinphoneRegistrationOk",
-                        line,
-                    ):
-                        self.registered = True
-                    if re.search(
-                        r"(?i)registration failed|unregistered|registered=-1",
-                        line,
-                    ):
-                        if "successful" not in low:
-                            self.registered = False
-                    self.phase = _phase_from_line(line, self.phase)
+                self._handle_line((raw or "").rstrip())
         except Exception as e:
             _log(f"linphonec reader: {e}")
+
+    def _spawn(self, args: List[str]) -> None:
+        env = {**os.environ, "HOME": str(Path.home()), "TERM": "dumb"}
+        self._pty = None
+        if pty is not None:
+            try:
+                master, slave = pty.openpty()
+                self.proc = subprocess.Popen(
+                    args,
+                    stdin=slave,
+                    stdout=slave,
+                    stderr=slave,
+                    close_fds=True,
+                    env=env,
+                )
+                os.close(slave)
+                if fcntl is not None:
+                    fl = fcntl.fcntl(master, fcntl.F_GETFL)
+                    fcntl.fcntl(master, fcntl.F_SETFL, fl | os.O_NONBLOCK)
+                self._pty = master
+                return
+            except Exception as e:
+                _log(f"pty spawn failed: {e}")
+                self.proc = None
+                self._pty = None
+        cmd = args
+        stdbuf = shutil.which("stdbuf")
+        if stdbuf:
+            cmd = [stdbuf, "-oL", "-eL", *args]
+        self.proc = subprocess.Popen(
+            cmd,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+            env=env,
+        )
 
     def start(self) -> str:
         if self.alive():
@@ -446,43 +513,21 @@ class LinphoneEngine:
         if not self.bin:
             return _set_error("linphonec not found")
         _kill_stray_linphone()
-        log_path = str(Path.home() / ".esp-handset" / "linphonec.debug")
-        # Interactive CLI only — --pipe is daemon mode (stdin 'call' is ignored)
-        attempts = [
-            [self.bin, "-c", str(rc)],
-            [self.bin, "-c", str(rc), "-l", log_path],
-        ]
+        args = [self.bin, "-c", str(rc)]
         last_err = ""
-        for args in attempts:
-            _log(f"start {' '.join(args)}")
-            try:
-                self.proc = subprocess.Popen(
-                    args,
-                    stdin=subprocess.PIPE,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
-                    text=True,
-                    bufsize=1,
-                    env={**os.environ, "HOME": str(Path.home())},
-                )
-            except Exception as e:
-                last_err = str(e)
-                self.proc = None
-                continue
-            time.sleep(0.4)
-            if self.proc.poll() is not None:
-                leftover = ""
-                try:
-                    leftover = (self.proc.stdout.read() or "")[:200]
-                except Exception:
-                    pass
-                last_err = leftover or f"exit {self.proc.returncode}"
-                _log(f"linphonec died immediately: {last_err!r}")
-                self.proc = None
-                continue
-            break
-        if not self.alive():
-            return _set_error(f"linphonec failed to start ({last_err[:80]})")
+        _log(f"start {' '.join(args)}")
+        try:
+            self._spawn(args)
+        except Exception as e:
+            last_err = str(e)
+            self.proc = None
+        time.sleep(0.4)
+        if self.proc is None or self.proc.poll() is not None:
+            leftover = last_err
+            _log(f"linphonec died immediately: {leftover!r}")
+            self.proc = None
+            self._pty = None
+            return _set_error(f"linphonec failed to start ({(leftover or 'exit')[:80]})")
         self.phase = "idle"
         self.registered = False
         self._reader = threading.Thread(
@@ -490,17 +535,16 @@ class LinphoneEngine:
         )
         self._reader.start()
         time.sleep(0.8)
-        # Interactive register (config auto-register is flaky on linphonec 5)
         self.cmd(f"register sip:{user}@{server} {server} {password}")
         self.cmd("stun stun.zadarma.com")
-        deadline = time.time() + 12.0
+        deadline = time.time() + 8.0
         while time.time() < deadline:
             if self.registered:
                 _log("linphonec registered")
                 break
             if not self.alive():
                 return _set_error("linphonec exited during register")
-            time.sleep(0.35)
+            time.sleep(0.3)
         if not self.registered:
             _log("no register banner yet — will still try call")
         with self._lock:
@@ -509,11 +553,17 @@ class LinphoneEngine:
         return ""
 
     def cmd(self, line: str) -> None:
-        proc = self.proc
-        if proc is None or proc.stdin is None or proc.poll() is not None:
+        if not self.alive():
             return
         try:
             _log(f"linphonec < {line.split(maxsplit=1)[0]}")
+            payload = (line + "\n").encode("utf-8")
+            if self._pty is not None:
+                os.write(self._pty, payload)
+                return
+            proc = self.proc
+            if proc is None or proc.stdin is None:
+                return
             proc.stdin.write(line + "\n")
             proc.stdin.flush()
         except Exception as e:
@@ -527,19 +577,28 @@ class LinphoneEngine:
 
     def stop(self) -> None:
         proc = self.proc
+        fd = self._pty
+        if proc is not None and proc.poll() is None:
+            try:
+                payload = b"quit\n"
+                if fd is not None:
+                    os.write(fd, payload)
+                elif proc.stdin is not None:
+                    proc.stdin.write("quit\n")
+                    proc.stdin.flush()
+            except Exception:
+                pass
+            try:
+                proc.terminate()
+            except Exception:
+                pass
         self.proc = None
-        if proc is None:
-            return
-        try:
-            if proc.stdin:
-                proc.stdin.write("quit\n")
-                proc.stdin.flush()
-        except Exception:
-            pass
-        try:
-            proc.terminate()
-        except Exception:
-            pass
+        self._pty = None
+        if fd is not None:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
 
 
 def _engine() -> LinphoneEngine:
@@ -745,7 +804,7 @@ def _dial_ex_inner(number: str) -> Tuple[bool, str]:
             with eng._lock:
                 eng.phase = "idle"
             eng.cmd(f"call {target}")
-            deadline = time.time() + 8.0
+            deadline = time.time() + 6.0
             while time.time() < deadline:
                 info = eng.snapshot()
                 _last_register_raw = (
@@ -757,14 +816,16 @@ def _dial_ex_inner(number: str) -> Tuple[bool, str]:
                 if info.phase == "error":
                     return False, _set_error("SIP rejected call")
                 time.sleep(0.25)
-            if eng.alive() and eng.snapshot().phase in ("dialing", "ringing", "active"):
+            if not eng.alive():
+                _log(f"linphonec died after dial ({hint})")
+            else:
+                # INVITE may be in flight even if stdout is quiet — don't kill it
+                with eng._lock:
+                    if eng.phase == "idle":
+                        eng.phase = "dialing"
+                _log("left outbound call up (no state banner yet)")
                 _set_error("")
                 return True, ""
-            _log(f"linphonec sent no outbound call ({hint})")
-            eng.stop()
-            time.sleep(0.4)
-        else:
-            _log(f"linphonec did not start ({hint}); trying linphonecsh")
 
     if _discover_csh():
         return _dial_via_csh(digits, server)
@@ -806,24 +867,49 @@ def poll() -> CallInfo:
 
 
 def doctor() -> str:
+    """Fast SIP check for the 2\" screen — no 20s ensure() hang."""
     env = _sip_env()
+    user = (env.get("SIP_USER") or "").strip() or "?"
+    server = (env.get("SIP_SERVER") or "").strip() or "?"
     lines = [
         f"linphonec: {_discover_linphonec() or 'MISSING'}",
         f"linphonecsh: {_discover_csh() or 'none'}",
-        f"sip: {env.get('SIP_USER') or '?'}@{env.get('SIP_SERVER') or '?'}",
+        f"sip: {user}@{server}",
     ]
-    hint = ensure()
     eng = _engine()
-    lines.append(
-        f"proc: {'up' if eng.alive() else 'down'} pid={getattr(eng.proc, 'pid', None)}"
-    )
-    lines.append(f"registered: {eng.registered}")
-    lines.append(f"phase: {eng.phase}")
-    lines.append(f"ensure: {hint or 'OK'}")
+    lines.append(f"proc: {'up' if eng.alive() else 'down'}")
+    lines.append(f"cli-registered: {eng.registered}")
+    result = "NOT REGISTERED"
+    csh = _discover_csh()
+    if csh:
+        st = _csh_cmd("status", "register", timeout=3.0)
+        compact = (st or "").replace("\n", " ").strip()
+        if re.search(r"(?i)no running|not running|failed to connect", compact):
+            lines.append("daemon: not running")
+        elif compact:
+            lines.append(f"register: {compact[:140]}")
+        else:
+            lines.append("register: (empty)")
+        ok = bool(
+            re.search(
+                r"(?i)identity=|registered to|RegistrationOk|successful",
+                compact,
+            )
+        )
+        if "registered=-1" in compact and "identity" not in compact.lower():
+            ok = False
+        if eng.registered:
+            ok = True
+        result = "REGISTERED" if ok else "NOT REGISTERED"
+    elif eng.registered:
+        result = "REGISTERED"
+    else:
+        result = "NO VOIP TOOL"
     if _last_error:
         lines.append(f"last: {_last_error}")
+    lines.insert(0, f"RESULT: {result}")
     lines.append("--- log ---")
-    lines.append(recent_log(12))
+    lines.append(recent_log(8))
     return "\n".join(lines)
 
 

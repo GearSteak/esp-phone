@@ -5,7 +5,7 @@ import os
 from pathlib import Path
 from typing import Callable, Optional
 
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtWidgets import (
     QHBoxLayout,
     QLabel,
@@ -146,8 +146,21 @@ def make_sip_account_page(on_back: Callable[[], None]) -> QWidget:
     lay.setContentsMargins(6, 4, 6, 6)
     lay.setSpacing(6)
     lay.addWidget(
-        _header("SIP / VoIP", "Confirm on Test SIP · wait for result")
+        _header("SIP / VoIP", "Test SIP shows the result up here")
     )
+    status = _status()
+    status.setMinimumHeight(88)
+    status.setText("Confirm Test SIP — result appears here")
+    status.setStyleSheet(
+        f"font-size:11px; font-weight:600; color:{_TEXT};"
+        f" background:#1a2430; border:1px solid {_BORDER};"
+        " border-radius:8px; padding:6px;"
+    )
+    lay.addWidget(status)
+    save = _btn("Save SIP")
+    test = _btn("Test SIP", primary=True)
+    lay.addWidget(test)
+    lay.addWidget(save)
     vals = _read_sip()
     server = _field("sip.example.com")
     user = _field("user / extension")
@@ -165,29 +178,38 @@ def make_sip_account_page(on_back: Callable[[], None]) -> QWidget:
     ):
         lay.addWidget(_label(lab))
         lay.addWidget(w)
-    status = _status()
-    status.setMinimumHeight(110)
-    status.setWordWrap(True)
-    save = _btn("Save SIP", primary=True)
-    test = _btn("Test SIP")
-    lay.addWidget(save)
-    lay.addWidget(test)
-    lay.addWidget(status)
     lay.addStretch(1)
 
     class _Bridge(QObject):
+        progress = pyqtSignal(str)
         done = pyqtSignal(str)
 
     bridge = _Bridge(body)
-    testing = {"on": False}
+    testing = {"on": False, "gen": 0}
+
+    def _show(text: str) -> None:
+        status.setText(text)
+        status.setWordWrap(True)
+
+    def _on_progress(text: str) -> None:
+        _show(text)
 
     def _on_report(text: str) -> None:
         testing["on"] = False
         test.setEnabled(True)
-        status.setText(text)
-        status.setWordWrap(True)
+        _show(text)
+        summary = "SIP test done"
+        for line in (text or "").splitlines():
+            if line.startswith("RESULT:"):
+                summary = line.replace("RESULT:", "").strip()
+                break
+        try:
+            store.push_notif("SIP", summary, "settings")
+        except Exception:
+            pass
 
-    bridge.done.connect(_on_report)
+    bridge.progress.connect(_on_progress, Qt.QueuedConnection)
+    bridge.done.connect(_on_report, Qt.QueuedConnection)
 
     def do_save() -> None:
         where = _write_sip(
@@ -204,17 +226,23 @@ def make_sip_account_page(on_back: Callable[[], None]) -> QWidget:
                 msg = f"Saved · {hint}" if hint else f"Saved · registered · {where}"
             except Exception as e:
                 msg = f"Saved · register later ({e})"
-            bridge.done.emit(msg)
+            bridge.progress.emit(msg)
 
         threading.Thread(target=work, name="sip-save", daemon=True).start()
 
     def do_test() -> None:
         if testing["on"]:
-            status.setText("Test already running…")
+            _show("Test already running…")
             return
         testing["on"] = True
-        status.setText("Testing SIP…\n(wait — this can take ~20s)")
+        testing["gen"] += 1
+        gen = testing["gen"]
+        _show("Testing SIP…")
         test.setEnabled(False)
+        try:
+            store.push_notif("SIP", "Testing…", "settings")
+        except Exception:
+            pass
 
         def work() -> None:
             try:
@@ -222,10 +250,25 @@ def make_sip_account_page(on_back: Callable[[], None]) -> QWidget:
 
                 report = sip_call.doctor()
             except Exception as e:
-                report = f"Test failed: {e}"
-            bridge.done.emit(report)
+                report = f"RESULT: TEST FAILED\n{e}"
+            if gen == testing["gen"]:
+                bridge.done.emit(report)
 
         threading.Thread(target=work, name="sip-doctor", daemon=True).start()
+
+        def timed_out() -> None:
+            if not testing["on"] or testing["gen"] != gen:
+                return
+            extra = ""
+            try:
+                from esp_handset import sip_call
+
+                extra = sip_call.recent_log(8)
+            except Exception:
+                pass
+            bridge.done.emit("RESULT: TEST TIMED OUT\n" + extra)
+
+        QTimer.singleShot(12000, timed_out)
 
     save.clicked.connect(do_save)
     test.clicked.connect(do_test)
