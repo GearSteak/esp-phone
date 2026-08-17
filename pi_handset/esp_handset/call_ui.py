@@ -404,16 +404,9 @@ class CallController(QObject):
             self.on_status("Already in a call")
             return False
         if not sip_call.available():
-            # One more locate pass (passwordless ensure — fast if already installed)
-            try:
-                sip_call._bin_cache = None  # type: ignore[attr-defined]
-                sip_call._locate_via_sudo()
-            except Exception:
-                pass
-            if not sip_call.available():
-                hint = sip_call.missing_hint() or "VoIP tool missing"
-                self.on_status(hint)
-                return False
+            hint = sip_call.missing_hint() or "VoIP tool missing"
+            self.on_status(hint)
+            return False
 
         name = ""
         try:

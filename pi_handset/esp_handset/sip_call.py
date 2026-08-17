@@ -1,4 +1,8 @@
-"""Linphone helpers for Digivice voice calls (via linphonecsh)."""
+"""Digivice voice calls via a live linphonec process (same engine as desktop).
+
+linphonecsh's unix-pipe daemon is unreliable on the Pi. We start linphonec with
+a Zadarma UDP config, wait for REGISTER, then send: call sip:1XXXXXXXXXX@host
+"""
 from __future__ import annotations
 
 import os
@@ -7,20 +11,16 @@ import shutil
 import subprocess
 import threading
 import time
+from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
-_ensure_lock = threading.RLock()  # also serializes linphonecsh pipe I/O
-_ensured_once = False
-_bin_cache: Optional[str] = None
+_log_lock = threading.Lock()
+_eng_lock = threading.Lock()
+_engine: Optional["LinphoneEngine"] = None
 _last_error = ""
 _last_register_raw = ""
-_WRAPPER = "/usr/local/bin/digivice-linphonecsh"
-_BIN_HINTS = (
-    Path("/etc/esp-handset/linphone.bin"),
-    Path.home() / ".esp-handset" / "linphone.bin",
-)
 _LOG = Path.home() / ".esp-handset" / "sip-last.log"
 
 
@@ -43,16 +43,17 @@ def _log(msg: str) -> None:
     print(f"[sip_call] {msg}", flush=True)
     try:
         _LOG.parent.mkdir(parents=True, exist_ok=True)
-        prev = ""
-        if _LOG.is_file():
-            prev = _LOG.read_text(encoding="utf-8", errors="replace")
-        lines = (prev + line + "\n").splitlines()[-120:]
-        _LOG.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        with _log_lock:
+            prev = ""
+            if _LOG.is_file():
+                prev = _LOG.read_text(encoding="utf-8", errors="replace")
+            lines = (prev + line + "\n").splitlines()[-160:]
+            _LOG.write_text("\n".join(lines) + "\n", encoding="utf-8")
     except OSError:
         pass
 
 
-def recent_log(n: int = 12) -> str:
+def recent_log(n: int = 14) -> str:
     try:
         if not _LOG.is_file():
             return "(no sip-last.log yet)"
@@ -62,179 +63,11 @@ def recent_log(n: int = 12) -> str:
         return f"(log read error: {e})"
 
 
-def _is_exe(path: str) -> bool:
+def _exists(path: str) -> bool:
     try:
         return bool(path) and os.path.isfile(path) and os.access(path, os.X_OK)
     except OSError:
         return False
-
-
-def _exists(path: str) -> bool:
-    try:
-        return bool(path) and os.path.isfile(path)
-    except OSError:
-        return False
-
-
-def _remember_bin(path: str) -> None:
-    """Persist absolute path for next Digivice boot (user + system hint)."""
-    for hint in _BIN_HINTS:
-        try:
-            hint.parent.mkdir(parents=True, exist_ok=True)
-            hint.write_text(path + "\n", encoding="utf-8")
-        except OSError:
-            continue
-
-
-def _locate_via_sudo() -> None:
-    """Ask passwordless ensure to pin the binary (no apt if already installed)."""
-    for cmd in (
-        ["sudo", "-n", "/usr/local/bin/digivice-ensure-linphone", "--locate-only"],
-        ["sudo", "-n", "digivice-ensure-linphone", "--locate-only"],
-    ):
-        try:
-            subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=20,
-                check=False,
-            )
-            return
-        except Exception:
-            continue
-
-
-def _discover_bin() -> Optional[str]:
-    """Find linphonecsh even when Digivice PATH is minimal."""
-    # Prefer Digivice wrapper (always on handset PATH)
-    if _is_exe(_WRAPPER) or _exists(_WRAPPER):
-        return _WRAPPER
-
-    for hint_path in _BIN_HINTS:
-        try:
-            if hint_path.is_file():
-                hint = hint_path.read_text(encoding="utf-8", errors="replace").strip()
-                if _exists(hint):
-                    return hint
-        except OSError:
-            pass
-
-    candidates: List[str] = []
-
-    which = shutil.which("linphonecsh")
-    if which:
-        candidates.append(which)
-
-    try:
-        r = subprocess.run(
-            ["bash", "-lc", "command -v linphonecsh"],
-            capture_output=True,
-            text=True,
-            timeout=2.0,
-            check=False,
-        )
-        hit = (r.stdout or "").strip().splitlines()
-        if hit and hit[0]:
-            candidates.append(hit[0].strip())
-    except Exception:
-        pass
-
-    for pkg in ("linphone-cli", "linphone-nogtk", "linphone"):
-        try:
-            r = subprocess.run(
-                ["dpkg", "-L", pkg],
-                capture_output=True,
-                text=True,
-                timeout=3.0,
-                check=False,
-            )
-            if r.returncode != 0:
-                continue
-            for line in (r.stdout or "").splitlines():
-                line = line.strip()
-                if line.endswith("/linphonecsh"):
-                    candidates.append(line)
-        except Exception:
-            continue
-
-    home_bin = ""
-    try:
-        home_bin = str(Path.home() / ".local" / "bin" / "linphonecsh")
-    except Exception:
-        home_bin = ""
-
-    candidates.extend(
-        [
-            "/usr/bin/linphonecsh",
-            "/usr/local/bin/linphonecsh",
-            "/bin/linphonecsh",
-            home_bin,
-            "/home/pi/.local/bin/linphonecsh",
-        ]
-    )
-
-    seen = set()
-    for p in candidates:
-        if not p or p in seen:
-            continue
-        seen.add(p)
-        if "digivice-linphonecsh" in p:
-            continue
-        if _is_exe(p) or _exists(p):
-            return p
-    return None
-
-
-def _bin() -> Optional[str]:
-    global _bin_cache
-    if _bin_cache and _exists(_bin_cache):
-        return _bin_cache
-    found = _discover_bin()
-    if not found:
-        _locate_via_sudo()
-        found = _discover_bin()
-    if found:
-        _bin_cache = found
-        if found != _WRAPPER:
-            _remember_bin(found)
-    return found
-
-
-def available() -> bool:
-    return _bin() is not None
-
-
-def missing_hint() -> str:
-    global _bin_cache
-    _bin_cache = None
-    if _bin():
-        return ""
-    return "VoIP tool missing — Update Digivice"
-
-
-def _run(args: List[str], timeout: float = 3.0) -> str:
-    """Run linphonecsh. Always serialized — concurrent pipe clients scramble replies."""
-    env = os.environ.copy()
-    try:
-        env.setdefault("HOME", str(Path.home()))
-    except Exception:
-        pass
-    with _ensure_lock:
-        try:
-            r = subprocess.run(
-                args,
-                capture_output=True,
-                text=True,
-                timeout=timeout,
-                check=False,
-                env=env,
-            )
-            return ((r.stdout or "") + "\n" + (r.stderr or "")).strip()
-        except subprocess.TimeoutExpired:
-            return "ERR timeout"
-        except Exception as e:
-            return f"ERR {e}"
 
 
 def _sip_env() -> Dict[str, str]:
@@ -264,56 +97,11 @@ def _sip_env() -> Dict[str, str]:
     return vals
 
 
-def _register_ok(status: str, user: str = "", server: str = "") -> bool:
-    """True when linphonecsh status register looks successfully registered.
-
-    Success often looks like: 'registered identity=sip:user@host'
-    Failure is usually: 'registered=-1'
-    Do NOT treat SIP digest '401 Unauthorized' chatter as failure when identity is present.
-    """
-    st = (status or "").strip()
-    if not st:
-        return False
-    low = st.lower()
-    # Hard fail only
-    if re.search(r"(?i)registered\s*=\s*-1", st):
-        return False
-    if "identity" in low and re.search(r"(?i)registered\s*=\s*-1", st):
-        return False
-    # Hard success markers used by linphone 3/4/5 + openHAB checks
-    if re.search(
-        r"(?i)identity\s*=|registered to|RegistrationOk|LinphoneRegistrationOk|"
-        r"registered\s*=\s*[1-9]\d*|registration successful",
-        st,
-    ):
-        return True
-    if re.search(r"(?i)\bregistered\b", st) and "unregistered" not in low:
-        # 'registered' without =-1
-        if not re.search(r"(?i)registered\s*=\s*-", st):
-            return True
-    if user and user in st and ("sip:" in low or (server and server in st)):
-        if re.search(r"(?i)\bok\b|success|registered", st):
-            return True
-    return False
-
-
-def _register_definitely_down(status: str) -> bool:
-    st = (status or "").strip()
-    if not st:
-        return False
-    if re.search(r"(?i)registered\s*=\s*-1", st):
-        return True
-    if re.search(r"(?i)\bunregistered\b|\bnot registered\b", st) and "identity" not in st.lower():
-        return True
-    return False
-
-
 def _linphonerc_path() -> Path:
     return Path.home() / ".esp-handset" / "linphonerc"
 
 
 def _write_linphonerc(env: Dict[str, str]) -> Optional[Path]:
-    """Linphone 5 + Zadarma UDP — same idea as Windows Linphone."""
     user = (env.get("SIP_USER") or "").strip()
     server = (env.get("SIP_SERVER") or "").strip()
     password = (env.get("SIP_PASS") or "").strip()
@@ -321,45 +109,52 @@ def _write_linphonerc(env: Dict[str, str]) -> Optional[Path]:
     if not user or not server or not password:
         return None
     path = _linphonerc_path()
+    body = (
+        "[sip]\n"
+        "sip_port=5060\n"
+        "sip_tcp_port=-1\n"
+        "sip_tls_port=-1\n"
+        "use_info=0\n"
+        "guess_hostname=1\n"
+        "inc_timeout=30\n"
+        "use_ipv6=0\n"
+        "default_proxy=0\n"
+        f"display_name={display}\n"
+        "\n"
+        "[rtp]\n"
+        "audio_rtp_port=7078\n"
+        "\n"
+        "[net]\n"
+        "stun_server=stun.zadarma.com\n"
+        "firewall_policy=1\n"
+        "\n"
+        "[sound]\n"
+        "echocancellation=0\n"
+        "\n"
+        "[auth_info_0]\n"
+        f"username={user}\n"
+        f"userid={user}\n"
+        f"passwd={password}\n"
+        f"realm={server}\n"
+        f"domain={server}\n"
+        "\n"
+        "[proxy_0]\n"
+        f"reg_proxy=<sip:{server};transport=udp>\n"
+        f"reg_identity=sip:{user}@{server}\n"
+        "reg_expires=3600\n"
+        "reg_sendregister=1\n"
+        "publish=0\n"
+        "dial_escape_plus=0\n"
+    )
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        body = (
-            "[sip]\n"
-            "sip_port=5060\n"
-            "sip_tcp_port=-1\n"
-            "sip_tls_port=-1\n"
-            "use_info=0\n"
-            "guess_hostname=1\n"
-            "inc_timeout=30\n"
-            "use_ipv6=0\n"
-            "default_proxy=0\n"
-            f"display_name={display}\n"
-            "\n"
-            "[rtp]\n"
-            "audio_rtp_port=7078\n"
-            "\n"
-            "[net]\n"
-            "stun_server=stun.zadarma.com\n"
-            "firewall_policy=1\n"
-            "\n"
-            "[auth_info_0]\n"
-            f"username={user}\n"
-            f"userid={user}\n"
-            f"passwd={password}\n"
-            f"realm={server}\n"
-            f"domain={server}\n"
-            "\n"
-            "[proxy_0]\n"
-            f"reg_proxy=<sip:{server};transport=udp>\n"
-            f"reg_identity=sip:{user}@{server}\n"
-            "reg_expires=3600\n"
-            "reg_sendregister=1\n"
-            "publish=0\n"
-            "dial_escape_plus=0\n"
-        )
         path.write_text(body, encoding="utf-8")
+        os.chmod(path, 0o600)
+        # Some linphonec builds ignore -c and only read ~/.linphonerc
+        home_rc = Path.home() / ".linphonerc"
         try:
-            os.chmod(path, 0o600)
+            home_rc.write_text(body, encoding="utf-8")
+            os.chmod(home_rc, 0o600)
         except OSError:
             pass
         return path
@@ -368,475 +163,452 @@ def _write_linphonerc(env: Dict[str, str]) -> Optional[Path]:
         return None
 
 
-def _daemon_alive(exe: str) -> bool:
-    st = _run([exe, "status", "register"], timeout=2.0)
-    if re.search(r"(?i)no running|not running|failed to connect|could not", st):
-        return False
-    if st.startswith("ERR") and "timeout" not in st.lower():
-        st2 = _run([exe, "status"], timeout=2.0)
-        if re.search(r"(?i)no running|not running|failed to connect", st2):
-            return False
-    return True
-
-
-def _ensure_daemon(exe: str) -> str:
-    """Bring up linphonec daemon. Fresh restart if pipe looks dead."""
-    if _daemon_alive(exe):
-        return ""
-    env = _sip_env()
-    rc = _write_linphonerc(env)
-    _log(f"init linphonec daemon rc={rc}")
-    # Clean any half-dead daemon first
-    _run([exe, "exit"], timeout=2.0)
-    time.sleep(0.35)
-    # Prefer plain init (man page: default daemon). -c is best-effort.
-    started = False
-    if rc is not None:
-        out = _run([exe, "init", "-c", str(rc)], timeout=6.0)
-        _log(f"init -c → {out[:120]!r}")
-        time.sleep(0.6)
-        if _daemon_alive(exe):
-            started = True
-    if not started:
-        out = _run([exe, "init"], timeout=5.0)
-        _log(f"init → {out[:120]!r}")
-        time.sleep(0.6)
-    if not _daemon_alive(exe):
-        return _set_error("Linphone daemon failed to start")
-    _run([exe, "generic", "stun stun.zadarma.com"], timeout=3.0)
-    return ""
-
-
-def ensure() -> str:
-    """Start linphonec daemon + register SIP. '' if OK, else short UI hint."""
-    # Pipe I/O is serialized inside _run — do not hold a lock across sleeps
-    return _ensure_unlocked()
-
-
-def _status_register(exe: str) -> str:
-    global _last_register_raw
-    st = _run([exe, "status", "register"], timeout=2.5)
-    _last_register_raw = st or ""
-    return st
-
-
-def _ensure_unlocked() -> str:
-    exe = _bin()
-    if not exe:
-        return _set_error(missing_hint())
-    try:
-        dead = _ensure_daemon(exe)
-        if dead:
-            return dead
-        env = _sip_env()
-        user = (env.get("SIP_USER") or "").strip()
-        server = (env.get("SIP_SERVER") or "").strip()
-        password = (env.get("SIP_PASS") or "").strip()
-        if not user or not password or not server:
-            return _set_error("Set SIP in Settings → Accounts")
-        _write_linphonerc(env)
-
-        st = _status_register(exe)
-        if _register_ok(st, user, server):
-            _log(f"already registered: {st[:120]!r}")
-            _set_error("")
-            return ""
-
-        # Official linphonecsh API first (Bookworm man page)
-        attempts = [
-            [
-                exe,
-                "register",
-                "--username",
-                user,
-                "--host",
-                server,
-                "--password",
-                password,
-            ],
-            [exe, "register", f"sip:{user}@{server}", server, password],
-            [exe, "generic", f"register sip:{user}@{server} {server} {password}"],
-            [exe, "generic", f"register sip:{user}@{server} sip:{server} {password}"],
-        ]
-        for args in attempts:
-            safe = " ".join(a if a != password else "***" for a in args[1:6])
-            _log(f"register try: {safe}")
-            out = _run(args, timeout=12.0)
-            _log(f"register out: {out[:180]!r}")
-            if re.search(r"(?i)unknown option|invalid option|usage:", out):
-                continue
-            # Digest auth needs time — keep this short so Digivice isn't stuck
-            for i in range(6):
-                time.sleep(0.4)
-                st = _status_register(exe)
-                if _register_ok(st, user, server):
-                    _log(f"registered OK after {i+1} polls: {st[:120]!r}")
-                    _set_error("")
-                    return ""
-            # Next method
-
-        st = _status_register(exe)
-        _log(f"register final: {st[:200]!r}")
-        if _register_ok(st, user, server):
-            _set_error("")
-            return ""
-        if _register_definitely_down(st):
-            return _set_error(f"SIP not registered ({(st or 'empty')[:40]})")
-        # Ambiguous — allow dial; Zadarma may still accept INVITE
-        _log("register ambiguous — allowing dial")
-        _set_error("")
-        return ""
-    except Exception as e:
-        return _set_error(f"SIP error: {e}")
-
-
-def ensure_async() -> None:
-    """Background init/register — safe from Qt main thread."""
-    global _ensured_once
-
-    def work() -> None:
-        global _ensured_once
-        try:
-            hint = ensure()
-            _ensured_once = True
-            if hint:
-                _log(f"ensure: {hint}")
-            else:
-                _log("linphone ready")
-        except Exception as e:
-            _log(f"ensure failed ({e})")
-
-    threading.Thread(target=work, name="sip-ensure", daemon=True).start()
-
-
 def _default_cc() -> str:
     env = _sip_env()
     cc = (env.get("SIP_CC") or "").strip().lstrip("+")
     if cc.isdigit():
         return cc
     did = re.sub(r"[^\d]", "", env.get("SIP_DID") or "")
-    if len(did) >= 11 and did.startswith("1"):
-        return "1"
-    if len(did) >= 10:
+    if did.startswith("1"):
         return "1"
     return "1"
 
 
-def _e164(number: str) -> str:
-    """Normalize to +E.164 when possible (Zadarma wants +)."""
+def pstn_digits(number: str) -> str:
+    """NANP digits with country code 1, no plus — what worked on Windows."""
     raw = (number or "").strip()
     if raw.lower().startswith("sip:"):
-        return raw
-    kept = re.sub(r"[^\d+*#]", "", raw)
-    if not kept:
-        return raw
-    if "*" in kept or "#" in kept:
-        return kept
-    if kept.startswith("+"):
-        return "+" + re.sub(r"\D", "", kept[1:])
-    digits = re.sub(r"\D", "", kept)
+        rest = raw[4:]
+        rest = rest.split("@", 1)[0]
+        raw = rest
+    digits = re.sub(r"\D", "", raw)
     cc = _default_cc()
     if len(digits) == 10:
-        return f"+{cc}{digits}"
+        return f"{cc}{digits}"
     if len(digits) == 11 and digits.startswith(cc):
-        return f"+{digits}"
+        return digits
     if len(digits) >= 8:
-        return f"+{digits}"
-    return digits or kept
+        return digits
+    return digits
 
 
-def _dial_script() -> Optional[str]:
+def _discover_linphonec() -> Optional[str]:
     for p in (
-        "/usr/local/bin/digivice-sip-dial",
-        str(Path.home() / "esp-phone/pi_handset/session/digivice-sip-dial.sh"),
-        "/opt/esp-handset/session/digivice-sip-dial.sh",
+        shutil.which("linphonec"),
+        "/usr/bin/linphonec",
+        "/usr/local/bin/linphonec",
     ):
-        if _exists(p):
+        if p and _exists(p):
+            return p
+    try:
+        r = subprocess.run(
+            ["bash", "-lc", "command -v linphonec"],
+            capture_output=True,
+            text=True,
+            timeout=2.0,
+            check=False,
+        )
+        hit = (r.stdout or "").strip().splitlines()
+        if hit and _exists(hit[0].strip()):
+            return hit[0].strip()
+    except Exception:
+        pass
+    try:
+        r = subprocess.run(
+            ["dpkg", "-L", "linphone-cli"],
+            capture_output=True,
+            text=True,
+            timeout=3.0,
+            check=False,
+        )
+        for line in (r.stdout or "").splitlines():
+            line = line.strip()
+            if line.endswith("/linphonec") and _exists(line):
+                return line
+    except Exception:
+        pass
+    return None
+
+
+def _discover_csh() -> Optional[str]:
+    for p in (
+        "/usr/local/bin/digivice-linphonecsh",
+        shutil.which("linphonecsh"),
+        "/usr/bin/linphonecsh",
+        "/usr/local/bin/linphonecsh",
+    ):
+        if p and _exists(p):
             return p
     return None
 
 
-def _pstn_digits(number: str) -> str:
-    """11-digit NANP like Windows Linphone (1 + 10 digits), no plus."""
-    e164 = _e164(number)
-    if e164.lower().startswith("sip:"):
+def available() -> bool:
+    return _discover_linphonec() is not None or _discover_csh() is not None
+
+
+def missing_hint() -> str:
+    if available():
         return ""
-    digits = re.sub(r"\D", "", e164)
-    return digits
+    return "VoIP tool missing — Update Digivice"
 
 
-def _dial_targets(number: str) -> List[str]:
-    """Windows-style: dial 1XXXXXXXXXX through the registered UDP proxy."""
-    raw = (number or "").strip()
-    if not raw:
-        return []
-    if raw.lower().startswith("sip:"):
-        return [raw]
-    env = _sip_env()
-    server = (env.get("SIP_SERVER") or "").strip()
-    cc_num = _pstn_digits(raw)
-    if "*" in raw or "#" in raw:
-        return [re.sub(r"[^\d*#]", "", raw)]
-    if not cc_num:
-        return []
-    out: List[str] = []
-    # Same as typing in Windows Linphone after register
-    out.append(cc_num)
-    if server:
-        out.append(f"sip:{cc_num}@{server}")
-    seen = set()
-    uniq: List[str] = []
-    for t in out:
-        if t and t not in seen:
-            seen.add(t)
-            uniq.append(t)
-    return uniq
-
-
-def _hard_dial_error(text: str) -> bool:
-    """True only for clear reject — ignore SIP digest 401 noise."""
-    t = text or ""
-    if re.search(r"(?i)identity\s*=|registered to|RegistrationOk", t):
-        return False
-    return bool(
-        re.search(
-            r"(?i)not registered|forbidden|registration required|"
-            r"could not resolve|no route|temporarily unavailable|486|603|"
-            r"403 Forbidden|401 Unauthorized.*fail",
-            t,
-        )
-    )
-
-
-def dial(number: str) -> bool:
-    """Place outbound call. True if linphone accepted / call appeared."""
-    ok, _reason = dial_ex(number)
-    return ok
-
-
-def dial_ex(number: str) -> Tuple[bool, str]:
-    """Return (ok, reason). reason is '' on success, else a short UI hint."""
-    num = (number or "").strip()
-    if not num:
-        return False, _set_error("No number")
-    exe = _bin()
-    if not exe:
-        return False, _set_error(missing_hint() or "VoIP tool missing")
-
-    digits = _pstn_digits(num) or re.sub(r"\D", "", num)
-    script = _dial_script()
-    if script and digits:
-        _log(f"sip-dial script {script} {digits}")
-        out = _run([script, digits], timeout=28.0)
-        _log(f"sip-dial → {out[-400:]!r}")
-        if re.search(r"(?m)^OK\s*$", out) or re.search(r"(?i)\bOK\b", out.splitlines()[-1] if out else ""):
-            _set_error("")
-            return True, ""
-        fail = ""
-        for line in reversed(out.splitlines()):
-            if line.startswith("FAIL:"):
-                fail = line[5:].strip()
-                break
-        if fail:
-            return False, _set_error(fail[:80])
-        # Script missing/old — fall through to Python path
-
-    hint = _ensure_unlocked()
-    if hint and re.search(r"(?i)missing|daemon failed|Set SIP", hint):
-        _log(f"dial blocked: {hint}")
-        return False, hint
-
-    st = _status_register(exe)
-    if _register_definitely_down(st):
-        hint2 = _ensure_unlocked()
-        st = _status_register(exe)
-        if _register_definitely_down(st):
-            _log(f"dial abort — unregistered: {st[:160]!r}")
-            detail = (st or hint2 or hint or "not registered")[:48]
-            return False, _set_error(f"SIP not registered ({detail})")
-
-    targets = _dial_targets(num)
-    if not targets:
-        return False, _set_error("Bad number")
-
-    last_out = ""
-    for target in targets:
-        _log(f"dial → {target}")
-        for args in (
-            [exe, "dial", target],
-            [exe, "generic", f"call {target}"],
-        ):
-            out = _run(args, timeout=8.0)
-            last_out = out or last_out
-            _log(f"dial cmd {' '.join(args[1:3])} → {out[:140]!r}")
-            if re.search(r"(?i)no running|failed to connect", out):
-                _ensure_daemon(exe)
-                _ensure_unlocked()
-                out = _run(args, timeout=8.0)
-                last_out = out or last_out
-            if _hard_dial_error(out):
-                continue
-            if re.search(r"(?i)unknown|invalid|usage", out):
-                continue
-            for _ in range(16):
-                time.sleep(0.25)
-                info = poll()
-                if info.phase in ("dialing", "ringing", "early", "active"):
-                    _log(f"call up phase={info.phase}")
-                    _set_error("")
-                    return True, ""
-                if info.phase == "error":
-                    _log(f"call error: {info.raw[:120]!r}")
-                    break
-            _log(f"dial cmd ok but no call state yet → try next ({target})")
-
-    _log(f"dial failed; last={last_out[:180]!r}")
-    raw = (_last_register_raw or last_out or "")[:48]
-    if _hard_dial_error(last_out):
-        return False, _set_error(f"SIP rejected ({raw})")
-    if re.search(r"(?i)not registered", last_out):
-        return False, _set_error(f"SIP not registered ({raw})")
-    return False, _set_error(f"Dial failed ({raw or 'see Test SIP'})")
-
-
-def doctor() -> str:
-    """Short multi-line SIP/linphone status for the Accounts UI."""
-    lines: List[str] = []
-    exe = _bin()
-    lines.append(f"bin: {exe or 'MISSING'}")
-    env = _sip_env()
-    lines.append(
-        f"sip: {env.get('SIP_USER') or '?'}@{env.get('SIP_SERVER') or '?'}"
-    )
-    if not exe:
-        lines.append(recent_log(8))
-        return "\n".join(lines)
-    hint = _ensure_unlocked()
-    st = _status_register(exe)
-    lines.append(f"register: {(st or 'empty')[:90]}")
-    lines.append(f"ensure: {hint or 'OK'}")
-    if _last_error:
-        lines.append(f"last: {_last_error}")
-    lines.append("--- log ---")
-    lines.append(recent_log(10))
-    return "\n".join(lines)
-
-
-def hangup() -> None:
-    exe = _bin()
-    if not exe:
-        return
-    _run([exe, "generic", "terminate"], timeout=2.0)
-    _run([exe, "hangup"], timeout=2.0)
-
-
-def answer() -> None:
-    exe = _bin()
-    if not exe:
-        return
-    _run([exe, "generic", "answer"], timeout=2.0)
-    info = poll()
-    if info.call_id is not None and info.phase == "incoming":
-        _run([exe, "generic", f"answer {info.call_id}"], timeout=2.0)
+def _kill_stray_linphone() -> None:
+    """Drop leftover daemons so port 5060 is free for our linphonec."""
+    csh = _discover_csh()
+    if csh:
+        try:
+            subprocess.run(
+                [csh, "exit"],
+                capture_output=True,
+                timeout=2.0,
+                check=False,
+            )
+        except Exception:
+            pass
+    for name in ("linphonec", "linphonecsh"):
+        try:
+            subprocess.run(
+                ["pkill", "-u", str(os.getuid()), "-x", name],
+                capture_output=True,
+                timeout=2.0,
+                check=False,
+            )
+        except Exception:
+            pass
+    time.sleep(0.35)
 
 
 @dataclass
 class CallInfo:
-    """Best-effort snapshot of linphonec call list."""
-
     raw: str = ""
-    phase: str = "idle"  # idle | dialing | ringing | early | active | incoming | ending | error
+    phase: str = "idle"
     call_id: Optional[int] = None
     remote: str = ""
     state: str = ""
 
 
-_STATE_MAP = (
-    ("IncomingReceived", "incoming"),
-    ("IncomingEarlyMedia", "incoming"),
-    ("OutgoingInit", "dialing"),
-    ("OutgoingProgress", "dialing"),
-    ("OutgoingRinging", "ringing"),
-    ("OutgoingEarlyMedia", "early"),
-    ("Early", "early"),
-    ("Connected", "active"),
-    ("StreamsRunning", "active"),
-    ("Paused", "active"),
-    ("Pausing", "active"),
-    ("Resuming", "active"),
-    ("PausedByRemote", "active"),
-    ("Error", "error"),
-    ("End", "ending"),
-    ("Released", "ending"),
-)
+def _phase_from_line(line: str, current: str) -> str:
+    s = line or ""
+    if re.search(
+        r"(?i)IncomingReceived|Incoming call|Receiving new call", s
+    ):
+        return "incoming"
+    if re.search(r"(?i)Registration (failed|refused)|Forbidden|403|401 Unauthorized", s):
+        if "identity" in s.lower() and "successful" in s.lower():
+            return current
+        return current
+    if re.search(
+        r"(?i)Call (failed|error)|could not call|Unable to call|Not registered",
+        s,
+    ):
+        return "error"
+    if re.search(
+        r"(?i)Call (terminated|ended)|CallEnd|Released|terminated",
+        s,
+    ):
+        return "ending"
+    if re.search(
+        r"(?i)Connected|StreamsRunning|Call connected|Call answered", s
+    ):
+        return "active"
+    if re.search(
+        r"(?i)Remote ringing|OutgoingRinging|Ringing", s
+    ):
+        return "ringing"
+    if re.search(
+        r"(?i)OutgoingEarly|Early media|OutgoingProgress|OutgoingInit|"
+        r"Contacting|Connecting to|Calling ",
+        s,
+    ):
+        return "dialing"
+    return current
+
+
+class LinphoneEngine:
+    """One long-lived `linphonec -c rc` with commands on stdin."""
+
+    def __init__(self) -> None:
+        self.proc: Optional[subprocess.Popen] = None
+        self.phase = "idle"
+        self.registered = False
+        self.lines: deque = deque(maxlen=80)
+        self._lock = threading.Lock()
+        self._reader: Optional[threading.Thread] = None
+        self.bin = ""
+
+    def alive(self) -> bool:
+        return self.proc is not None and self.proc.poll() is None
+
+    def _read_loop(self) -> None:
+        proc = self.proc
+        if proc is None or proc.stdout is None:
+            return
+        try:
+            for raw in proc.stdout:
+                line = (raw or "").rstrip()
+                if not line:
+                    continue
+                _log(f"linphonec | {line[:200]}")
+                with self._lock:
+                    self.lines.append(line)
+                    low = line.lower()
+                    if re.search(
+                        r"(?i)registration (successful|ok)|registered to|"
+                        r"identity=|LinphoneRegistrationOk",
+                        line,
+                    ):
+                        self.registered = True
+                    if re.search(
+                        r"(?i)registration failed|unregistered|registered=-1",
+                        line,
+                    ):
+                        if "successful" not in low:
+                            self.registered = False
+                    self.phase = _phase_from_line(line, self.phase)
+        except Exception as e:
+            _log(f"linphonec reader: {e}")
+
+    def start(self) -> str:
+        if self.alive():
+            return ""
+        env = _sip_env()
+        user = (env.get("SIP_USER") or "").strip()
+        server = (env.get("SIP_SERVER") or "").strip()
+        password = (env.get("SIP_PASS") or "").strip()
+        if not user or not server or not password:
+            return _set_error("Set SIP in Settings → Accounts")
+        rc = _write_linphonerc(env)
+        if rc is None:
+            return _set_error("Could not write linphonerc")
+        self.bin = _discover_linphonec() or ""
+        if not self.bin:
+            return _set_error("linphonec missing — Update Digivice")
+        _kill_stray_linphone()
+        log_path = str(Path.home() / ".esp-handset" / "linphonec.debug")
+        attempts = [
+            [self.bin, "--pipe", "-c", str(rc), "-d", "1", "-l", log_path],
+            [self.bin, "-c", str(rc), "-d", "1", "-l", log_path],
+            [self.bin, "-c", str(rc)],
+        ]
+        last_err = ""
+        for args in attempts:
+            _log(f"start {' '.join(args)}")
+            try:
+                self.proc = subprocess.Popen(
+                    args,
+                    stdin=subprocess.PIPE,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    bufsize=1,
+                    env={**os.environ, "HOME": str(Path.home())},
+                )
+            except Exception as e:
+                last_err = str(e)
+                self.proc = None
+                continue
+            time.sleep(0.4)
+            if self.proc.poll() is not None:
+                leftover = ""
+                try:
+                    leftover = (self.proc.stdout.read() or "")[:200]
+                except Exception:
+                    pass
+                last_err = leftover or f"exit {self.proc.returncode}"
+                _log(f"linphonec died immediately: {last_err!r}")
+                self.proc = None
+                continue
+            break
+        if not self.alive():
+            return _set_error(f"linphonec failed to start ({last_err[:80]})")
+        self.phase = "idle"
+        self.registered = False
+        self._reader = threading.Thread(
+            target=self._read_loop, name="linphonec-out", daemon=True
+        )
+        self._reader.start()
+        time.sleep(0.8)
+        # Interactive register (config auto-register is flaky on linphonec 5)
+        self.cmd(f"register sip:{user}@{server} {server} {password}")
+        self.cmd("stun stun.zadarma.com")
+        deadline = time.time() + 12.0
+        while time.time() < deadline:
+            if self.registered:
+                _log("linphonec registered")
+                _set_error("")
+                return ""
+            if not self.alive():
+                return _set_error("linphonec exited during register")
+            time.sleep(0.35)
+        # Don't hard-fail: some builds never print 'registered' but still dial
+        _log("no register banner yet — will still try call")
+        _set_error("")
+        return ""
+
+    def cmd(self, line: str) -> None:
+        proc = self.proc
+        if proc is None or proc.stdin is None or proc.poll() is not None:
+            return
+        try:
+            _log(f"linphonec < {line.split(maxsplit=1)[0]}")
+            proc.stdin.write(line + "\n")
+            proc.stdin.flush()
+        except Exception as e:
+            _log(f"linphonec cmd failed: {e}")
+
+    def snapshot(self) -> CallInfo:
+        with self._lock:
+            raw = "\n".join(list(self.lines)[-8:])
+            phase = self.phase
+        return CallInfo(raw=raw, phase=phase, state=phase)
+
+    def stop(self) -> None:
+        proc = self.proc
+        self.proc = None
+        if proc is None:
+            return
+        try:
+            if proc.stdin:
+                proc.stdin.write("quit\n")
+                proc.stdin.flush()
+        except Exception:
+            pass
+        try:
+            proc.terminate()
+        except Exception:
+            pass
+
+
+def _engine() -> LinphoneEngine:
+    global _engine
+    with _eng_lock:
+        if _engine is None:
+            _engine = LinphoneEngine()
+        return _engine
+
+
+def ensure() -> str:
+    if _discover_linphonec():
+        return _engine().start()
+    if _discover_csh():
+        return _set_error("linphonec missing — using old CLI")
+    return _set_error(missing_hint())
+
+
+def ensure_async() -> None:
+    def work() -> None:
+        try:
+            hint = ensure()
+            if hint:
+                _log(f"ensure: {hint}")
+            else:
+                _log("linphonec ready")
+        except Exception as e:
+            _log(f"ensure failed: {e}")
+
+    threading.Thread(target=work, name="sip-ensure", daemon=True).start()
+
+
+def dial(number: str) -> bool:
+    ok, _ = dial_ex(number)
+    return ok
+
+
+def dial_ex(number: str) -> Tuple[bool, str]:
+    global _last_register_raw
+    num = (number or "").strip()
+    if not num:
+        return False, _set_error("No number")
+    env = _sip_env()
+    server = (env.get("SIP_SERVER") or "").strip()
+    digits = pstn_digits(num)
+    if not digits:
+        return False, _set_error("Bad number")
+    if not server:
+        return False, _set_error("Set SIP in Settings → Accounts")
+
+    hint = ensure()
+    if hint and "missing" in hint.lower():
+        return False, hint
+
+    eng = _engine()
+    if not eng.alive():
+        hint = eng.start()
+        if hint and "missing" in hint.lower():
+            return False, hint
+    if not eng.alive():
+        return False, _set_error(hint or "linphonec not running")
+
+    target = f"sip:{digits}@{server}"
+    _log(f"call {target} (digits={digits})")
+    eng.phase = "dialing"
+    # Same destination Windows uses after adding country code 1
+    eng.cmd(f"call {target}")
+    time.sleep(0.4)
+    eng.cmd(f"call {digits}")
+
+    deadline = time.time() + 8.0
+    while time.time() < deadline:
+        info = eng.snapshot()
+        _last_register_raw = "registered" if eng.registered else "unregistered"
+        if info.phase in ("dialing", "ringing", "early", "active"):
+            _set_error("")
+            return True, ""
+        if info.phase == "error":
+            return False, _set_error("SIP rejected call")
+        time.sleep(0.25)
+
+    # linphonec often prints little; INVITE may still be in flight
+    if eng.alive():
+        _log("no stdout call banner yet — leaving call up")
+        _set_error("")
+        return True, ""
+    return False, _set_error("linphonec died after dial")
+
+
+def hangup() -> None:
+    eng = _engine()
+    if eng.alive():
+        eng.cmd("terminate")
+        eng.cmd("hangup")
+        eng.phase = "idle"
+
+
+def answer() -> None:
+    eng = _engine()
+    if eng.alive():
+        eng.cmd("answer")
 
 
 def poll() -> CallInfo:
-    """Parse `linphonecsh generic calls` (and status call as fallback)."""
-    exe = _bin()
-    if not exe:
-        return CallInfo()
-    raw = _run([exe, "generic", "calls"], timeout=2.0)
-    if not raw or raw.startswith("ERR"):
-        raw2 = _run([exe, "status", "call"], timeout=2.0)
-        if raw2 and not raw2.startswith("ERR"):
-            raw = raw2
+    eng = _engine()
+    if eng.alive():
+        return eng.snapshot()
+    return CallInfo()
 
-    info = CallInfo(raw=raw or "")
-    if not raw or len(raw) < 3:
-        return info
-    if re.search(r"(?i)no\s+(active\s+)?call|No active call", raw):
-        return info
 
-    phase = "idle"
-    state = ""
-    for token, mapped in _STATE_MAP:
-        if token in raw:
-            phase = mapped
-            state = token
-            if mapped == "active":
-                break
-
-    # Only trust explicit call-state wording (avoid matching random '@' / help text)
-    if phase == "idle":
-        if re.search(
-            r"(?i)Outgoing(Init|Progress|Ringing|Early)|CallState|StreamsRunning",
-            raw,
-        ):
-            if re.search(r"(?i)OutgoingRinging", raw):
-                phase, state = "ringing", "OutgoingRinging"
-            elif re.search(r"(?i)OutgoingEarly|EarlyMedia", raw):
-                phase, state = "early", "Early"
-            elif re.search(r"(?i)StreamsRunning|Connected", raw):
-                phase, state = "active", "Connected"
-            else:
-                phase, state = "dialing", "Outgoing"
-
-    m = re.search(r"(?m)^\s*(\d+)\s+", raw)
-    if m:
-        try:
-            info.call_id = int(m.group(1))
-        except ValueError:
-            pass
-
-    sip = re.search(r"(sip:[^\s|;]+)", raw, re.I)
-    if sip:
-        info.remote = sip.group(1)
-    else:
-        num = re.search(r"(?i)(?:to|with|from)\s+(\+?\d[\d\s\-]+)", raw)
-        if num:
-            info.remote = num.group(1).strip()
-
-    info.phase = phase
-    info.state = state
-    return info
+def doctor() -> str:
+    env = _sip_env()
+    lines = [
+        f"linphonec: {_discover_linphonec() or 'MISSING'}",
+        f"linphonecsh: {_discover_csh() or 'none'}",
+        f"sip: {env.get('SIP_USER') or '?'}@{env.get('SIP_SERVER') or '?'}",
+    ]
+    hint = ensure()
+    eng = _engine()
+    lines.append(f"proc: {'up' if eng.alive() else 'down'} pid={getattr(eng.proc, 'pid', None)}")
+    lines.append(f"registered: {eng.registered}")
+    lines.append(f"phase: {eng.phase}")
+    lines.append(f"ensure: {hint or 'OK'}")
+    if _last_error:
+        lines.append(f"last: {_last_error}")
+    lines.append("--- log ---")
+    lines.append(recent_log(12))
+    return "\n".join(lines)
 
 
 def remote_number(remote: str) -> str:
-    """Strip sip:user@host → user / digits."""
     s = (remote or "").strip()
-    if not s:
-        return ""
     if s.lower().startswith("sip:"):
         s = s[4:]
     if "@" in s:
