@@ -266,6 +266,7 @@ def make_steps_page(on_back: Callable[[], None], bridge=None) -> QWidget:
     refresh = QPushButton("Refresh")
     bump = QPushButton("+1 test")
     reset = QPushButton("Reset today")
+    probe = QPushButton("Probe GPIO")
     lay.addStretch(1)
     lay.addWidget(big)
     lay.addWidget(hint)
@@ -273,17 +274,20 @@ def make_steps_page(on_back: Callable[[], None], bridge=None) -> QWidget:
     lay.addWidget(refresh)
     lay.addWidget(bump)
     lay.addWidget(reset)
+    lay.addWidget(probe)
     lay.addStretch(1)
 
     def show_local() -> None:
         st = store.steps_state()
         big.setText(str(int(st.get("count") or 0)))
         try:
-            from esp_handset.steps_pi import monitor_status
+            from esp_handset.steps_pi import monitor_status, start_monitor
 
+            # Retry start if boot failed early
+            start_monitor()
             status.setText(monitor_status())
-        except Exception:
-            status.setText("")
+        except Exception as e:
+            status.setText(str(e)[:48])
 
     def do_refresh() -> None:
         show_local()
@@ -296,9 +300,26 @@ def make_steps_page(on_back: Callable[[], None], bridge=None) -> QWidget:
         store.reset_steps_today()
         show_local()
 
+    def do_probe() -> None:
+        """Force a re-init and show live level (for wiring checks)."""
+        try:
+            from esp_handset import steps_pi
+            from esp_handset.hw_pins import STEPS_BCM
+
+            steps_pi._monitor = None  # type: ignore[attr-defined]
+            mon = steps_pi.start_monitor()
+            if mon is None:
+                status.setText(f"No monitor (BCM{STEPS_BCM})")
+            else:
+                show_local()
+                status.setText(steps_pi.monitor_status() + " · shake now")
+        except Exception as e:
+            status.setText(str(e)[:48])
+
     refresh.clicked.connect(do_refresh)
     bump.clicked.connect(do_bump)
     reset.clicked.connect(do_reset)
+    probe.clicked.connect(do_probe)
     show_local()
     tick = QTimer(body)
     tick.timeout.connect(show_local)

@@ -3464,10 +3464,14 @@ def make_debug_page(on_back: Callable[[], None]) -> QWidget:
                 _set_status("Piezo disabled")
                 return
             if not available():
-                _set_status(f"GPIO {BUZZER_BCM} fail")
+                from esp_handset.buzzer import status as bstatus
+
+                _set_status(bstatus()[:48])
                 return
             beep_async("alert")
-            _set_status(f"Piezo BCM{BUZZER_BCM}")
+            from esp_handset.buzzer import status as bstatus
+
+            _set_status(bstatus())
         except Exception as e:
             _set_status(str(e)[:40])
 

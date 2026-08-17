@@ -555,7 +555,10 @@ def build_app(bridge: Optional[EspBridge], modem: Optional[Sim7600]) -> PhoneShe
     try:
         from esp_handset.steps_pi import start_monitor
 
-        start_monitor()
+        # Start after display claimed GPIO — delay avoids setmode races
+        from PyQt5.QtCore import QTimer
+
+        QTimer.singleShot(1500, lambda: start_monitor())
     except Exception as e:
         print(f"[handset] steps monitor: {e}", flush=True)
     shell.register_page(
