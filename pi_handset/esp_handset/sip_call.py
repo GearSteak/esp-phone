@@ -543,10 +543,10 @@ def _e164(number: str) -> str:
 
 
 def _dial_targets(number: str) -> List[str]:
-    """Candidate URIs/numbers to try (Zadarma needs sip:+E164@sip.zadarma.com).
+    """URIs for linphonecsh. Never pass a leading '+' as its own argv token.
 
-    Do not fall back to a 10-digit URI without country code — that can
-    'connect' in Linphone while the cell never rings.
+    Windows Linphone worked after adding country code 1 (11 digits), not '+'.
+    linphonecsh treats a leading '+' like flags, so the call does nothing.
     """
     raw = (number or "").strip()
     if not raw:
@@ -558,14 +558,16 @@ def _dial_targets(number: str) -> List[str]:
     e164 = _e164(raw)
     if "*" in e164 or "#" in e164:
         return [e164]
+    cc_num = e164[1:] if e164.startswith("+") else e164
+    if not cc_num:
+        return []
     out: List[str] = []
-    if server and e164.startswith("+"):
-        out.append(f"sip:{e164}@{server}")
-        out.append(e164)
-    elif server:
-        out.append(f"sip:{e164}@{server}")
-    if e164 and e164 not in out:
-        out.append(e164)
+    if server:
+        # Same form that worked on Windows: 1 + 10 digits, no plus
+        out.append(f"sip:{cc_num}@{server}")
+        # RFC 3966 plus (encoded so CLI cannot eat it)
+        out.append(f"sip:%2B{cc_num}@{server}")
+        out.append(f"sip:+{cc_num}@{server}")
     seen = set()
     uniq: List[str] = []
     for t in out:
@@ -631,6 +633,7 @@ def dial_ex(number: str) -> Tuple[bool, str]:
         for args in (
             [exe, "dial", target],
             [exe, "generic", f"call {target}"],
+            [exe, "generic", f'call "{target}"'],
         ):
             out = _run(args, timeout=8.0)
             last_out = out or last_out
