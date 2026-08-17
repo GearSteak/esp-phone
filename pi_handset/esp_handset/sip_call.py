@@ -462,9 +462,9 @@ def _ensure_unlocked() -> str:
             _log(f"register out: {out[:180]!r}")
             if re.search(r"(?i)unknown option|invalid option|usage:", out):
                 continue
-            # Digest auth needs time — always wait after a plausible register
-            for i in range(12):
-                time.sleep(0.5)
+            # Digest auth needs time — keep this short so Digivice isn't stuck
+            for i in range(6):
+                time.sleep(0.4)
                 st = _status_register(exe)
                 if _register_ok(st, user, server):
                     _log(f"registered OK after {i+1} polls: {st[:120]!r}")
@@ -641,7 +641,7 @@ def dial_ex(number: str) -> Tuple[bool, str]:
             if re.search(r"(?i)unknown|invalid|usage", out):
                 continue
             fired_ok = True
-            for _ in range(12):
+            for _ in range(16):
                 time.sleep(0.25)
                 info = poll()
                 if info.phase in ("dialing", "ringing", "early", "active"):
@@ -652,11 +652,11 @@ def dial_ex(number: str) -> Tuple[bool, str]:
                     _log(f"call error: {info.raw[:120]!r}")
                     fired_ok = False
                     break
+            # Do NOT claim success without a visible call — that left Digivice
+            # stuck on "Ringing" with nothing on the wire.
             if fired_ok:
-                # Command accepted; UI will track. Zadarma/poll often lag.
-                _log(f"dial fired OK (no poll yet) → {target}")
-                _set_error("")
-                return True, ""
+                _log(f"dial cmd ok but no call state yet → try next ({target})")
+                continue
 
     _log(f"dial failed; last={last_out[:180]!r}")
     raw = (_last_register_raw or last_out or "")[:48]
@@ -751,11 +751,10 @@ def poll() -> CallInfo:
             raw = raw2
 
     info = CallInfo(raw=raw or "")
-    if not raw or "No active call" in raw or "no call" in raw.lower():
-        if not raw or len(raw) < 3:
-            return info
-        if re.search(r"(?i)no\s+(active\s+)?call", raw):
-            return info
+    if not raw or len(raw) < 3:
+        return info
+    if re.search(r"(?i)no\s+(active\s+)?call|No active call", raw):
+        return info
 
     phase = "idle"
     state = ""
@@ -766,21 +765,20 @@ def poll() -> CallInfo:
             if mapped == "active":
                 break
 
-    # linphonec / linphone-cli wording variants
+    # Only trust explicit call-state wording (avoid matching random '@' / help text)
     if phase == "idle":
-        if re.search(r"(?i)outgoing|progress|dialing|calling", raw):
-            phase = "dialing"
-            state = state or "Outgoing"
-        elif re.search(r"(?i)ringing", raw):
-            phase = "ringing"
-            state = state or "Ringing"
-        elif re.search(r"(?i)streams?\s*running|connected|active call", raw):
-            phase = "active"
-            state = state or "Connected"
-
-    if phase == "idle" and ("sip:" in raw.lower() or "@" in raw):
-        phase = "active"
-        state = "status_call"
+        if re.search(
+            r"(?i)Outgoing(Init|Progress|Ringing|Early)|CallState|StreamsRunning",
+            raw,
+        ):
+            if re.search(r"(?i)OutgoingRinging", raw):
+                phase, state = "ringing", "OutgoingRinging"
+            elif re.search(r"(?i)OutgoingEarly|EarlyMedia", raw):
+                phase, state = "early", "Early"
+            elif re.search(r"(?i)StreamsRunning|Connected", raw):
+                phase, state = "active", "Connected"
+            else:
+                phase, state = "dialing", "Outgoing"
 
     m = re.search(r"(?m)^\s*(\d+)\s+", raw)
     if m:

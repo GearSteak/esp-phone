@@ -137,13 +137,16 @@ def _write_sip(server: str, user: str, password: str, display: str) -> str:
 
 
 def make_sip_account_page(on_back: Callable[[], None]) -> QWidget:
+    from PyQt5.QtCore import QObject, QTimer, pyqtSignal
+    import threading
+
     body = QWidget()
     body.setStyleSheet(f"background:{_BG}; color:{_TEXT};")
     lay = QVBoxLayout(body)
     lay.setContentsMargins(6, 4, 6, 6)
     lay.setSpacing(6)
     lay.addWidget(
-        _header("SIP / VoIP", "Confirm on a field to type · Back leaves the field")
+        _header("SIP / VoIP", "Confirm on Test SIP · wait for result")
     )
     vals = _read_sip()
     server = _field("sip.example.com")
@@ -163,7 +166,8 @@ def make_sip_account_page(on_back: Callable[[], None]) -> QWidget:
         lay.addWidget(_label(lab))
         lay.addWidget(w)
     status = _status()
-    status.setMinimumHeight(90)
+    status.setMinimumHeight(110)
+    status.setWordWrap(True)
     save = _btn("Save SIP", primary=True)
     test = _btn("Test SIP")
     lay.addWidget(save)
@@ -171,45 +175,57 @@ def make_sip_account_page(on_back: Callable[[], None]) -> QWidget:
     lay.addWidget(status)
     lay.addStretch(1)
 
+    class _Bridge(QObject):
+        done = pyqtSignal(str)
+
+    bridge = _Bridge(body)
+    testing = {"on": False}
+
+    def _on_report(text: str) -> None:
+        testing["on"] = False
+        test.setEnabled(True)
+        status.setText(text)
+        status.setWordWrap(True)
+
+    bridge.done.connect(_on_report)
+
     def do_save() -> None:
         where = _write_sip(
             server.text(), user.text(), password.text(), display.text()
         )
-        status.setText(f"Saved · {where}")
+        status.setText(f"Saved · {where}\nRegistering…")
         store.push_notif("SIP", "Account saved", "settings")
-        try:
-            from esp_handset import sip_call
 
-            hint = sip_call.ensure()
-            if hint:
-                status.setText(f"Saved · {hint}")
-            else:
-                status.setText(f"Saved · registered · {where}")
-        except Exception as e:
-            status.setText(f"Saved · register later ({e})")
+        def work() -> None:
+            try:
+                from esp_handset import sip_call
+
+                hint = sip_call.ensure()
+                msg = f"Saved · {hint}" if hint else f"Saved · registered · {where}"
+            except Exception as e:
+                msg = f"Saved · register later ({e})"
+            bridge.done.emit(msg)
+
+        threading.Thread(target=work, name="sip-save", daemon=True).start()
 
     def do_test() -> None:
-        status.setText("Testing SIP…\n(wait up to ~30s)")
-        try:
-            from esp_handset import sip_call
-            import threading
-            from PyQt5.QtCore import QTimer
+        if testing["on"]:
+            status.setText("Test already running…")
+            return
+        testing["on"] = True
+        status.setText("Testing SIP…\n(wait — this can take ~20s)")
+        test.setEnabled(False)
 
-            def work() -> None:
-                try:
-                    report = sip_call.doctor()
-                except Exception as e:
-                    report = f"Test failed: {e}"
+        def work() -> None:
+            try:
+                from esp_handset import sip_call
 
-                def show() -> None:
-                    status.setText(report)
-                    status.setWordWrap(True)
+                report = sip_call.doctor()
+            except Exception as e:
+                report = f"Test failed: {e}"
+            bridge.done.emit(report)
 
-                QTimer.singleShot(0, show)
-
-            threading.Thread(target=work, name="sip-doctor", daemon=True).start()
-        except Exception as e:
-            status.setText(f"Test failed: {e}")
+        threading.Thread(target=work, name="sip-doctor", daemon=True).start()
 
     save.clicked.connect(do_save)
     test.clicked.connect(do_test)

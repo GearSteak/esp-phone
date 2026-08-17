@@ -325,7 +325,12 @@ class CallOverlay(QWidget):
         if self._mode != "ringing":
             return
         self._pulse_n = (self._pulse_n + 1) % 3
-        self.timer_lab.setText("Ringing" + "." * (self._pulse_n + 1))
+        # Keep "Connecting…" while SIP register/dial is still running
+        cur = (self.timer_lab.text() or "")
+        if cur.startswith("Connecting"):
+            self.timer_lab.setText("Connecting" + "." * (self._pulse_n + 1))
+        else:
+            self.timer_lab.setText("Ringing" + "." * (self._pulse_n + 1))
 
     def keyPressEvent(self, event) -> None:  # noqa: N802
         key = event.key()
@@ -580,8 +585,14 @@ class CallController(QObject):
         self.state_changed.emit("idle")
 
     def _tick(self) -> None:
-        # Don't touch linphonecsh pipe while dial/register worker owns it
+        # Connecting (register/dial still running): fail if it hangs too long
         if self._awaiting_dial:
+            if self._phase in ("dialing", "ringing"):
+                if time.time() - self._ring_started > 35.0:
+                    self._awaiting_dial = False
+                    self._dial_gen += 1
+                    sip_call.hangup()
+                    self._finish("failed")
             return
         try:
             info = sip_call.poll()
@@ -626,22 +637,18 @@ class CallController(QObject):
                 self._awaiting_dial = False
                 self._finish("busy" if "busy" in raw else "failed")
                 return
-            # Still running linphone dial/register in background — keep overlay
-            if self._awaiting_dial:
-                return
-            # Idle too soon usually means dial never started — not "no answer"
             if info.phase in ("ending", "idle"):
                 if self._user_hangup:
                     return
-                if not self._saw_progress and elapsed > 6.0:
+                # No real outbound call after dial claimed success
+                if not self._saw_progress and elapsed > 8.0:
                     self._finish("failed")
                     return
-                if self._saw_progress and elapsed > 4.0:
-                    # Call existed then dropped before answer
+                if self._saw_progress and elapsed > 5.0:
                     self._finish("no_answer")
                     return
-                # Still establishing — keep "calling…" overlay
                 return
+            # Still dialing/ringing according to linphone
             if elapsed >= self._ring_timeout_s:
                 sip_call.hangup()
                 self._finish("no_answer")
