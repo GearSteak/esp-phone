@@ -181,6 +181,7 @@ install_tree() {
       "digivice-stop-gb.sh:digivice-stop-gb" \
       "ensure-gb-wrappers.sh:digivice-ensure-gb" \
       "ensure-gb-roms.sh:digivice-gb-roms-dir" \
+      "ensure-linphone.sh:digivice-ensure-linphone" \
       "digivice-cm108-wake.sh:digivice-cm108-wake" \
       "digivice-start.sh:digivice-start"
     do
@@ -209,6 +210,7 @@ install_tree() {
       "update-handset.sh:digivice-update" \
       "ensure-buttons.sh:digivice-ensure-buttons" \
       "ensure-cardkb.sh:digivice-ensure-cardkb" \
+      "ensure-linphone.sh:digivice-ensure-linphone" \
       "fix-cursor.sh:digivice-fix-cursor" \
       "restore-desktop-displays.sh:digivice-restore-desktop" \
       "hdmi-hotplug.sh:digivice-hdmi-hotplug" \
@@ -304,6 +306,7 @@ $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-power
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-set-rotation
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-ensure-buttons
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-ensure-cardkb
+$USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-ensure-linphone
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-ensure-gb
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-stop-gb
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-modem-uart
@@ -319,6 +322,7 @@ $USER_NAME ALL=(root) NOPASSWD: $PREFIX/session/apply-update.sh
 $USER_NAME ALL=(root) NOPASSWD: $PREFIX/session/power.sh
 $USER_NAME ALL=(root) NOPASSWD: $PREFIX/session/ensure-buttons.sh
 $USER_NAME ALL=(root) NOPASSWD: $PREFIX/session/ensure-cardkb.sh
+$USER_NAME ALL=(root) NOPASSWD: $PREFIX/session/ensure-linphone.sh
 EOF
     chmod 440 /etc/sudoers.d/esp-handset-update
   fi

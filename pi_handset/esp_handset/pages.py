@@ -2556,9 +2556,9 @@ def make_update_page(on_back: Callable[[], None]) -> QWidget:
     body = QWidget()
     lay = QVBoxLayout(body)
     tip = QLabel(
-        "Pull → stage (live Digivice untouched)\n"
-        "→ quit → swap → relaunch.\n"
-        "Stay on Wi‑Fi; can take 1–3 min."
+        "Pull → stage → quit → swap → relaunch.\n"
+        "Installs Linphone for calls if missing.\n"
+        "Stay on Wi‑Fi · can take several minutes."
     )
     tip.setWordWrap(True)
     tip.setStyleSheet("color:#9ab;font-size:10px;")

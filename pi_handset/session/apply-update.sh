@@ -111,6 +111,7 @@ install_live_from_repo() {
     "desktop-spi-mirror.sh:digivice-desktop-mirror" \
     "ensure-buttons.sh:digivice-ensure-buttons" \
     "ensure-cardkb.sh:digivice-ensure-cardkb" \
+    "ensure-linphone.sh:digivice-ensure-linphone" \
     "digivice-audio-doctor.sh:digivice-audio-doctor" \
     "digivice-audio-usb.sh:digivice-audio-usb" \
     "digivice-audio-fix.sh:digivice-audio-fix" \
@@ -184,6 +185,7 @@ if [[ -d "$STAGE" && -f "$STAGE/.ready" ]]; then
     digivice-gb.sh:digivice-gb \
     digivice-stop-gb.sh:digivice-stop-gb \
     ensure-gb-wrappers.sh:digivice-ensure-gb \
+    ensure-linphone.sh:digivice-ensure-linphone \
     full-update.sh:digivice-full-update \
     digivice-audio-doctor.sh:digivice-audio-doctor \
     digivice-audio-usb.sh:digivice-audio-usb \
@@ -290,6 +292,7 @@ $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-power
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-set-rotation
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-ensure-buttons
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-ensure-cardkb
+$USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-ensure-linphone
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-ensure-gb
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-stop-gb
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-modem-uart
@@ -305,9 +308,24 @@ $USER_NAME ALL=(root) NOPASSWD: $PREFIX/session/apply-update.sh
 $USER_NAME ALL=(root) NOPASSWD: $PREFIX/session/power.sh
 $USER_NAME ALL=(root) NOPASSWD: $PREFIX/session/ensure-buttons.sh
 $USER_NAME ALL=(root) NOPASSWD: $PREFIX/session/ensure-cardkb.sh
+$USER_NAME ALL=(root) NOPASSWD: $PREFIX/session/ensure-linphone.sh
 EOF
   chmod 440 /etc/sudoers.d/esp-handset-update
-  log "sudoers restored (incl. digivice-audio-fix + cm108-wake)"
+  log "sudoers restored (incl. digivice-ensure-linphone)"
+fi
+
+# VoIP: Digivice Settings→Update never ran apt — install linphone here
+export DEBIAN_FRONTEND=noninteractive
+if [[ -f "$PREFIX/session/ensure-linphone.sh" ]]; then
+  install -m 755 "$PREFIX/session/ensure-linphone.sh" /usr/local/bin/digivice-ensure-linphone
+  log "Ensuring linphone-cli (VoIP)…"
+  SUDO_USER="$USER_NAME" bash /usr/local/bin/digivice-ensure-linphone >>"$LOG" 2>&1 \
+    || log "WARN: digivice-ensure-linphone failed — check $LOG"
+elif ! command -v linphonecsh >/dev/null 2>&1 && [[ ! -x /usr/bin/linphonecsh ]]; then
+  log "Installing linphone-cli (no ensure script yet)…"
+  apt-get update -qq >>"$LOG" 2>&1 || true
+  apt-get install -y linphone-cli >>"$LOG" 2>&1 \
+    || log "WARN: apt install linphone-cli failed"
 fi
 
 # Sealed-case CM108: keep wake helper + boot unit after GUI apply
