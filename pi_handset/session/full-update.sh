@@ -281,11 +281,14 @@ install -m 755 "$ROOT/session/ensure-cardkb.sh" /usr/local/bin/digivice-ensure-c
 if [[ -f "$ROOT/session/ensure-linphone.sh" ]]; then
   install -m 755 "$ROOT/session/ensure-linphone.sh" "$PREFIX/session/ensure-linphone.sh"
   install -m 755 "$ROOT/session/ensure-linphone.sh" /usr/local/bin/digivice-ensure-linphone
+  if [[ -f "$ROOT/session/digivice-linphonecsh.sh" ]]; then
+    install -m 755 "$ROOT/session/digivice-linphonecsh.sh" "$PREFIX/session/digivice-linphonecsh.sh"
+    install -m 755 "$ROOT/session/digivice-linphonecsh.sh" /usr/local/bin/digivice-linphonecsh
+  fi
   log "Ensuring Linphone (VoIP)…"
   if ! env SUDO_USER="$USER_NAME" DIGIVICE_USER="$USER_NAME" \
       bash /usr/local/bin/digivice-ensure-linphone 2>&1 | tee -a "$LOG"; then
     log "ERROR: digivice-ensure-linphone FAILED — calls will not work"
-    log "  Run: sudo digivice-ensure-linphone --doctor"
   fi
 fi
 if command -v linphonecsh >/dev/null 2>&1 || [[ -x /usr/bin/linphonecsh ]]; then
