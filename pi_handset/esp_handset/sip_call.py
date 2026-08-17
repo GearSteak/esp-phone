@@ -1,15 +1,31 @@
 """Linphone helpers for Digivice voice calls (via linphonecsh)."""
 from __future__ import annotations
 
+import os
 import re
 import shutil
 import subprocess
 from dataclasses import dataclass
-from typing import List, Optional
+from pathlib import Path
+from typing import Dict, List, Optional
+
+
+def _bin() -> Optional[str]:
+    found = shutil.which("linphonecsh")
+    if found:
+        return found
+    for p in ("/usr/bin/linphonecsh", "/usr/local/bin/linphonecsh"):
+        if os.path.isfile(p) and os.access(p, os.X_OK):
+            return p
+    return None
 
 
 def available() -> bool:
-    return shutil.which("linphonecsh") is not None
+    return _bin() is not None
+
+
+def missing_hint() -> str:
+    return "Linphone missing — run: sudo digivice-full-update"
 
 
 def _run(args: List[str], timeout: float = 3.0) -> str:
@@ -26,30 +42,106 @@ def _run(args: List[str], timeout: float = 3.0) -> str:
         return f"ERR {e}"
 
 
+def _sip_env() -> Dict[str, str]:
+    vals: Dict[str, str] = {}
+    candidates = [
+        Path.home() / ".esp-handset" / "sip.env",
+        Path("/etc/esp-handset/sip.env"),
+    ]
+    try:
+        from esp_handset import store
+
+        candidates.insert(0, store.DATA / "sip.env")
+    except Exception:
+        pass
+    for path in candidates:
+        try:
+            if not path.is_file() or not os.access(path, os.R_OK):
+                continue
+            for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+                if "=" in line and not line.strip().startswith("#"):
+                    k, v = line.split("=", 1)
+                    vals[k.strip()] = v.strip()
+            if vals.get("SIP_USER") and vals.get("SIP_SERVER"):
+                break
+        except OSError:
+            continue
+    return vals
+
+
+def ensure() -> str:
+    """Start linphonec daemon + register SIP. '' if OK, else short UI hint."""
+    exe = _bin()
+    if not exe:
+        return missing_hint()
+    # Alive?
+    st = _run([exe, "status", "register"], timeout=4.0)
+    dead = (
+        not st
+        or st.startswith("ERR")
+        or re.search(r"(?i)no running|not running|could not|unable|failed to connect", st)
+    )
+    if dead:
+        _run([exe, "init"], timeout=6.0)
+        st = _run([exe, "status", "register"], timeout=4.0)
+        if st.startswith("ERR") and "No running" in st:
+            return "Linphone daemon failed to start"
+    env = _sip_env()
+    user = (env.get("SIP_USER") or "").strip()
+    server = (env.get("SIP_SERVER") or "").strip()
+    password = (env.get("SIP_PASS") or "").strip()
+    if user and server and password:
+        # Skip re-register if already registered to this identity
+        if f"{user}@{server}" not in st and "registered" not in st.lower():
+            _run(
+                [exe, "register", f"sip:{user}@{server}", server, password],
+                timeout=10.0,
+            )
+    elif not user or not password:
+        return "Set SIP in Settings → Accounts"
+    return ""
+
+
 def dial(number: str) -> bool:
     num = (number or "").strip()
     if not num:
         return False
+    hint = ensure()
+    if hint and not available():
+        return False
+    exe = _bin()
+    if not exe:
+        return False
     # Prefer sip: URI if it already looks like one
     target = num if num.lower().startswith("sip:") else num
-    out = _run(["linphonecsh", "dial", target])
+    out = _run([exe, "dial", target], timeout=5.0)
+    if re.search(r"(?i)err|fail|not found|no running", out) and "dial" not in out.lower():
+        # One retry after fresh init
+        ensure()
+        out = _run([exe, "dial", target], timeout=5.0)
     if "ERR" in out and "not found" in out.lower():
         return False
     return True
 
 
 def hangup() -> None:
+    exe = _bin()
+    if not exe:
+        return
     # Newer / older CLI names
-    _run(["linphonecsh", "generic", "terminate"])
-    _run(["linphonecsh", "hangup"])
+    _run([exe, "generic", "terminate"])
+    _run([exe, "hangup"])
 
 
 def answer() -> None:
-    _run(["linphonecsh", "generic", "answer"])
+    exe = _bin()
+    if not exe:
+        return
+    _run([exe, "generic", "answer"])
     # Fallback: answer first incoming call id if listed
     info = poll()
     if info.call_id is not None and info.phase == "incoming":
-        _run(["linphonecsh", "generic", f"answer {info.call_id}"])
+        _run([exe, "generic", f"answer {info.call_id}"])
 
 
 @dataclass
@@ -84,9 +176,12 @@ _STATE_MAP = (
 
 def poll() -> CallInfo:
     """Parse `linphonecsh generic calls` (and status call as fallback)."""
-    raw = _run(["linphonecsh", "generic", "calls"])
+    exe = _bin()
+    if not exe:
+        return CallInfo()
+    raw = _run([exe, "generic", "calls"])
     if not raw or raw.startswith("ERR"):
-        raw2 = _run(["linphonecsh", "status", "call"])
+        raw2 = _run([exe, "status", "call"])
         if raw2 and not raw2.startswith("ERR"):
             raw = raw2
 

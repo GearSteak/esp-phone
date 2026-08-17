@@ -96,7 +96,14 @@ apt-get install -y \
   i2c-tools xdotool xbitmaps x11-xserver-utils \
   wmctrl fonts-dejavu-core \
   alsa-utils \
+  linphone-cli \
   2>&1 | tee -a "$LOG" | tail -n 20
+
+if command -v linphonecsh >/dev/null 2>&1; then
+  log "linphone-cli: $(command -v linphonecsh)"
+else
+  log "WARN: linphonecsh missing after apt — VoIP calls will fail until: apt install linphone-cli"
+fi
 
 # Game Boy / GBC — in-UI PyBoy (Digivice keeps SPI; RetroArch handoff stays disabled)
 log "pip: PyBoy (in-UI Game Boy)…"
@@ -209,11 +216,15 @@ if command -v linphonecsh >/dev/null 2>&1; then
   # shellcheck source=/dev/null
   . /etc/esp-handset/sip.env
   set +a
-  linphonecsh init >/dev/null 2>&1 || true
+  # Daemon pipe is per-user — never init as root (Digivice can't talk to it)
+  sudo -u "$USER_NAME" env HOME="$USER_HOME" linphonecsh init >/dev/null 2>&1 || true
   if [[ -n "${SIP_USER:-}" && -n "${SIP_SERVER:-}" && -n "${SIP_PASS:-}" ]]; then
-    linphonecsh register "sip:${SIP_USER}@${SIP_SERVER}" "$SIP_SERVER" "$SIP_PASS" \
-      >/dev/null 2>&1 || log "WARN: linphonecsh register failed (ok if linphone not running yet)"
+    sudo -u "$USER_NAME" env HOME="$USER_HOME" \
+      linphonecsh register "sip:${SIP_USER}@${SIP_SERVER}" "$SIP_SERVER" "$SIP_PASS" \
+      >/dev/null 2>&1 || log "WARN: linphonecsh register failed (Digivice will retry on call)"
   fi
+else
+  log "WARN: skip SIP register — install linphone-cli"
 fi
 
 # --- install tree (same core as install-handset, no mystery bits) ---

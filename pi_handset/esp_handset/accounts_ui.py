@@ -174,6 +174,16 @@ def make_sip_account_page(on_back: Callable[[], None]) -> QWidget:
         )
         status.setText(f"Saved · {where}")
         store.push_notif("SIP", "Account saved", "settings")
+        try:
+            from esp_handset import sip_call
+
+            hint = sip_call.ensure()
+            if hint:
+                status.setText(f"Saved · {hint}")
+            else:
+                status.setText(f"Saved · registered · {where}")
+        except Exception as e:
+            status.setText(f"Saved · register later ({e})")
 
     save.clicked.connect(do_save)
     return page_chrome("SIP", body, on_back, scroll=True)
