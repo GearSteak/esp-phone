@@ -340,6 +340,7 @@ class CallController(QObject):
         self._talk_started = 0.0
         self._ring_started = 0.0
         self._ring_timeout_s = 45.0
+        self._saw_progress = False  # True once linphone reports dialing/ringing
         self._poll = QTimer(self)
         self._poll.timeout.connect(self._tick)
         self._poll.start(500)
@@ -394,6 +395,7 @@ class CallController(QObject):
         self._user_hangup = False
         self._talk_started = 0.0
         self._ring_started = time.time()
+        self._saw_progress = False
         self._phase = "dialing"
 
         entry = clog.start(
@@ -485,7 +487,7 @@ class CallController(QObject):
             "no_answer": ("No answer", "They didn’t pick up"),
             "canceled": ("Canceled", "You hung up"),
             "busy": ("Busy", "Line was busy"),
-            "failed": ("Call failed", "Check SIP / network"),
+            "failed": ("Call failed", "Check SIP / number / Wi‑Fi"),
             "declined": ("Declined", ""),
             "missed": ("Missed call", ""),
             "ended": ("Call ended", self._fmt_dur(dur) if dur else ""),
@@ -510,6 +512,7 @@ class CallController(QObject):
         self._user_hangup = False
         self._incoming_prompted = False
         self._inbound_entry_id = ""
+        self._saw_progress = False
         self.state_changed.emit("idle")
 
     def _tick(self) -> None:
@@ -538,6 +541,9 @@ class CallController(QObject):
             return
 
         if self._phase in ("dialing", "ringing"):
+            elapsed = time.time() - self._ring_started
+            if info.phase in ("dialing", "ringing", "early", "active"):
+                self._saw_progress = True
             if info.phase in ("active", "early"):
                 self._answered = True
                 self._talk_started = time.time()
@@ -551,16 +557,23 @@ class CallController(QObject):
                 raw = (info.raw or "").lower()
                 self._finish("busy" if "busy" in raw else "failed")
                 return
-            if info.phase in ("ending", "idle") and (time.time() - self._ring_started) > 1.5:
+            # Idle too soon usually means dial never started — not "no answer"
+            if info.phase in ("ending", "idle"):
                 if self._user_hangup:
                     return
-                self._finish("no_answer")
+                if not self._saw_progress and elapsed > 6.0:
+                    self._finish("failed")
+                    return
+                if self._saw_progress and elapsed > 4.0:
+                    # Call existed then dropped before answer
+                    self._finish("no_answer")
+                    return
+                # Still establishing — keep "calling…" overlay
                 return
-            if (time.time() - self._ring_started) >= self._ring_timeout_s:
+            if elapsed >= self._ring_timeout_s:
                 sip_call.hangup()
                 self._finish("no_answer")
                 return
-            # still ringing
             if info.phase == "ringing":
                 clog.update(self._entry_id, status="ringing")
             return

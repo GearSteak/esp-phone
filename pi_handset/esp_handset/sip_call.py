@@ -6,6 +6,7 @@ import re
 import shutil
 import subprocess
 import threading
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -241,11 +242,34 @@ def ensure() -> str:
         server = (env.get("SIP_SERVER") or "").strip()
         password = (env.get("SIP_PASS") or "").strip()
         if user and server and password:
-            if f"{user}@{server}" not in st and "registered" not in st.lower():
-                _run(
-                    [exe, "register", f"sip:{user}@{server}", server, password],
-                    timeout=8.0,
+            registered = bool(
+                re.search(r"(?i)registered|Ok|successful", st or "")
+            ) and (user in (st or "") or server in (st or ""))
+            if not registered:
+                # Prefer modern flag form, then legacy positional
+                out = _run(
+                    [
+                        exe,
+                        "register",
+                        "--username",
+                        user,
+                        "--host",
+                        server,
+                        "--password",
+                        password,
+                    ],
+                    timeout=10.0,
                 )
+                if re.search(r"(?i)fail|error|invalid|denied", out):
+                    out = _run(
+                        [exe, "register", f"sip:{user}@{server}", server, password],
+                        timeout=10.0,
+                    )
+                # Give registrar a moment
+                time.sleep(0.6)
+                st = _run([exe, "status", "register"], timeout=2.5)
+                if re.search(r"(?i)fail|error|denied|forbidden|unauthorized", st):
+                    return "SIP register failed — check Accounts"
         elif not user or not password:
             return "Set SIP in Settings → Accounts"
         return ""
@@ -261,7 +285,6 @@ def ensure_async() -> None:
         global _ensured_once
         with _ensure_lock:
             if _ensured_once and available():
-                # Still poke register lightly
                 try:
                     ensure()
                 except Exception:
@@ -280,6 +303,24 @@ def ensure_async() -> None:
     threading.Thread(target=work, name="sip-ensure", daemon=True).start()
 
 
+def _dial_target(number: str) -> str:
+    """Build a SIP URI linphonecsh can dial through the configured proxy."""
+    raw = (number or "").strip()
+    if not raw:
+        return ""
+    if raw.lower().startswith("sip:"):
+        return raw
+    # Keep leading + and digits
+    num = re.sub(r"[^\d+*#]", "", raw)
+    if not num:
+        return raw
+    env = _sip_env()
+    server = (env.get("SIP_SERVER") or "").strip()
+    if server:
+        return f"sip:{num}@{server}"
+    return num
+
+
 def dial(number: str) -> bool:
     num = (number or "").strip()
     if not num:
@@ -287,16 +328,36 @@ def dial(number: str) -> bool:
     exe = _bin()
     if not exe:
         return False
-    # Quick daemon wake (no apt)
-    ensure()
-    target = num if num.lower().startswith("sip:") else num
-    out = _run([exe, "dial", target], timeout=5.0)
+    hint = ensure()
+    if hint and ("fail" in hint.lower() or "missing" in hint.lower() or "daemon" in hint.lower()):
+        print(f"[sip_call] dial blocked: {hint}", flush=True)
+        return False
+    target = _dial_target(num)
+    print(f"[sip_call] dial → {target}", flush=True)
+    out = _run([exe, "dial", target], timeout=6.0)
     if re.search(r"(?i)no running|failed to connect", out):
         _run([exe, "init"], timeout=4.0)
-        out = _run([exe, "dial", target], timeout=5.0)
-    if "ERR" in out and "not found" in out.lower():
+        ensure()
+        out = _run([exe, "dial", target], timeout=6.0)
+    # Alternate command some builds prefer
+    if re.search(r"(?i)unknown|invalid|usage|fail|error|cannot|denied", out):
+        out2 = _run([exe, "generic", f"call {target}"], timeout=6.0)
+        if out2:
+            out = out2
+    if re.search(r"(?i)fail|error|denied|forbidden|not registered|cannot", out):
+        print(f"[sip_call] dial reject: {out[:200]}", flush=True)
         return False
-    return True
+    # Confirm an outbound call actually appeared (don't lie to the UI)
+    for _ in range(8):
+        time.sleep(0.25)
+        info = poll()
+        if info.phase in ("dialing", "ringing", "early", "active"):
+            return True
+        if info.phase == "error":
+            return False
+    # Still no visible call — treat as failed so UI doesn't say "no answer"
+    print(f"[sip_call] dial produced no call state; last={out[:160]!r}", flush=True)
+    return False
 
 
 def hangup() -> None:
@@ -335,6 +396,7 @@ _STATE_MAP = (
     ("OutgoingProgress", "dialing"),
     ("OutgoingRinging", "ringing"),
     ("OutgoingEarlyMedia", "early"),
+    ("Early", "early"),
     ("Connected", "active"),
     ("StreamsRunning", "active"),
     ("Paused", "active"),
