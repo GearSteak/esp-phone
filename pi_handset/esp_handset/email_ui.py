@@ -318,19 +318,25 @@ def _uid_str(uid) -> str:
     return str(uid)
 
 
+_PLACEHOLDER_SNIPS = frozenset({"", "tap to open", "loading…", "loading..."})
+
+
 def _bytes_to_snippet(raw: bytes, limit: int = 90) -> str:
     if not raw:
         return ""
-    text = _decode_part_bytes(raw, "utf-8")
-    # Quoted-printable leftovers / MIME noise — keep readable preview
-    if re.search(r"(?i)<html|</p>|<br\s*/?>", text[:800]):
-        text = _strip_html_preview(text)
-    # If we got a MIME multipart blob, strip boundary lines
-    if text.lstrip().startswith("--") or "Content-Type:" in text[:120]:
-        text = re.sub(r"(?im)^--.*$", " ", text)
-        text = re.sub(r"(?im)^Content-.*$", " ", text)
-        text = _strip_html_preview(text)
-    return _snippet_text(text, limit=limit)
+    try:
+        text = _decode_part_bytes(raw, "utf-8")
+        # Quoted-printable leftovers / MIME noise — keep readable preview
+        if re.search(r"(?i)<html|</p>|<br\s*/?>", text[:800]):
+            text = _strip_html_preview(text)
+        # If we got a MIME multipart blob, strip boundary lines
+        if text.lstrip().startswith("--") or "Content-Type:" in text[:120]:
+            text = re.sub(r"(?im)^--.*$", " ", text)
+            text = re.sub(r"(?im)^Content-.*$", " ", text)
+            text = _strip_html_preview(text)
+        return _snippet_text(text, limit=limit)
+    except Exception:
+        return ""
 
 
 class Avatar(QWidget):
@@ -613,23 +619,30 @@ def make_email_page(on_back: Callable[[], None]) -> QWidget:
         return "Open Refresh to load body."
 
     def _open_reader(msg: dict) -> None:
-        name = msg.get("from_name") or "Unknown"
-        # rebuild avatar
-        while r_avatar_lay.count():
-            w = r_avatar_lay.takeAt(0).widget()
-            if w:
-                w.deleteLater()
-        r_avatar_lay.addWidget(Avatar(_initial(name), _avatar_color(name)))
-        r_subj.setText(str(msg.get("subject") or "(no subject)"))
-        addr = msg.get("from_email") or ""
-        r_from.setText(f"{name}\n{addr}" if addr else name)
-        r_when.setText(str(msg.get("when_full") or msg.get("when") or ""))
-        r_body.setText(_reader_preview(msg))
-        stack.setCurrentWidget(reader)
-        r_back.setFocus(Qt.OtherFocusReason)
-        # Lazy body fetch via stable IMAP UID
-        if not str(msg.get("body") or "").strip() and msg.get("uid"):
-            QTimer.singleShot(50, lambda m=msg: _fetch_body(m))
+        try:
+            name = msg.get("from_name") or "Unknown"
+            # rebuild avatar
+            while r_avatar_lay.count():
+                w = r_avatar_lay.takeAt(0).widget()
+                if w:
+                    w.deleteLater()
+            r_avatar_lay.addWidget(Avatar(_initial(name), _avatar_color(name)))
+            r_subj.setText(str(msg.get("subject") or "(no subject)"))
+            addr = msg.get("from_email") or ""
+            r_from.setText(f"{name}\n{addr}" if addr else name)
+            r_when.setText(str(msg.get("when_full") or msg.get("when") or ""))
+            r_body.setText(_reader_preview(msg))
+            stack.setCurrentWidget(reader)
+            r_back.setFocus(Qt.OtherFocusReason)
+            # Lazy body fetch via stable IMAP UID
+            if not str(msg.get("body") or "").strip() and msg.get("uid"):
+                QTimer.singleShot(50, lambda m=msg: _fetch_body(m))
+        except Exception as e:
+            try:
+                r_body.setText(f"(Could not open message)\n{e}")
+                stack.setCurrentWidget(reader)
+            except Exception:
+                pass
 
     def _fetch_body(msg: dict) -> None:
         em = _creds()
@@ -646,11 +659,38 @@ def make_email_page(on_back: Callable[[], None]) -> QWidget:
             M = imaplib.IMAP4_SSL(host, 993)
             M.login(user, password)
             M.select("INBOX")
-            # Must use UID FETCH — list sync stores UIDs, not sequence numbers
-            typ, data = M.uid("fetch", uid_b, "(RFC822)")
-            M.logout()
-            payloads = _fetch_payload_parts(data)
-            if typ != "OK" or not payloads:
+            text = ""
+            # Prefer part 1 (usually text/plain) — avoids downloading attachments.
+            for spec in ("(BODY.PEEK[1])", "(BODY.PEEK[TEXT])"):
+                typ, data = M.uid("fetch", uid_b, spec)
+                payloads = _fetch_payload_parts(data)
+                if typ != "OK" or not payloads:
+                    continue
+                blob = payloads[0][:12000]
+                if not blob or blob.strip().upper() == b"NIL":
+                    continue
+                decoded = _decode_part_bytes(blob, "utf-8").strip()
+                if not decoded:
+                    continue
+                if re.search(r"(?i)<html|</p>|<br\s*/?>", decoded[:600]):
+                    decoded = _strip_html_preview(decoded)
+                # Skip obvious MIME envelope noise
+                if decoded.lstrip().startswith("--") and "Content-Type:" in decoded[:200]:
+                    continue
+                text = decoded
+                if text:
+                    break
+            if not text:
+                typ, data = M.uid("fetch", uid_b, "(RFC822)")
+                payloads = _fetch_payload_parts(data)
+                if typ == "OK" and payloads:
+                    raw = payloads[0][:200_000]
+                    text = _extract_text(email_lib.message_from_bytes(raw))
+            try:
+                M.logout()
+            except Exception:
+                pass
+            if not text:
                 if stack.currentWidget() is reader:
                     r_body.setText(
                         "(Could not load body)\n"
@@ -659,14 +699,10 @@ def make_email_page(on_back: Callable[[], None]) -> QWidget:
                         f"{msg.get('snippet') or ''}"
                     )
                 return
-            raw = payloads[0]
-            parsed = email_lib.message_from_bytes(raw)
-            text = _extract_text(parsed)
             msg["body"] = text[:4000]
             snip = _snippet_text(text)
             if snip:
                 msg["snippet"] = snip
-            # update cache
             for m in state["messages"]:
                 if _uid_str(m.get("uid") or "") == uid:
                     m["body"] = msg["body"]
@@ -676,11 +712,6 @@ def make_email_page(on_back: Callable[[], None]) -> QWidget:
             _cache_set(state["messages"])
             if stack.currentWidget() is reader:
                 r_body.setText(msg["body"] or "(empty message)")
-            # Refresh list row snippets without yanking focus off reader chrome
-            cur = lst.currentRow()
-            _fill_list(state["messages"])
-            if 0 <= cur < lst.count():
-                lst.setCurrentRow(cur)
         except Exception as e:
             if stack.currentWidget() is reader:
                 snip = str(msg.get("snippet") or "")
@@ -733,57 +764,61 @@ def make_email_page(on_back: Callable[[], None]) -> QWidget:
                     raise RuntimeError("UID SEARCH failed")
                 ids = data[0].split()[-20:]
                 for num in reversed(ids):
-                    uid_s = _uid_str(num)
-                    # Header + first MIME part peek for list snippet (UID FETCH)
-                    typ, msg_data = M.uid(
-                        "fetch",
-                        num,
-                        "(FLAGS BODY.PEEK[HEADER.FIELDS (SUBJECT FROM DATE)]"
-                        " BODY.PEEK[1]<0.800>)",
-                    )
-                    if typ != "OK" or not msg_data:
+                    try:
+                        uid_s = _uid_str(num)
+                        # Header + first MIME part peek for list snippet (UID FETCH)
                         typ, msg_data = M.uid(
                             "fetch",
                             num,
-                            "(FLAGS BODY.PEEK[HEADER.FIELDS (SUBJECT FROM DATE)])",
+                            "(FLAGS BODY.PEEK[HEADER.FIELDS (SUBJECT FROM DATE)]"
+                            " BODY.PEEK[1]<0.800>)",
                         )
-                    flags = _flags_from_fetch(msg_data)
-                    payloads = _fetch_payload_parts(msg_data)
-                    hdr_raw = payloads[0] if payloads else b""
-                    peek_raw = payloads[1] if len(payloads) > 1 else b""
-                    hdr = (
-                        email_lib.message_from_bytes(hdr_raw) if hdr_raw else None
-                    )
-                    subj = _decode_hdr(hdr["Subject"]) if hdr else ""
-                    frm = _decode_hdr(hdr["From"]) if hdr else ""
-                    date_h = _decode_hdr(hdr["Date"]) if hdr else ""
-                    dt = _parse_date(date_h)
-                    unread = "\\Seen" not in flags
-                    snip = _bytes_to_snippet(peek_raw)
-                    if not snip:
-                        # TEXT section fallback (single-part / some servers)
-                        try:
-                            typ2, peek_data = M.uid(
-                                "fetch", num, "(BODY.PEEK[TEXT]<0.800>)"
+                        if typ != "OK" or not msg_data:
+                            typ, msg_data = M.uid(
+                                "fetch",
+                                num,
+                                "(FLAGS BODY.PEEK[HEADER.FIELDS (SUBJECT FROM DATE)])",
                             )
-                            peek2 = _fetch_payload_parts(peek_data)
-                            if typ2 == "OK" and peek2:
-                                snip = _bytes_to_snippet(peek2[0])
-                        except Exception:
-                            snip = ""
-                    messages.append(
-                        {
-                            "uid": uid_s,
-                            "subject": subj or "(no subject)",
-                            "from_name": _from_name(frm),
-                            "from_email": _from_email(frm),
-                            "when": _fmt_when(dt),
-                            "when_full": date_h,
-                            "snippet": snip,
-                            "unread": unread,
-                            "body": prev_body.get(uid_s, ""),
-                        }
-                    )
+                        flags = _flags_from_fetch(msg_data)
+                        payloads = _fetch_payload_parts(msg_data)
+                        hdr_raw = payloads[0] if payloads else b""
+                        peek_raw = payloads[1] if len(payloads) > 1 else b""
+                        hdr = (
+                            email_lib.message_from_bytes(hdr_raw)
+                            if hdr_raw
+                            else None
+                        )
+                        subj = _decode_hdr(hdr["Subject"]) if hdr else ""
+                        frm = _decode_hdr(hdr["From"]) if hdr else ""
+                        date_h = _decode_hdr(hdr["Date"]) if hdr else ""
+                        dt = _parse_date(date_h)
+                        unread = "\\Seen" not in flags
+                        snip = _bytes_to_snippet(peek_raw)
+                        if not snip:
+                            try:
+                                typ2, peek_data = M.uid(
+                                    "fetch", num, "(BODY.PEEK[TEXT]<0.800>)"
+                                )
+                                peek2 = _fetch_payload_parts(peek_data)
+                                if typ2 == "OK" and peek2:
+                                    snip = _bytes_to_snippet(peek2[0])
+                            except Exception:
+                                snip = ""
+                        messages.append(
+                            {
+                                "uid": uid_s,
+                                "subject": subj or "(no subject)",
+                                "from_name": _from_name(frm),
+                                "from_email": _from_email(frm),
+                                "when": _fmt_when(dt),
+                                "when_full": date_h,
+                                "snippet": snip,
+                                "unread": unread,
+                                "body": prev_body.get(uid_s, ""),
+                            }
+                        )
+                    except Exception:
+                        continue
                 M.logout()
             except Exception as e:
                 err = str(e)
