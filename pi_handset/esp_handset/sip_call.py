@@ -543,7 +543,11 @@ def _e164(number: str) -> str:
 
 
 def _dial_targets(number: str) -> List[str]:
-    """Candidate URIs/numbers to try (Zadarma prefers sip:+E164@sip.zadarma.com)."""
+    """Candidate URIs/numbers to try (Zadarma needs sip:+E164@sip.zadarma.com).
+
+    Do not fall back to a 10-digit URI without country code — that can
+    'connect' in Linphone while the cell never rings.
+    """
     raw = (number or "").strip()
     if not raw:
         return []
@@ -552,16 +556,16 @@ def _dial_targets(number: str) -> List[str]:
     env = _sip_env()
     server = (env.get("SIP_SERVER") or "").strip()
     e164 = _e164(raw)
-    digits = re.sub(r"[^\d+*#]", "", raw)
+    if "*" in e164 or "#" in e164:
+        return [e164]
     out: List[str] = []
     if server and e164.startswith("+"):
         out.append(f"sip:{e164}@{server}")
-    if server and digits:
-        out.append(f"sip:{digits}@{server}")
-    if e164.startswith("+"):
         out.append(e164)
-    if digits:
-        out.append(digits)
+    elif server:
+        out.append(f"sip:{e164}@{server}")
+    if e164 and e164 not in out:
+        out.append(e164)
     seen = set()
     uniq: List[str] = []
     for t in out:
