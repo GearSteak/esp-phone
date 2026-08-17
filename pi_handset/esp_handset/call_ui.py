@@ -1,0 +1,813 @@
+"""Active-call takeover UI + outbound call controller + call log page."""
+from __future__ import annotations
+
+import time
+from typing import Callable, Optional
+
+from PyQt5.QtCore import Qt, QTimer, pyqtSignal, QObject
+from PyQt5.QtGui import QColor, QFont, QPainter, QPen, QPixmap
+from PyQt5.QtWidgets import (
+    QHBoxLayout,
+    QLabel,
+    QListWidget,
+    QListWidgetItem,
+    QPushButton,
+    QVBoxLayout,
+    QWidget,
+)
+
+from esp_handset import call_log as clog
+from esp_handset import sip_call
+from esp_handset.incoming_call import _CircleAction
+from esp_handset.pages import page_chrome
+
+
+class CallOverlay(QWidget):
+    """Fullscreen call UI: ringing / in-call / ended (outbound + shared hangup)."""
+
+    def __init__(self, parent: QWidget):
+        super().__init__(parent)
+        self._on_hangup: Optional[Callable[[], None]] = None
+        self._on_dismiss: Optional[Callable[[], None]] = None
+        self._mode = "idle"  # ringing | active | ended
+        self.setObjectName("activeCall")
+        self.setStyleSheet(
+            """
+            #activeCall { background: #000000; }
+            QLabel { background: transparent; border: none; }
+            QLabel#acLabel { color: #aeaeb2; font-size: 10px; font-weight: 600; }
+            QLabel#acName { color: #ffffff; font-size: 18px; font-weight: 800; }
+            QLabel#acNumber { color: #d1d1d6; font-size: 12px; font-weight: 600; }
+            QLabel#acTimer { color: #34C759; font-size: 14px; font-weight: 700; }
+            """
+        )
+        self.hide()
+        self.setFocusPolicy(Qt.StrongFocus)
+        self.setAttribute(Qt.WA_StyledBackground, True)
+
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(16, 28, 16, 20)
+        lay.setSpacing(6)
+
+        self.label = QLabel("calling…")
+        self.label.setObjectName("acLabel")
+        self.label.setAlignment(Qt.AlignCenter)
+
+        self.avatar = QLabel()
+        self.avatar.setFixedSize(88, 88)
+        self.avatar.setAlignment(Qt.AlignCenter)
+
+        self.name_lab = QLabel("")
+        self.name_lab.setObjectName("acName")
+        self.name_lab.setAlignment(Qt.AlignCenter)
+        self.name_lab.setWordWrap(True)
+
+        self.number_lab = QLabel("")
+        self.number_lab.setObjectName("acNumber")
+        self.number_lab.setAlignment(Qt.AlignCenter)
+
+        self.timer_lab = QLabel("")
+        self.timer_lab.setObjectName("acTimer")
+        self.timer_lab.setAlignment(Qt.AlignCenter)
+
+        top = QVBoxLayout()
+        top.setSpacing(8)
+        top.setAlignment(Qt.AlignHCenter | Qt.AlignTop)
+        top.addWidget(self.label)
+        top.addSpacing(12)
+        av_row = QHBoxLayout()
+        av_row.addStretch(1)
+        av_row.addWidget(self.avatar)
+        av_row.addStretch(1)
+        top.addLayout(av_row)
+        top.addWidget(self.name_lab)
+        top.addWidget(self.number_lab)
+        top.addWidget(self.timer_lab)
+        lay.addLayout(top)
+        lay.addStretch(1)
+
+        self.hangup_btn = _CircleAction("decline", self)
+        self.ok_btn = QPushButton("OK")
+        self.ok_btn.setFixedHeight(36)
+        self.ok_btn.setFocusPolicy(Qt.StrongFocus)
+        self.ok_btn.setStyleSheet(
+            "QPushButton { font-size:13px; font-weight:800; color:#0a1218;"
+            " background:#5ec4a8; border:none; border-radius:12px; padding:6px 18px; }"
+            'QPushButton[digiFocus="1"] { border:2px solid #FFE600; }'
+        )
+        self.ok_btn.hide()
+
+        btn_row = QHBoxLayout()
+        btn_row.addStretch(1)
+        btn_row.addWidget(self.hangup_btn)
+        btn_row.addWidget(self.ok_btn)
+        btn_row.addStretch(1)
+        lay.addLayout(btn_row)
+
+        self.hint = QLabel("Confirm · Hang up")
+        self.hint.setAlignment(Qt.AlignCenter)
+        self.hint.setStyleSheet("color:#636366; font-size:8px;")
+        lay.addSpacing(8)
+        lay.addWidget(self.hint)
+
+        self.hangup_btn.clicked.connect(self._do_hangup)
+        self.ok_btn.clicked.connect(self._do_dismiss)
+
+        self._pulse = QTimer(self)
+        self._pulse.timeout.connect(self._tick_pulse)
+        self._pulse_n = 0
+
+    def _set_avatar(self, name: str, initial: str, photo: Optional[str]) -> None:
+        size = 88
+        if photo:
+            pix = QPixmap(photo)
+            if not pix.isNull():
+                scaled = pix.scaled(
+                    size, size, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation
+                )
+                x = max(0, (scaled.width() - size) // 2)
+                y = max(0, (scaled.height() - size) // 2)
+                cropped = scaled.copy(x, y, size, size)
+                out = QPixmap(size, size)
+                out.fill(Qt.transparent)
+                p = QPainter(out)
+                p.setRenderHint(QPainter.Antialiasing)
+                from PyQt5.QtGui import QPainterPath
+
+                path = QPainterPath()
+                path.addEllipse(0, 0, size, size)
+                p.setClipPath(path)
+                p.drawPixmap(0, 0, cropped)
+                p.end()
+                self.avatar.setPixmap(out)
+                self.avatar.setText("")
+                self.avatar.setStyleSheet("background: transparent; border: none;")
+                self.avatar.show()
+                return
+        from esp_handset.pages import _avatar_color
+
+        color = _avatar_color(name or initial or "?")
+        self.avatar.setPixmap(QPixmap())
+        self.avatar.setText((initial or "?")[:1].upper())
+        self.avatar.setStyleSheet(
+            f"background:{color}; color:#fff; border-radius:{size // 2}px;"
+            f"font-size:32px; font-weight:800;"
+        )
+        self.avatar.show()
+
+    def _resolve(self, number: str, name: str = "", photo: Optional[str] = None):
+        num = (number or "").strip()
+        resolved_name = (name or "").strip()
+        resolved_photo = photo
+        initial = "?"
+        try:
+            from esp_handset.pages import _contact_display, _lookup_contact
+
+            known = _lookup_contact(phone=num) is not None
+            disp, initial, ph = _contact_display(phone=num, fallback=num or "Unknown")
+            if not resolved_name and known:
+                resolved_name = disp
+            if not resolved_photo:
+                resolved_photo = ph
+            if not initial:
+                initial = (resolved_name or num or "?")[:1].upper()
+            if known and resolved_name:
+                self.name_lab.setText(resolved_name)
+                self.number_lab.setText(num)
+                self.number_lab.setVisible(bool(num))
+                self._set_avatar(resolved_name, initial, resolved_photo)
+                return resolved_name
+        except Exception:
+            pass
+        self.name_lab.setText(resolved_name or num or "Unknown")
+        self.number_lab.hide()
+        if resolved_name:
+            self._set_avatar(resolved_name, resolved_name[:1], resolved_photo)
+        else:
+            self.avatar.hide()
+        return resolved_name or num
+
+    def show_ringing(
+        self,
+        number: str,
+        *,
+        name: str = "",
+        photo: Optional[str] = None,
+        on_hangup: Optional[Callable[[], None]] = None,
+    ) -> None:
+        self._mode = "ringing"
+        self._on_hangup = on_hangup
+        self._on_dismiss = None
+        self._resolve(number, name, photo)
+        self.label.setText("calling…")
+        self.timer_lab.setText("Ringing")
+        self.timer_lab.show()
+        self.hangup_btn.show()
+        self.ok_btn.hide()
+        self.hint.setText("Confirm · Hang up")
+        self._show_and_focus(self.hangup_btn)
+        self._pulse_n = 0
+        self._pulse.start(400)
+
+    def show_active(
+        self,
+        number: str,
+        *,
+        name: str = "",
+        photo: Optional[str] = None,
+        on_hangup: Optional[Callable[[], None]] = None,
+        elapsed_s: int = 0,
+    ) -> None:
+        self._mode = "active"
+        self._on_hangup = on_hangup
+        self._on_dismiss = None
+        self._resolve(number, name, photo)
+        self.label.setText("on call")
+        self.set_elapsed(elapsed_s)
+        self.timer_lab.show()
+        self.hangup_btn.show()
+        self.ok_btn.hide()
+        self.hint.setText("Confirm · Hang up")
+        self._show_and_focus(self.hangup_btn)
+        self._pulse.stop()
+
+    def show_ended(
+        self,
+        number: str,
+        *,
+        name: str = "",
+        status_line: str = "Call ended",
+        detail: str = "",
+        on_dismiss: Optional[Callable[[], None]] = None,
+    ) -> None:
+        self._mode = "ended"
+        self._on_hangup = None
+        self._on_dismiss = on_dismiss
+        self._resolve(number, name)
+        self.label.setText(status_line)
+        self.timer_lab.setText(detail or "")
+        self.timer_lab.setVisible(bool(detail))
+        self.hangup_btn.hide()
+        self.ok_btn.show()
+        self.hint.setText("Confirm · OK")
+        self._show_and_focus(self.ok_btn)
+        self._pulse.stop()
+
+    def set_elapsed(self, seconds: int) -> None:
+        s = max(0, int(seconds))
+        m, r = divmod(s, 60)
+        self.timer_lab.setText(f"{m}:{r:02d}")
+
+    def set_ringing_hint(self, text: str) -> None:
+        if self._mode == "ringing":
+            self.timer_lab.setText(text)
+
+    def _show_and_focus(self, widget: QWidget) -> None:
+        parent = self.parentWidget()
+        if parent is not None:
+            self.setGeometry(parent.rect())
+        self.raise_()
+        self.show()
+        widget.setFocus(Qt.OtherFocusReason)
+        from esp_handset import digi_nav
+
+        digi_nav.clear_highlights(self)
+        digi_nav._highlight(widget, True)
+        widget.update()
+
+    def hide_call(self) -> None:
+        self._pulse.stop()
+        self.hide()
+        self._on_hangup = None
+        self._on_dismiss = None
+        self._mode = "idle"
+
+    @property
+    def active(self) -> bool:
+        return self.isVisible()
+
+    @property
+    def mode(self) -> str:
+        return self._mode
+
+    def _do_hangup(self) -> None:
+        cb = self._on_hangup
+        if callable(cb):
+            cb()
+
+    def _do_dismiss(self) -> None:
+        cb = self._on_dismiss
+        self.hide_call()
+        if callable(cb):
+            cb()
+
+    def _tick_pulse(self) -> None:
+        if self._mode != "ringing":
+            return
+        self._pulse_n = (self._pulse_n + 1) % 3
+        self.timer_lab.setText("Ringing" + "." * (self._pulse_n + 1))
+
+    def keyPressEvent(self, event) -> None:  # noqa: N802
+        key = event.key()
+        if self._mode == "ended":
+            if key in (Qt.Key_Return, Qt.Key_Enter, Qt.Key_Escape):
+                self._do_dismiss()
+                event.accept()
+                return
+        else:
+            if key in (Qt.Key_Return, Qt.Key_Enter, Qt.Key_Escape):
+                self._do_hangup()
+                event.accept()
+                return
+        super().keyPressEvent(event)
+
+
+class CallController(QObject):
+    """Outbound (and light inbound watch) call state machine."""
+
+    state_changed = pyqtSignal(str)  # ringing|active|ended|idle
+
+    def __init__(self, shell, on_status: Optional[Callable[[str], None]] = None):
+        super().__init__(shell)
+        self.shell = shell
+        self.on_status = on_status or (lambda _m: None)
+        self._entry_id = ""
+        self._number = ""
+        self._name = ""
+        self._phase = "idle"
+        self._answered = False
+        self._user_hangup = False
+        self._talk_started = 0.0
+        self._ring_started = 0.0
+        self._ring_timeout_s = 45.0
+        self._poll = QTimer(self)
+        self._poll.timeout.connect(self._tick)
+        self._poll.start(500)
+        self._incoming_prompted = False
+        self._inbound_entry_id = ""
+
+    @property
+    def busy(self) -> bool:
+        return self._phase in ("dialing", "ringing", "active")
+
+    def start_outbound(self, number: str) -> bool:
+        num = (number or "").strip()
+        if not num:
+            self.on_status("Enter a number")
+            return False
+        if self.busy:
+            self.on_status("Already in a call")
+            return False
+        if not sip_call.available():
+            self.on_status("Linphone not installed")
+            return False
+
+        name = ""
+        try:
+            from esp_handset.pages import _contact_display, _lookup_contact
+
+            if _lookup_contact(phone=num):
+                name, _, _ = _contact_display(phone=num, fallback=num)
+        except Exception:
+            pass
+
+        self._number = num
+        self._name = name
+        self._answered = False
+        self._user_hangup = False
+        self._talk_started = 0.0
+        self._ring_started = time.time()
+        self._phase = "dialing"
+
+        entry = clog.start(
+            direction="out", number=num, name=name, status="dialing"
+        )
+        self._entry_id = str(entry.get("id") or "")
+
+        if not sip_call.dial(num):
+            clog.finish(self._entry_id, status="failed", duration_s=0)
+            self._phase = "idle"
+            self._show_ended("Could not dial", "Check SIP account")
+            return False
+
+        self._phase = "ringing"
+        clog.update(self._entry_id, status="ringing")
+        self._show_ringing()
+        self.on_status(f"Calling {num}")
+        self.state_changed.emit("ringing")
+        return True
+
+    def hangup(self) -> None:
+        if not self.busy and self._phase != "ended":
+            sip_call.hangup()
+            return
+        self._user_hangup = True
+        sip_call.hangup()
+        if self._phase in ("dialing", "ringing"):
+            self._finish("canceled")
+        elif self._phase == "active":
+            dur = int(time.time() - self._talk_started) if self._talk_started else 0
+            clog.finish(self._entry_id, status="ended", duration_s=dur)
+            # keep answered=True via finish logic
+            clog.update(self._entry_id, answered=True, status="ended")
+            self._phase = "ended"
+            self._show_ended("Call ended", self._fmt_dur(dur))
+            self.state_changed.emit("ended")
+            self._clear_soon()
+        else:
+            self._clear()
+
+    def dismiss_ended(self) -> None:
+        self._clear()
+
+    def _fmt_dur(self, sec: int) -> str:
+        m, s = divmod(max(0, sec), 60)
+        return f"{m}:{s:02d}"
+
+    def _show_ringing(self) -> None:
+        ov = getattr(self.shell, "_active_call", None)
+        if ov is None:
+            return
+        ov.show_ringing(
+            self._number,
+            name=self._name,
+            on_hangup=self.hangup,
+        )
+
+    def _show_active(self) -> None:
+        ov = getattr(self.shell, "_active_call", None)
+        if ov is None:
+            return
+        elapsed = int(time.time() - self._talk_started) if self._talk_started else 0
+        ov.show_active(
+            self._number,
+            name=self._name,
+            on_hangup=self.hangup,
+            elapsed_s=elapsed,
+        )
+
+    def _show_ended(self, title: str, detail: str = "") -> None:
+        ov = getattr(self.shell, "_active_call", None)
+        if ov is None:
+            return
+        ov.show_ended(
+            self._number,
+            name=self._name,
+            status_line=title,
+            detail=detail,
+            on_dismiss=self.dismiss_ended,
+        )
+
+    def _finish(self, status: str) -> None:
+        dur = 0
+        if self._answered and self._talk_started:
+            dur = int(time.time() - self._talk_started)
+        clog.finish(self._entry_id, status=status, duration_s=dur)
+        self._phase = "ended"
+        titles = {
+            "no_answer": ("No answer", "They didn’t pick up"),
+            "canceled": ("Canceled", "You hung up"),
+            "busy": ("Busy", "Line was busy"),
+            "failed": ("Call failed", "Check SIP / network"),
+            "declined": ("Declined", ""),
+            "missed": ("Missed call", ""),
+            "ended": ("Call ended", self._fmt_dur(dur) if dur else ""),
+        }
+        title, detail = titles.get(status, ("Call ended", ""))
+        self._show_ended(title, detail)
+        self.on_status(title)
+        self.state_changed.emit("ended")
+
+    def _clear_soon(self) -> None:
+        QTimer.singleShot(1600, self._clear)
+
+    def _clear(self) -> None:
+        ov = getattr(self.shell, "_active_call", None)
+        if ov is not None:
+            ov.hide_call()
+        self._phase = "idle"
+        self._entry_id = ""
+        self._number = ""
+        self._name = ""
+        self._answered = False
+        self._user_hangup = False
+        self._incoming_prompted = False
+        self._inbound_entry_id = ""
+        self.state_changed.emit("idle")
+
+    def _tick(self) -> None:
+        try:
+            info = sip_call.poll()
+        except Exception:
+            return
+
+        # Watch for inbound when idle
+        if self._phase == "idle":
+            if info.phase == "incoming" and not self._incoming_prompted:
+                self._incoming_prompted = True
+                remote = sip_call.remote_number(info.remote) or info.remote or "Unknown"
+                self._prompt_incoming(remote)
+            elif info.phase == "idle" and self._incoming_prompted:
+                # Remote hung up before we answered
+                if self._inbound_entry_id:
+                    clog.finish(self._inbound_entry_id, status="missed", duration_s=0)
+                    self._inbound_entry_id = ""
+                try:
+                    self.shell.hide_incoming_call()
+                except Exception:
+                    pass
+                self._incoming_prompted = False
+                self.on_status("Missed call")
+            return
+
+        if self._phase in ("dialing", "ringing"):
+            if info.phase in ("active", "early"):
+                self._answered = True
+                self._talk_started = time.time()
+                self._phase = "active"
+                clog.update(self._entry_id, status="answered", answered=True)
+                self._show_active()
+                self.on_status("Connected")
+                self.state_changed.emit("active")
+                return
+            if info.phase == "error":
+                raw = (info.raw or "").lower()
+                self._finish("busy" if "busy" in raw else "failed")
+                return
+            if info.phase in ("ending", "idle") and (time.time() - self._ring_started) > 1.5:
+                if self._user_hangup:
+                    return
+                self._finish("no_answer")
+                return
+            if (time.time() - self._ring_started) >= self._ring_timeout_s:
+                sip_call.hangup()
+                self._finish("no_answer")
+                return
+            # still ringing
+            if info.phase == "ringing":
+                clog.update(self._entry_id, status="ringing")
+            return
+
+        if self._phase == "active":
+            ov = getattr(self.shell, "_active_call", None)
+            if ov is not None and ov.mode == "active" and self._talk_started:
+                ov.set_elapsed(int(time.time() - self._talk_started))
+            if info.phase in ("idle", "ending", "error"):
+                if self._user_hangup:
+                    return
+                dur = int(time.time() - self._talk_started) if self._talk_started else 0
+                clog.finish(self._entry_id, status="ended", duration_s=dur)
+                clog.update(self._entry_id, answered=True, status="ended")
+                self._phase = "ended"
+                self._show_ended("Call ended", self._fmt_dur(dur))
+                self.state_changed.emit("ended")
+                self._clear_soon()
+
+    def _prompt_incoming(self, number: str) -> None:
+        name = ""
+        try:
+            from esp_handset.pages import _contact_display, _lookup_contact
+
+            if _lookup_contact(phone=number):
+                name, _, _ = _contact_display(phone=number, fallback=number)
+        except Exception:
+            pass
+        entry = clog.start(
+            direction="in", number=number, name=name, status="ringing"
+        )
+        entry_id = str(entry.get("id") or "")
+        self._inbound_entry_id = entry_id
+
+        def answered() -> None:
+            sip_call.answer()
+            self._entry_id = entry_id
+            self._inbound_entry_id = ""
+            self._number = number
+            self._name = name
+            self._answered = True
+            self._user_hangup = False
+            self._talk_started = time.time()
+            self._phase = "active"
+            clog.update(entry_id, status="answered", answered=True)
+            # Hide incoming overlay then show in-call
+            try:
+                self.shell.hide_incoming_call()
+            except Exception:
+                pass
+            self._show_active()
+            self.state_changed.emit("active")
+
+        def declined() -> None:
+            sip_call.hangup()
+            clog.finish(entry_id, status="declined", duration_s=0)
+            self._inbound_entry_id = ""
+            self._incoming_prompted = False
+            self._phase = "idle"
+
+        try:
+            self.shell.show_incoming_call(
+                number,
+                name=name,
+                on_answer=answered,
+                on_decline=declined,
+                subtitle="Incoming",
+            )
+        except Exception:
+            pass
+
+
+def make_call_log_page(on_back: Callable[[], None]) -> QWidget:
+    body = QWidget()
+    body.setStyleSheet("background:#0e1620; color:#e8eef5;")
+    lay = QVBoxLayout(body)
+    lay.setContentsMargins(4, 2, 4, 4)
+    lay.setSpacing(4)
+
+    tip = QLabel("Who called · who you called")
+    tip.setStyleSheet("font-size:10px; color:#7a8a9a;")
+    lay.addWidget(tip)
+
+    lst = QListWidget()
+    lst.setStyleSheet(
+        "QListWidget { background:#0e1620; color:#e8eef5; border:none;"
+        " font-size:11px; outline:none; }"
+        "QListWidget::item { padding:8px 6px; border-bottom:1px solid #1a2430; }"
+        'QListWidget::item:selected { background:#1e2a38; }'
+        'QListWidget::item[digiFocus="1"] { border:2px solid #FFE600; }'
+    )
+    lst.setFocusPolicy(Qt.StrongFocus)
+    empty = QLabel("No calls yet.\nPlace a call from Phone.")
+    empty.setAlignment(Qt.AlignCenter)
+    empty.setStyleSheet("font-size:12px; color:#7a8a9a;")
+    empty.setWordWrap(True)
+
+    lay.addWidget(lst, 1)
+    lay.addWidget(empty)
+
+    def refresh() -> None:
+        lst.clear()
+        entries = clog.list_entries()
+        empty.setVisible(len(entries) == 0)
+        lst.setVisible(len(entries) > 0)
+        for e in entries:
+            direction = e.get("dir") or "?"
+            arrow = "↙" if direction == "in" else "↗"
+            who = (e.get("name") or e.get("number") or "Unknown").strip()
+            num = (e.get("number") or "").strip()
+            when = clog.display_when(e)
+            st = clog.display_status(e)
+            line1 = f"{arrow}  {who}"
+            line2 = st
+            if num and num != who:
+                line2 = f"{num} · {st}"
+            text = f"{line1}\n{when} · {line2}"
+            item = QListWidgetItem(text)
+            # Soft color by outcome
+            st_key = str(e.get("status") or "")
+            if e.get("answered") or st_key in ("answered", "ended"):
+                item.setForeground(QColor("#c8e6d0"))
+            elif st_key in ("missed", "no_answer"):
+                item.setForeground(QColor("#f0c0c0"))
+            elif st_key == "canceled":
+                item.setForeground(QColor("#9aa8b8"))
+            lst.addItem(item)
+
+    page = page_chrome("Call Log", body, on_back, scroll=False)
+    page.refresh_call_log = refresh  # type: ignore[attr-defined]
+    refresh()
+    return page
+
+
+def make_phone_page(
+    on_back,
+    on_status,
+    *,
+    on_call_log: Optional[Callable[[], None]] = None,
+    start_call: Optional[Callable[[str], bool]] = None,
+    hangup_call: Optional[Callable[[], None]] = None,
+) -> QWidget:
+    """T9 dial pad — Call hands off to CallController overlay."""
+    from PyQt5.QtWidgets import (
+        QGridLayout,
+        QLineEdit,
+        QPushButton,
+        QSizePolicy,
+        QVBoxLayout,
+        QHBoxLayout,
+    )
+
+    del on_back
+    body = QWidget()
+    lay = QVBoxLayout(body)
+    lay.setContentsMargins(1, 0, 1, 0)
+    lay.setSpacing(3)
+
+    dial = QLineEdit()
+    dial.setObjectName("dialDisplay")
+    dial.setReadOnly(True)
+    dial.setFocusPolicy(Qt.NoFocus)
+    dial.setAlignment(Qt.AlignCenter)
+    dial.setPlaceholderText("number")
+    dial.setFixedHeight(28)
+    dial.setStyleSheet(
+        "font-size: 18px; font-weight: 700; font-family: monospace;"
+        "padding: 2px 4px; letter-spacing: 1px;"
+    )
+    lay.addWidget(dial)
+
+    keys = [
+        ("1", ""),
+        ("2", "ABC"),
+        ("3", "DEF"),
+        ("4", "GHI"),
+        ("5", "JKL"),
+        ("6", "MNO"),
+        ("7", "PQRS"),
+        ("8", "TUV"),
+        ("9", "WXYZ"),
+        ("*", ""),
+        ("0", "+"),
+        ("#", ""),
+    ]
+
+    def append_digit(ch: str) -> None:
+        dial.setText(dial.text() + ch)
+        dial.setCursorPosition(len(dial.text()))
+
+    def backspace() -> None:
+        dial.setText(dial.text()[:-1])
+
+    def do_call() -> None:
+        num = dial.text().strip()
+        if not num:
+            on_status("Enter a number")
+            return
+        if callable(start_call):
+            start_call(num)
+            return
+        # Fallback without controller
+        from esp_handset import sip_call as sc
+
+        sc.dial(num)
+        clog.start(direction="out", number=num, status="dialing")
+        on_status(f"Dialing {num}")
+
+    def do_end() -> None:
+        if callable(hangup_call):
+            hangup_call()
+            return
+        sip_call.hangup()
+        on_status("Call ended")
+
+    grid = QGridLayout()
+    grid.setContentsMargins(0, 0, 0, 0)
+    grid.setHorizontalSpacing(3)
+    grid.setVerticalSpacing(3)
+    for i, (digit, letters) in enumerate(keys):
+        label = digit if not letters else f"{digit}\n{letters}"
+        btn = QPushButton(label)
+        btn.setMinimumHeight(0)
+        btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        btn.setStyleSheet("font-size: 13px; font-weight: 800; padding: 0px;")
+        btn.clicked.connect(lambda _=False, c=digit: append_digit(c))
+        grid.addWidget(btn, i // 3, i % 3)
+    lay.addLayout(grid, 1)
+
+    actions = QHBoxLayout()
+    actions.setSpacing(3)
+    del_btn = QPushButton("⌫")
+    del_btn.setFixedHeight(28)
+    del_btn.clicked.connect(backspace)
+    plus_btn = QPushButton("+")
+    plus_btn.setFixedHeight(28)
+    plus_btn.clicked.connect(lambda: append_digit("+"))
+    call = QPushButton("Call")
+    call.setFixedHeight(28)
+    call.setStyleSheet("font-weight:800; background:#1a7a3a; padding:0px;")
+    call.clicked.connect(do_call)
+    end = QPushButton("End")
+    end.setFixedHeight(28)
+    end.setStyleSheet("font-weight:800; background:#8a2020; padding:0px;")
+    end.clicked.connect(do_end)
+    actions.addWidget(del_btn, 1)
+    actions.addWidget(plus_btn, 1)
+    actions.addWidget(call, 2)
+    actions.addWidget(end, 2)
+    lay.addLayout(actions)
+
+    if on_call_log:
+        log_btn = QPushButton("Call log")
+        log_btn.setFixedHeight(22)
+        log_btn.setStyleSheet("font-size:11px; padding:0px;")
+        log_btn.clicked.connect(on_call_log)
+        lay.addWidget(log_btn)
+
+    page = page_chrome("Phone", body, None, scroll=False)
+
+    def set_dial_number(number: str) -> None:
+        dial.setText(str(number or "").strip())
+        dial.setCursorPosition(len(dial.text()))
+
+    page.set_dial_number = set_dial_number  # type: ignore[attr-defined]
+    page.start_call_number = do_call  # type: ignore[attr-defined]
+    return page

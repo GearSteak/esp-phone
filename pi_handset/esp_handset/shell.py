@@ -43,6 +43,7 @@ from esp_handset.shell_data import (
 )
 from esp_handset.toasts import ToastHost
 from esp_handset.incoming_call import IncomingCallOverlay
+from esp_handset.call_ui import CallOverlay
 
 _GAME_PAGES = {e.key for e in GAMES_APPS}
 # Live boards (timers + own keys) — not button-driven solitaire/uno
@@ -163,6 +164,8 @@ class PhoneShell(QMainWindow):
         self._toasts.raise_()
         self._incoming = IncomingCallOverlay(root)
         self._incoming.raise_()
+        self._active_call = CallOverlay(root)
+        self._active_call.raise_()
 
         self.register_page("home", self._build_home())
         self.go("home", replace=True)
@@ -267,6 +270,9 @@ class PhoneShell(QMainWindow):
         if hasattr(self, "_incoming") and self._incoming.isVisible():
             self._incoming.setGeometry(self._root.rect())
             self._incoming.raise_()
+        if hasattr(self, "_active_call") and self._active_call.isVisible():
+            self._active_call.setGeometry(self._root.rect())
+            self._active_call.raise_()
 
     def _apply_base_style(self) -> None:
         # Focus uses yellow/black, not hue near button blue — shade- and
@@ -598,6 +604,11 @@ class PhoneShell(QMainWindow):
 
     def keyPressEvent(self, event) -> None:  # noqa: N802
         key = event.key()
+        # Active outbound / in-call overlay
+        if getattr(self, "_active_call", None) is not None and self._active_call.active:
+            self._active_call.keyPressEvent(event)
+            event.accept()
+            return
         # Incoming call takeover — before everything else
         if getattr(self, "_incoming", None) is not None and self._incoming.active:
             self._incoming.keyPressEvent(event)

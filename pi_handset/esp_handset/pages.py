@@ -132,117 +132,9 @@ def stub_page(title: str, blurb: str, on_back: Callable[[], None]) -> QWidget:
 def make_phone_page(
     on_back, on_status, on_call_log: Optional[Callable[[], None]] = None
 ) -> QWidget:
-    """Classic T9 dial pad: number display + 3×4 keypad (fits 240×320)."""
-    del on_back
-    body = QWidget()
-    lay = QVBoxLayout(body)
-    lay.setContentsMargins(1, 0, 1, 0)
-    lay.setSpacing(3)
+    from esp_handset.call_ui import make_phone_page as _make
 
-    dial = QLineEdit()
-    dial.setObjectName("dialDisplay")
-    dial.setReadOnly(True)
-    dial.setFocusPolicy(Qt.NoFocus)
-    dial.setAlignment(Qt.AlignCenter)
-    dial.setPlaceholderText("number")
-    dial.setFixedHeight(28)
-    dial.setStyleSheet(
-        "font-size: 18px; font-weight: 700; font-family: monospace;"
-        "padding: 2px 4px; letter-spacing: 1px;"
-    )
-    lay.addWidget(dial)
-
-    # T9 labels (classic phone letters under the digit)
-    keys = [
-        ("1", ""),
-        ("2", "ABC"),
-        ("3", "DEF"),
-        ("4", "GHI"),
-        ("5", "JKL"),
-        ("6", "MNO"),
-        ("7", "PQRS"),
-        ("8", "TUV"),
-        ("9", "WXYZ"),
-        ("*", ""),
-        ("0", "+"),
-        ("#", ""),
-    ]
-
-    def append_digit(ch: str) -> None:
-        dial.setText(dial.text() + ch)
-        dial.setCursorPosition(len(dial.text()))
-
-    def backspace() -> None:
-        dial.setText(dial.text()[:-1])
-
-    def do_call() -> None:
-        num = dial.text().strip()
-        if not num:
-            on_status("Enter a number")
-            return
-        os.system(f"linphonecsh dial {num} >/dev/null 2>&1 &")
-        log = _load_json(CALL_LOG, [])
-        log.insert(0, {"dir": "out", "number": num, "at": datetime.now().isoformat()})
-        _save_json(CALL_LOG, log[:100])
-        on_status(f"Dialing {num}")
-
-    def do_end() -> None:
-        os.system("linphonecsh generic 'terminate' >/dev/null 2>&1 &")
-        on_status("Call ended")
-
-    grid = QGridLayout()
-    grid.setContentsMargins(0, 0, 0, 0)
-    grid.setHorizontalSpacing(3)
-    grid.setVerticalSpacing(3)
-    for i, (digit, letters) in enumerate(keys):
-        label = digit if not letters else f"{digit}\n{letters}"
-        btn = QPushButton(label)
-        btn.setMinimumHeight(0)
-        btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        btn.setStyleSheet(
-            "font-size: 13px; font-weight: 800; padding: 0px;"
-        )
-        btn.clicked.connect(lambda _=False, c=digit: append_digit(c))
-        grid.addWidget(btn, i // 3, i % 3)
-    lay.addLayout(grid, 1)
-
-    actions = QHBoxLayout()
-    actions.setSpacing(3)
-    del_btn = QPushButton("⌫")
-    del_btn.setFixedHeight(28)
-    del_btn.clicked.connect(backspace)
-    plus_btn = QPushButton("+")
-    plus_btn.setFixedHeight(28)
-    plus_btn.clicked.connect(lambda: append_digit("+"))
-    call = QPushButton("Call")
-    call.setFixedHeight(28)
-    call.setStyleSheet("font-weight:800; background:#1a7a3a; padding:0px;")
-    call.clicked.connect(do_call)
-    end = QPushButton("End")
-    end.setFixedHeight(28)
-    end.setStyleSheet("font-weight:800; background:#8a2020; padding:0px;")
-    end.clicked.connect(do_end)
-    actions.addWidget(del_btn, 1)
-    actions.addWidget(plus_btn, 1)
-    actions.addWidget(call, 2)
-    actions.addWidget(end, 2)
-    lay.addLayout(actions)
-
-    if on_call_log:
-        log_btn = QPushButton("Call log")
-        log_btn.setFixedHeight(22)
-        log_btn.setStyleSheet("font-size:11px; padding:0px;")
-        log_btn.clicked.connect(on_call_log)
-        lay.addWidget(log_btn)
-
-    page = page_chrome("Phone", body, None, scroll=False)
-
-    def set_dial_number(number: str) -> None:
-        dial.setText(str(number or "").strip())
-        dial.setCursorPosition(len(dial.text()))
-
-    page.set_dial_number = set_dial_number  # type: ignore[attr-defined]
-    return page
+    return _make(on_back, on_status, on_call_log=on_call_log)
 
 
 def _digits_tail(num: str, n: int = 10) -> str:
@@ -1309,15 +1201,9 @@ def make_contacts_page(
 
 
 def make_call_log_page(on_back) -> QWidget:
-    body = QWidget()
-    lay = QVBoxLayout(body)
-    lst = QListWidget()
-    for e in _load_json(CALL_LOG, []):
-        lst.addItem(f"{e.get('dir','?')}  {e.get('number','')}  {e.get('at','')[:19]}")
-    lay.addWidget(lst)
-    if lst.count() == 0:
-        lay.addWidget(QLabel("No calls yet."))
-    return page_chrome("Call Log", body, on_back)
+    from esp_handset.call_ui import make_call_log_page as _make
+
+    return _make(on_back)
 
 
 def make_camera_page(on_back, on_status) -> QWidget:

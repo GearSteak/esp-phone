@@ -236,6 +236,8 @@ from esp_handset.shell import (  # noqa: E402
     PhoneShell,
 )
 from esp_handset import accounts_ui  # noqa: E402
+from esp_handset import call_ui  # noqa: E402
+from esp_handset.call_ui import CallController  # noqa: E402
 
 DATA = Path.home() / ".esp-handset"
 
@@ -321,9 +323,25 @@ def build_app(bridge: Optional[EspBridge], modem: Optional[Sim7600]) -> PhoneShe
     )
 
     # Wired pages
+    calls = CallController(shell, on_status=status)
+    shell._call_controller = calls  # type: ignore[attr-defined]
+
+    def open_call_log() -> None:
+        page = shell.pages.get("call_log")
+        ref = getattr(page, "refresh_call_log", None) if page else None
+        if callable(ref):
+            ref()
+        shell.go("call_log")
+
     shell.register_page(
         "phone",
-        pages.make_phone_page(back, status, on_call_log=lambda: shell.go("call_log")),
+        call_ui.make_phone_page(
+            back,
+            status,
+            on_call_log=open_call_log,
+            start_call=calls.start_outbound,
+            hangup_call=calls.hangup,
+        ),
     )
     sms_page = pages.make_sms_page(modem, back, status, get_modem=get_modem)
     shell.register_page("messages", sms_page)
@@ -390,7 +408,7 @@ def build_app(bridge: Optional[EspBridge], modem: Optional[Sim7600]) -> PhoneShe
             open_email=open_email_to,
         ),
     )
-    shell.register_page("call_log", pages.make_call_log_page(back))
+    shell.register_page("call_log", call_ui.make_call_log_page(back))
     shell.register_page("camera", pages.make_camera_page(back, status))
     shell.register_page("gallery", pages.make_gallery_page(back, status))
     shell.register_page("gps", pages.make_gps_page(modem, back, status, get_modem=get_modem))

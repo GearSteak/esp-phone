@@ -31,6 +31,7 @@ HOME_APPS: List[AppEntry] = [
 CALLS_APPS = [
     AppEntry("phone", "Phone", "T9 dial pad", "☎"),
     AppEntry("contacts", "Contacts", "Photo · phone · LoRa · email", "☺"),
+    AppEntry("call_log", "Recents", "Call history", "◷"),
 ]
 
 SMS_APPS = [
