@@ -137,7 +137,7 @@ def _write_sip(server: str, user: str, password: str, display: str) -> str:
 
 
 def make_sip_account_page(on_back: Callable[[], None]) -> QWidget:
-    from PyQt5.QtCore import QObject, QTimer, pyqtSignal
+    from PyQt5.QtCore import QObject, pyqtSignal
     import threading
 
     body = QWidget()
