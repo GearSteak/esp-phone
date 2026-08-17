@@ -646,14 +646,18 @@ class CallController(QObject):
             pass
 
 
-def make_call_log_page(on_back: Callable[[], None]) -> QWidget:
+def make_call_log_page(
+    on_back: Callable[[], None],
+    *,
+    on_redial: Optional[Callable[[str], bool]] = None,
+) -> QWidget:
     body = QWidget()
     body.setStyleSheet("background:#0e1620; color:#e8eef5;")
     lay = QVBoxLayout(body)
     lay.setContentsMargins(4, 2, 4, 4)
     lay.setSpacing(4)
 
-    tip = QLabel("Who called · who you called")
+    tip = QLabel("Confirm = call again")
     tip.setStyleSheet("font-size:10px; color:#7a8a9a;")
     lay.addWidget(tip)
 
@@ -692,6 +696,7 @@ def make_call_log_page(on_back: Callable[[], None]) -> QWidget:
                 line2 = f"{num} · {st}"
             text = f"{line1}\n{when} · {line2}"
             item = QListWidgetItem(text)
+            item.setData(Qt.UserRole, num)
             # Soft color by outcome
             st_key = str(e.get("status") or "")
             if e.get("answered") or st_key in ("answered", "ended"):
@@ -701,6 +706,20 @@ def make_call_log_page(on_back: Callable[[], None]) -> QWidget:
             elif st_key == "canceled":
                 item.setForeground(QColor("#9aa8b8"))
             lst.addItem(item)
+
+    def redial_selected(_item: Optional[QListWidgetItem] = None) -> None:
+        if not on_redial:
+            return
+        item = _item or lst.currentItem()
+        if item is None:
+            return
+        num = str(item.data(Qt.UserRole) or "").strip()
+        if not num:
+            return
+        on_redial(num)
+
+    lst.itemActivated.connect(redial_selected)
+    lst.itemClicked.connect(redial_selected)
 
     page = page_chrome("Call Log", body, on_back, scroll=False)
     page.refresh_call_log = refresh  # type: ignore[attr-defined]

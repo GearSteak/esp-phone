@@ -475,7 +475,10 @@ def build_app(bridge: Optional[EspBridge], modem: Optional[Sim7600]) -> PhoneShe
             open_email=open_email_to,
         ),
     )
-    shell.register_page("call_log", call_ui.make_call_log_page(back))
+    shell.register_page(
+        "call_log",
+        call_ui.make_call_log_page(back, on_redial=calls.start_outbound),
+    )
     shell.register_page("camera", pages.make_camera_page(back, status))
     shell.register_page("gallery", pages.make_gallery_page(back, status))
     shell.register_page("gps", pages.make_gps_page(modem, back, status, get_modem=get_modem))

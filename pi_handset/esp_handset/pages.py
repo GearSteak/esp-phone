@@ -1200,10 +1200,10 @@ def make_contacts_page(
     return chrome
 
 
-def make_call_log_page(on_back) -> QWidget:
+def make_call_log_page(on_back, on_redial=None) -> QWidget:
     from esp_handset.call_ui import make_call_log_page as _make
 
-    return _make(on_back)
+    return _make(on_back, on_redial=on_redial)
 
 
 def make_camera_page(on_back, on_status) -> QWidget:
