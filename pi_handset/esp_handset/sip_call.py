@@ -19,7 +19,7 @@ from typing import Dict, List, Optional, Tuple
 _log_lock = threading.Lock()
 _eng_lock = threading.Lock()
 _csh_lock = threading.Lock()
-_engine: Optional["LinphoneEngine"] = None
+_ENGINE: Optional["LinphoneEngine"] = None
 _last_error = ""
 _last_register_raw = ""
 _LOG = Path.home() / ".esp-handset" / "sip-last.log"
@@ -516,11 +516,11 @@ class LinphoneEngine:
 
 
 def _engine() -> LinphoneEngine:
-    global _engine
+    global _ENGINE
     with _eng_lock:
-        if _engine is None:
-            _engine = LinphoneEngine()
-        return _engine
+        if _ENGINE is None:
+            _ENGINE = LinphoneEngine()
+        return _ENGINE
 
 
 def ensure() -> str:
@@ -646,6 +646,14 @@ def dial(number: str) -> bool:
 
 
 def dial_ex(number: str) -> Tuple[bool, str]:
+    try:
+        return _dial_ex_inner(number)
+    except Exception as e:
+        _log(f"dial_ex crashed: {e}")
+        return False, _set_error(f"Dial failed: {e}")
+
+
+def _dial_ex_inner(number: str) -> Tuple[bool, str]:
     global _last_register_raw
     num = (number or "").strip()
     if not num:

@@ -447,7 +447,7 @@ class CallController(QObject):
                 ok, reason = sip_call.dial_ex(num)
             except Exception as e:
                 print(f"[call] dial_ex failed: {e}", flush=True)
-                ok, reason = False, "Dial error"
+                ok, reason = False, str(e) or "Dial failed"
             self._dial_finished.emit(gen, bool(ok), str(reason or ""))
 
         threading.Thread(target=work, name="sip-dial", daemon=True).start()
