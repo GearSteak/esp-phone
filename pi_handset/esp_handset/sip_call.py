@@ -25,7 +25,33 @@ def available() -> bool:
 
 
 def missing_hint() -> str:
-    return "Linphone missing — run: sudo digivice-full-update"
+    return "Linphone missing — sudo digivice-ensure-linphone"
+
+
+def _try_apt_install() -> bool:
+    """Passwordless ensure script (installed by full-update)."""
+    if available():
+        return True
+    for cmd in (
+        ["sudo", "-n", "/usr/local/bin/digivice-ensure-linphone"],
+        ["sudo", "-n", "digivice-ensure-linphone"],
+    ):
+        try:
+            r = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=180,
+                check=False,
+            )
+            if available():
+                return True
+            err = ((r.stdout or "") + "\n" + (r.stderr or "")).strip()
+            if err:
+                print(f"[sip_call] ensure-linphone: {err[-400:]}", flush=True)
+        except Exception as e:
+            print(f"[sip_call] ensure-linphone failed ({e})", flush=True)
+    return available()
 
 
 def _run(args: List[str], timeout: float = 3.0) -> str:
@@ -71,6 +97,8 @@ def _sip_env() -> Dict[str, str]:
 
 def ensure() -> str:
     """Start linphonec daemon + register SIP. '' if OK, else short UI hint."""
+    if not available():
+        _try_apt_install()
     exe = _bin()
     if not exe:
         return missing_hint()

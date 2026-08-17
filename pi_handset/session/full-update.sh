@@ -96,13 +96,17 @@ apt-get install -y \
   i2c-tools xdotool xbitmaps x11-xserver-utils \
   wmctrl fonts-dejavu-core \
   alsa-utils \
-  linphone-cli \
   2>&1 | tee -a "$LOG" | tail -n 20
 
-if command -v linphonecsh >/dev/null 2>&1; then
-  log "linphone-cli: $(command -v linphonecsh)"
+# VoIP — separate apt so a failed GPIO/imagemagick pkg can't skip Linphone
+log "apt: linphone-cli (VoIP)…"
+export DEBIAN_FRONTEND=noninteractive
+apt-get install -y linphone-cli 2>&1 | tee -a "$LOG" | tail -n 30 \
+  || log "WARN: linphone-cli apt failed — will retry via digivice-ensure-linphone"
+if command -v linphonecsh >/dev/null 2>&1 || [[ -x /usr/bin/linphonecsh ]]; then
+  log "linphone-cli: $(command -v linphonecsh 2>/dev/null || echo /usr/bin/linphonecsh)"
 else
-  log "WARN: linphonecsh missing after apt — VoIP calls will fail until: apt install linphone-cli"
+  log "WARN: linphonecsh still missing after apt"
 fi
 
 # Game Boy / GBC — in-UI PyBoy (Digivice keeps SPI; RetroArch handoff stays disabled)
@@ -274,6 +278,12 @@ install -m 755 "$ROOT/session/gui-update.sh" /usr/local/bin/digivice-gui-update
 install -m 755 "$ROOT/session/update-handset.sh" /usr/local/bin/digivice-update 2>/dev/null || true
 install -m 755 "$ROOT/session/ensure-buttons.sh" /usr/local/bin/digivice-ensure-buttons 2>/dev/null || true
 install -m 755 "$ROOT/session/ensure-cardkb.sh" /usr/local/bin/digivice-ensure-cardkb 2>/dev/null || true
+if [[ -f "$ROOT/session/ensure-linphone.sh" ]]; then
+  install -m 755 "$ROOT/session/ensure-linphone.sh" "$PREFIX/session/ensure-linphone.sh"
+  install -m 755 "$ROOT/session/ensure-linphone.sh" /usr/local/bin/digivice-ensure-linphone
+  bash /usr/local/bin/digivice-ensure-linphone 2>&1 | tee -a "$LOG" \
+    || log "WARN: digivice-ensure-linphone failed — VoIP dial will not work"
+fi
 if [[ -f "$ROOT/session/home-relaunch.sh" ]]; then
   install -m 755 "$ROOT/session/home-relaunch.sh" "$PREFIX/session/home-relaunch.sh"
   install -m 755 "$ROOT/session/home-relaunch.sh" /usr/local/bin/digivice-home-relaunch
@@ -489,6 +499,7 @@ $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-power
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-set-rotation
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-ensure-buttons
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-ensure-cardkb
+$USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-ensure-linphone
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-ensure-gb
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-stop-gb
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-modem-uart
@@ -504,6 +515,7 @@ $USER_NAME ALL=(root) NOPASSWD: $PREFIX/session/gui-update.sh
 $USER_NAME ALL=(root) NOPASSWD: $PREFIX/session/power.sh
 $USER_NAME ALL=(root) NOPASSWD: $PREFIX/session/ensure-buttons.sh
 $USER_NAME ALL=(root) NOPASSWD: $PREFIX/session/ensure-cardkb.sh
+$USER_NAME ALL=(root) NOPASSWD: $PREFIX/session/ensure-linphone.sh
 $USER_NAME ALL=(root) NOPASSWD: $PREFIX/session/ensure-gb-wrappers.sh
 $USER_NAME ALL=(root) NOPASSWD: /usr/bin/bash $PREFIX/session/gui-update.sh
 $USER_NAME ALL=(root) NOPASSWD: /bin/bash $PREFIX/session/gui-update.sh
@@ -511,6 +523,8 @@ $USER_NAME ALL=(root) NOPASSWD: /usr/bin/bash $PREFIX/session/power.sh
 $USER_NAME ALL=(root) NOPASSWD: /bin/bash $PREFIX/session/power.sh
 $USER_NAME ALL=(root) NOPASSWD: /usr/bin/bash $PREFIX/session/ensure-gb-wrappers.sh
 $USER_NAME ALL=(root) NOPASSWD: /bin/bash $PREFIX/session/ensure-gb-wrappers.sh
+$USER_NAME ALL=(root) NOPASSWD: /usr/bin/bash $PREFIX/session/ensure-linphone.sh
+$USER_NAME ALL=(root) NOPASSWD: /bin/bash $PREFIX/session/ensure-linphone.sh
 EOF
 chmod 440 /etc/sudoers.d/esp-handset-update
 
