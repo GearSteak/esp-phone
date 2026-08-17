@@ -359,14 +359,16 @@ class CallController(QObject):
             self.on_status("Already in a call")
             return False
         if not sip_call.available():
-            self.on_status(sip_call.missing_hint())
+            hint = sip_call.missing_hint() or "No linphonecsh"
+            self.on_status(hint)
             return False
         ready = sip_call.ensure()
         if ready:
-            if "missing" in ready.lower() or "daemon failed" in ready.lower():
+            low = ready.lower()
+            if "no linphonecsh" in low or "daemon failed" in low:
                 self.on_status(ready)
                 return False
-            if "Set SIP" in ready:
+            if "set sip" in low:
                 self.on_status(ready)
                 return False
 

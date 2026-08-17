@@ -194,6 +194,16 @@ fi
 BIN="$(command -v linphonecsh 2>/dev/null || echo /usr/bin/linphonecsh)"
 log "OK $BIN"
 write_status "ok $BIN"
+# Absolute path Digivice reads first (avoids PATH mismatches)
+echo "$BIN" >/etc/esp-handset/linphone.bin
+chmod 644 /etc/esp-handset/linphone.bin 2>/dev/null || true
+# Symlink into /usr/local/bin if installed elsewhere
+if [[ "$BIN" != /usr/local/bin/linphonecsh && "$BIN" != /usr/bin/linphonecsh ]]; then
+  ln -sfn "$BIN" /usr/local/bin/linphonecsh 2>/dev/null || true
+fi
+if [[ ! -x /usr/bin/linphonecsh && -x "$BIN" ]]; then
+  ln -sfn "$BIN" /usr/bin/linphonecsh 2>/dev/null || true
+fi
 
 # Warm daemon as Digivice user (pipe is per-uid)
 RUN_AS="${SUDO_USER:-}"

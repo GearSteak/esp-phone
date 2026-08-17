@@ -12,16 +12,115 @@ from typing import Dict, List, Optional
 
 _ensure_lock = threading.Lock()
 _ensured_once = False
+_bin_cache: Optional[str] = None
+_BIN_HINT = Path("/etc/esp-handset/linphone.bin")
+
+
+def _is_exe(path: str) -> bool:
+    try:
+        return bool(path) and os.path.isfile(path) and os.access(path, os.X_OK)
+    except OSError:
+        return False
+
+
+def _exists(path: str) -> bool:
+    try:
+        return bool(path) and os.path.isfile(path)
+    except OSError:
+        return False
+
+
+def _discover_bin() -> Optional[str]:
+    """Find linphonecsh even when Digivice PATH is minimal."""
+    # 1) Hint file written by digivice-ensure-linphone
+    try:
+        if _BIN_HINT.is_file():
+            hint = _BIN_HINT.read_text(encoding="utf-8", errors="replace").strip()
+            if _exists(hint):
+                return hint
+    except OSError:
+        pass
+
+    candidates: List[str] = []
+
+    which = shutil.which("linphonecsh")
+    if which:
+        candidates.append(which)
+
+    # Login-shell PATH (SSH user may have different PATH than Digivice)
+    try:
+        r = subprocess.run(
+            ["bash", "-lc", "command -v linphonecsh"],
+            capture_output=True,
+            text=True,
+            timeout=2.0,
+            check=False,
+        )
+        hit = (r.stdout or "").strip().splitlines()
+        if hit and hit[0]:
+            candidates.append(hit[0].strip())
+    except Exception:
+        pass
+
+    # dpkg file list
+    for pkg in ("linphone-cli", "linphone-nogtk", "linphone"):
+        try:
+            r = subprocess.run(
+                ["dpkg", "-L", pkg],
+                capture_output=True,
+                text=True,
+                timeout=3.0,
+                check=False,
+            )
+            if r.returncode != 0:
+                continue
+            for line in (r.stdout or "").splitlines():
+                line = line.strip()
+                if line.endswith("/linphonecsh"):
+                    candidates.append(line)
+        except Exception:
+            continue
+
+    # Hard-coded + current user home bin
+    home_bin = ""
+    try:
+        home_bin = str(Path.home() / ".local" / "bin" / "linphonecsh")
+    except Exception:
+        home_bin = ""
+
+    candidates.extend(
+        [
+            "/usr/bin/linphonecsh",
+            "/usr/local/bin/linphonecsh",
+            "/bin/linphonecsh",
+            home_bin,
+            "/home/pi/.local/bin/linphonecsh",
+        ]
+    )
+
+    seen = set()
+    for p in candidates:
+        if not p or p in seen:
+            continue
+        seen.add(p)
+        if _is_exe(p) or _exists(p):
+            return p
+    return None
 
 
 def _bin() -> Optional[str]:
-    found = shutil.which("linphonecsh")
+    global _bin_cache
+    if _bin_cache and _exists(_bin_cache):
+        return _bin_cache
+    found = _discover_bin()
     if found:
-        return found
-    for p in ("/usr/bin/linphonecsh", "/usr/local/bin/linphonecsh"):
-        if os.path.isfile(p) and os.access(p, os.X_OK):
-            return p
-    return None
+        _bin_cache = found
+        try:
+            _BIN_HINT.parent.mkdir(parents=True, exist_ok=True)
+            _BIN_HINT.write_text(found + "\n", encoding="utf-8")
+        except OSError:
+            pass
+    return found
 
 
 def available() -> bool:
@@ -29,16 +128,12 @@ def available() -> bool:
 
 
 def missing_hint() -> str:
-    # Prefer last ensure status if present
-    try:
-        p = Path("/etc/esp-handset/linphone.status")
-        if p.is_file():
-            st = p.read_text(encoding="utf-8", errors="replace").strip()
-            if st.startswith("missing") or not st.startswith("ok"):
-                return "Linphone apt failed — see ensure log"
-    except Exception:
-        pass
-    return "Linphone missing — SSH: sudo digivice-ensure-linphone"
+    # Re-probe once in case PATH/dpkg changed since boot
+    global _bin_cache
+    _bin_cache = None
+    if _bin():
+        return ""
+    return "No linphonecsh — SSH: which linphonecsh"
 
 
 def _run(args: List[str], timeout: float = 3.0) -> str:
