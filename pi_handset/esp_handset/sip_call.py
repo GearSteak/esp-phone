@@ -242,26 +242,104 @@ def _sip_env() -> Dict[str, str]:
 
 
 def _register_ok(status: str, user: str = "", server: str = "") -> bool:
-    st = status or ""
-    if not st.strip():
+    """True when linphonecsh status register looks successfully registered.
+
+    Success often looks like: 'registered identity=sip:user@host'
+    Failure is usually: 'registered=-1'
+    Do NOT treat SIP digest '401 Unauthorized' chatter as failure when identity is present.
+    """
+    st = (status or "").strip()
+    if not st:
         return False
+    low = st.lower()
+    # Hard fail only
+    if re.search(r"(?i)registered\s*=\s*-1", st):
+        return False
+    if "identity" in low and re.search(r"(?i)registered\s*=\s*-1", st):
+        return False
+    # Hard success markers used by linphone 3/4/5 + openHAB checks
     if re.search(
-        r"(?i)registered\s*=\s*-1|not\s*registered|unregistered|"
-        r"registration failed|forbidden|unauthorized|403|401",
+        r"(?i)identity\s*=|registered to|RegistrationOk|LinphoneRegistrationOk|"
+        r"registered\s*=\s*[1-9]\d*|registration successful",
         st,
     ):
-        return False
-    if re.search(r"(?i)\bregistered\b", st):
         return True
-    if re.search(r"(?i)Registration successful|Ok\b", st):
-        if user and user in st:
+    if re.search(r"(?i)\bregistered\b", st) and "unregistered" not in low:
+        # 'registered' without =-1
+        if not re.search(r"(?i)registered\s*=\s*-", st):
             return True
-        if server and server in st:
-            return True
-        # "Ok" alone from status register is often enough on linphone 5
-        if re.search(r"(?i)^Ok\b|status:\s*Ok", st):
+    if user and user in st and ("sip:" in low or (server and server in st)):
+        if re.search(r"(?i)\bok\b|success|registered", st):
             return True
     return False
+
+
+def _register_definitely_down(status: str) -> bool:
+    st = (status or "").strip()
+    if not st:
+        return False
+    if re.search(r"(?i)registered\s*=\s*-1", st):
+        return True
+    if re.search(r"(?i)\bunregistered\b|\bnot registered\b", st) and "identity" not in st.lower():
+        return True
+    return False
+
+
+def _linphonerc_path() -> Path:
+    return Path.home() / ".esp-handset" / "linphonerc"
+
+
+def _write_linphonerc(env: Dict[str, str]) -> Optional[Path]:
+    """Persist Zadarma/SIP proxy so `init -c` auto-registers."""
+    user = (env.get("SIP_USER") or "").strip()
+    server = (env.get("SIP_SERVER") or "").strip()
+    password = (env.get("SIP_PASS") or "").strip()
+    display = (env.get("SIP_DISPLAY") or user or "Digivice").strip()
+    if not user or not server or not password:
+        return None
+    path = _linphonerc_path()
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        # Minimal linphonerc — enough for linphonec daemon + register
+        body = (
+            "[sip]\n"
+            "sip_port=5060\n"
+            "use_info=0\n"
+            "guess_hostname=1\n"
+            "inc_timeout=15\n"
+            "use_ipv6=0\n"
+            f"display_name={display}\n"
+            "\n"
+            "[rtp]\n"
+            "audio_rtp_port=7078\n"
+            "\n"
+            "[net]\n"
+            "stun_server=stun.zadarma.com\n"
+            "firewall_policy=1\n"
+            "\n"
+            "[auth_info_0]\n"
+            f"username={user}\n"
+            f"userid={user}\n"
+            f"passwd={password}\n"
+            f"realm={server}\n"
+            "\n"
+            "[proxy_0]\n"
+            f"reg_proxy=sip:{server}\n"
+            f"reg_identity=sip:{user}@{server}\n"
+            "reg_expires=3600\n"
+            "reg_sendregister=1\n"
+            "publish=0\n"
+            "dial_escape_plus=0\n"
+        )
+        path.write_text(body, encoding="utf-8")
+        try:
+            os.chmod(path, 0o600)
+        except OSError:
+            pass
+        return path
+    except OSError as e:
+        _log(f"linphonerc write failed: {e}")
+        return None
 
 
 def _daemon_alive(exe: str) -> bool:
@@ -269,7 +347,6 @@ def _daemon_alive(exe: str) -> bool:
     if re.search(r"(?i)no running|not running|failed to connect|could not", st):
         return False
     if st.startswith("ERR") and "timeout" not in st.lower():
-        # empty/ERR without "no running" — try status once more
         st2 = _run([exe, "status"], timeout=2.0)
         if re.search(r"(?i)no running|not running|failed to connect", st2):
             return False
@@ -279,18 +356,24 @@ def _daemon_alive(exe: str) -> bool:
 def _ensure_daemon(exe: str) -> str:
     if _daemon_alive(exe):
         return ""
-    _log("init linphonec daemon")
-    _run([exe, "init"], timeout=5.0)
-    time.sleep(0.5)
+    env = _sip_env()
+    rc = _write_linphonerc(env)
+    _log(f"init linphonec daemon rc={rc}")
+    if rc is not None:
+        _run([exe, "init", "-c", str(rc)], timeout=6.0)
+    else:
+        _run([exe, "init"], timeout=5.0)
+    time.sleep(0.7)
     if not _daemon_alive(exe):
-        # Fresh start
         _run([exe, "exit"], timeout=2.0)
         time.sleep(0.3)
-        _run([exe, "init"], timeout=5.0)
-        time.sleep(0.6)
+        if rc is not None:
+            _run([exe, "init", "-c", str(rc)], timeout=6.0)
+        else:
+            _run([exe, "init"], timeout=5.0)
+        time.sleep(0.7)
     if not _daemon_alive(exe):
         return _set_error("Linphone daemon failed to start")
-    # Zadarma recommends STUN for NAT
     _run([exe, "generic", "stun stun.zadarma.com"], timeout=3.0)
     return ""
 
@@ -312,17 +395,26 @@ def _ensure_unlocked() -> str:
         dead = _ensure_daemon(exe)
         if dead:
             return dead
-        st = _run([exe, "status", "register"], timeout=2.5)
         env = _sip_env()
         user = (env.get("SIP_USER") or "").strip()
         server = (env.get("SIP_SERVER") or "").strip()
         password = (env.get("SIP_PASS") or "").strip()
         if not user or not password or not server:
             return _set_error("Set SIP in Settings → Accounts")
-        if _register_ok(st, user, server):
-            _log(f"already registered ({user}@{server})")
-            _set_error("")
-            return ""
+        _write_linphonerc(env)
+        # Config-based init may already be registering — wait briefly
+        for _ in range(6):
+            st = _run([exe, "status", "register"], timeout=2.5)
+            if _register_ok(st, user, server):
+                _log(f"already registered ({user}@{server}): {st[:100]!r}")
+                _set_error("")
+                return ""
+            if not _register_definitely_down(st) and "identity" in (st or "").lower():
+                _log(f"register looks up: {st[:100]!r}")
+                _set_error("")
+                return ""
+            time.sleep(0.35)
+        st = _run([exe, "status", "register"], timeout=2.5)
         # Bookworm linphone-cli uses flags; older builds use positional
         attempts = [
             [
@@ -339,19 +431,15 @@ def _ensure_unlocked() -> str:
             [exe, "register", f"sip:{user}@{server}", f"sip:{server}", password],
             [exe, "generic", f"register sip:{user}@{server} {server} {password}"],
         ]
-        auth_fail = False
         for args in attempts:
-            # Never log password
             safe = " ".join(args[:4]) + (" …" if len(args) > 4 else "")
             _log(f"register try: {safe}")
             out = _run(args, timeout=10.0)
             _log(f"register out: {out[:180]!r}")
             if re.search(r"(?i)unknown option|invalid option|usage:", out):
                 continue
-            if re.search(r"(?i)forbidden|unauthorized|403|401|denied|password", out):
-                auth_fail = True
-                continue
-            for _ in range(8):
+            # Always wait — SIP digest often prints 401 before success
+            for _ in range(10):
                 time.sleep(0.4)
                 st = _run([exe, "status", "register"], timeout=2.5)
                 if _register_ok(st, user, server):
@@ -363,8 +451,13 @@ def _ensure_unlocked() -> str:
         if _register_ok(st, user, server):
             _set_error("")
             return ""
-        if auth_fail:
-            return _set_error("SIP auth failed — check password")
+        # Ambiguous status: don't hard-fail if daemon is up (dial may still work)
+        if st and not _register_definitely_down(st):
+            _log("register status ambiguous — allowing dial")
+            _set_error("")
+            return ""
+        if _register_definitely_down(st):
+            return _set_error("SIP not registered — Save SIP / check Wi‑Fi")
         return _set_error("SIP not registered — check Wi‑Fi / Accounts")
     except Exception as e:
         return _set_error(f"SIP error: {e}")
@@ -455,13 +548,15 @@ def _dial_targets(number: str) -> List[str]:
 
 
 def _hard_dial_error(text: str) -> bool:
-    """True only for clear reject."""
+    """True only for clear reject — ignore SIP digest 401 noise."""
     t = text or ""
+    if re.search(r"(?i)identity\s*=|registered to|RegistrationOk", t):
+        return False
     return bool(
         re.search(
-            r"(?i)not registered|forbidden|unauthorized|403|401|denied|declined|"
+            r"(?i)not registered|forbidden|registration required|"
             r"could not resolve|no route|temporarily unavailable|486|603|"
-            r"registration required",
+            r"403 Forbidden|401 Unauthorized.*fail",
             t,
         )
     )
@@ -484,14 +579,21 @@ def dial_ex(number: str) -> Tuple[bool, str]:
 
     with _ensure_lock:
         hint = _ensure_unlocked()
-        if hint:
+        if hint and re.search(
+            r"(?i)missing|daemon failed|Set SIP|auth failed", hint
+        ):
             _log(f"dial blocked: {hint}")
             return False, hint
         st = _run([exe, "status", "register"], timeout=2.5)
         env = _sip_env()
-        if not _register_ok(st, env.get("SIP_USER", ""), env.get("SIP_SERVER", "")):
-            _log(f"dial abort — not registered: {st[:160]!r}")
+        # Only hard-stop when status is clearly down (registered=-1)
+        if _register_definitely_down(st):
+            _log(f"dial abort — clearly unregistered: {st[:160]!r}")
             return False, _set_error("SIP not registered — Save SIP in Accounts")
+        if hint and not _register_ok(st, env.get("SIP_USER", ""), env.get("SIP_SERVER", "")):
+            _log(f"dial continuing despite hint={hint!r} status={st[:120]!r}")
+        elif not _register_ok(st, env.get("SIP_USER", ""), env.get("SIP_SERVER", "")):
+            _log(f"dial with ambiguous register status: {st[:160]!r}")
 
     targets = _dial_targets(num)
     if not targets:
