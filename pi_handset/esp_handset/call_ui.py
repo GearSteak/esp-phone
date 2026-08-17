@@ -359,15 +359,10 @@ class CallController(QObject):
             self.on_status("Already in a call")
             return False
         if not sip_call.available():
-            # Best-effort apt via passwordless ensure (may take ~1 min)
-            self.on_status("Installing Linphone…")
-            ready = sip_call.ensure()
-            if not sip_call.available():
-                self.on_status(ready or sip_call.missing_hint())
-                return False
+            self.on_status(sip_call.missing_hint())
+            return False
         ready = sip_call.ensure()
         if ready:
-            # Soft failures (e.g. SIP not set) still allow dial attempt only if daemon up
             if "missing" in ready.lower() or "daemon failed" in ready.lower():
                 self.on_status(ready)
                 return False

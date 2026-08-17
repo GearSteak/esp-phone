@@ -798,22 +798,12 @@ def main() -> int:
 
     win = build_app(bridge, modem)
     app.installEventFilter(_KioskKeyFilter(win))
-    # Bring up linphonec daemon + SIP register in background (VoIP dial)
+    # SIP daemon in a background thread — never block / freeze Digivice UI
     try:
         from PyQt5.QtCore import QTimer
         from esp_handset import sip_call
 
-        def _sip_boot() -> None:
-            try:
-                hint = sip_call.ensure()
-                if hint:
-                    print(f"[handset] SIP: {hint}", flush=True)
-                else:
-                    print("[handset] SIP: linphone ready", flush=True)
-            except Exception as e:
-                print(f"[handset] SIP ensure failed ({e})", flush=True)
-
-        QTimer.singleShot(800, _sip_boot)
+        QTimer.singleShot(1200, sip_call.ensure_async)
     except Exception as e:
         print(f"[handset] SIP boot hook failed ({e})", flush=True)
     # CardKB: read I2C in-process (instant typing). Prefer over cardkb-inputd/xdotool.

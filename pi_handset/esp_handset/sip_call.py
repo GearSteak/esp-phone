@@ -5,9 +5,13 @@ import os
 import re
 import shutil
 import subprocess
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional
+
+_ensure_lock = threading.Lock()
+_ensured_once = False
 
 
 def _bin() -> Optional[str]:
@@ -25,33 +29,7 @@ def available() -> bool:
 
 
 def missing_hint() -> str:
-    return "Linphone missing — sudo digivice-ensure-linphone"
-
-
-def _try_apt_install() -> bool:
-    """Passwordless ensure script (installed by full-update)."""
-    if available():
-        return True
-    for cmd in (
-        ["sudo", "-n", "/usr/local/bin/digivice-ensure-linphone"],
-        ["sudo", "-n", "digivice-ensure-linphone"],
-    ):
-        try:
-            r = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=180,
-                check=False,
-            )
-            if available():
-                return True
-            err = ((r.stdout or "") + "\n" + (r.stderr or "")).strip()
-            if err:
-                print(f"[sip_call] ensure-linphone: {err[-400:]}", flush=True)
-        except Exception as e:
-            print(f"[sip_call] ensure-linphone failed ({e})", flush=True)
-    return available()
+    return "Linphone missing — Update Digivice again"
 
 
 def _run(args: List[str], timeout: float = 3.0) -> str:
@@ -64,6 +42,8 @@ def _run(args: List[str], timeout: float = 3.0) -> str:
             check=False,
         )
         return ((r.stdout or "") + "\n" + (r.stderr or "")).strip()
+    except subprocess.TimeoutExpired:
+        return "ERR timeout"
     except Exception as e:
         return f"ERR {e}"
 
@@ -96,56 +76,84 @@ def _sip_env() -> Dict[str, str]:
 
 
 def ensure() -> str:
-    """Start linphonec daemon + register SIP. '' if OK, else short UI hint."""
-    if not available():
-        _try_apt_install()
+    """Start linphonec daemon + register SIP. '' if OK, else short UI hint.
+
+    Never runs apt — that freezes Digivice. Package install is apply-update only.
+    """
     exe = _bin()
     if not exe:
         return missing_hint()
-    # Alive?
-    st = _run([exe, "status", "register"], timeout=4.0)
-    dead = (
-        not st
-        or st.startswith("ERR")
-        or re.search(r"(?i)no running|not running|could not|unable|failed to connect", st)
-    )
-    if dead:
-        _run([exe, "init"], timeout=6.0)
-        st = _run([exe, "status", "register"], timeout=4.0)
-        if st.startswith("ERR") and "No running" in st:
-            return "Linphone daemon failed to start"
-    env = _sip_env()
-    user = (env.get("SIP_USER") or "").strip()
-    server = (env.get("SIP_SERVER") or "").strip()
-    password = (env.get("SIP_PASS") or "").strip()
-    if user and server and password:
-        # Skip re-register if already registered to this identity
-        if f"{user}@{server}" not in st and "registered" not in st.lower():
-            _run(
-                [exe, "register", f"sip:{user}@{server}", server, password],
-                timeout=10.0,
+    try:
+        st = _run([exe, "status", "register"], timeout=2.5)
+        dead = (
+            not st
+            or st.startswith("ERR")
+            or re.search(
+                r"(?i)no running|not running|could not|unable|failed to connect", st
             )
-    elif not user or not password:
-        return "Set SIP in Settings → Accounts"
-    return ""
+        )
+        if dead:
+            _run([exe, "init"], timeout=4.0)
+            st = _run([exe, "status", "register"], timeout=2.5)
+            if st.startswith("ERR") and re.search(r"(?i)no running|not running", st):
+                return "Linphone daemon failed to start"
+        env = _sip_env()
+        user = (env.get("SIP_USER") or "").strip()
+        server = (env.get("SIP_SERVER") or "").strip()
+        password = (env.get("SIP_PASS") or "").strip()
+        if user and server and password:
+            if f"{user}@{server}" not in st and "registered" not in st.lower():
+                _run(
+                    [exe, "register", f"sip:{user}@{server}", server, password],
+                    timeout=8.0,
+                )
+        elif not user or not password:
+            return "Set SIP in Settings → Accounts"
+        return ""
+    except Exception as e:
+        return f"SIP error: {e}"
+
+
+def ensure_async() -> None:
+    """Background init/register — safe from Qt main thread."""
+    global _ensured_once
+
+    def work() -> None:
+        global _ensured_once
+        with _ensure_lock:
+            if _ensured_once and available():
+                # Still poke register lightly
+                try:
+                    ensure()
+                except Exception:
+                    pass
+                return
+            try:
+                hint = ensure()
+                _ensured_once = True
+                if hint:
+                    print(f"[sip_call] ensure: {hint}", flush=True)
+                else:
+                    print("[sip_call] linphone ready", flush=True)
+            except Exception as e:
+                print(f"[sip_call] ensure failed ({e})", flush=True)
+
+    threading.Thread(target=work, name="sip-ensure", daemon=True).start()
 
 
 def dial(number: str) -> bool:
     num = (number or "").strip()
     if not num:
         return False
-    hint = ensure()
-    if hint and not available():
-        return False
     exe = _bin()
     if not exe:
         return False
-    # Prefer sip: URI if it already looks like one
+    # Quick daemon wake (no apt)
+    ensure()
     target = num if num.lower().startswith("sip:") else num
     out = _run([exe, "dial", target], timeout=5.0)
-    if re.search(r"(?i)err|fail|not found|no running", out) and "dial" not in out.lower():
-        # One retry after fresh init
-        ensure()
+    if re.search(r"(?i)no running|failed to connect", out):
+        _run([exe, "init"], timeout=4.0)
         out = _run([exe, "dial", target], timeout=5.0)
     if "ERR" in out and "not found" in out.lower():
         return False
@@ -156,20 +164,18 @@ def hangup() -> None:
     exe = _bin()
     if not exe:
         return
-    # Newer / older CLI names
-    _run([exe, "generic", "terminate"])
-    _run([exe, "hangup"])
+    _run([exe, "generic", "terminate"], timeout=2.0)
+    _run([exe, "hangup"], timeout=2.0)
 
 
 def answer() -> None:
     exe = _bin()
     if not exe:
         return
-    _run([exe, "generic", "answer"])
-    # Fallback: answer first incoming call id if listed
+    _run([exe, "generic", "answer"], timeout=2.0)
     info = poll()
     if info.call_id is not None and info.phase == "incoming":
-        _run([exe, "generic", f"answer {info.call_id}"])
+        _run([exe, "generic", f"answer {info.call_id}"], timeout=2.0)
 
 
 @dataclass
@@ -207,15 +213,14 @@ def poll() -> CallInfo:
     exe = _bin()
     if not exe:
         return CallInfo()
-    raw = _run([exe, "generic", "calls"])
+    raw = _run([exe, "generic", "calls"], timeout=2.0)
     if not raw or raw.startswith("ERR"):
-        raw2 = _run([exe, "status", "call"])
+        raw2 = _run([exe, "status", "call"], timeout=2.0)
         if raw2 and not raw2.startswith("ERR"):
             raw = raw2
 
     info = CallInfo(raw=raw or "")
     if not raw or "No active call" in raw or "no call" in raw.lower():
-        # Empty status call often means idle
         if not raw or len(raw) < 3:
             return info
         if re.search(r"(?i)no\s+(active\s+)?call", raw):
@@ -227,11 +232,9 @@ def poll() -> CallInfo:
         if token in raw:
             phase = mapped
             state = token
-            # Prefer active over ringing if both somehow present
             if mapped == "active":
                 break
 
-    # If we only got a sip URI from `status call`, treat as active/unknown
     if phase == "idle" and ("sip:" in raw.lower() or "@" in raw):
         phase = "active"
         state = "status_call"
@@ -247,7 +250,6 @@ def poll() -> CallInfo:
     if sip:
         info.remote = sip.group(1)
     else:
-        # bare number in calls dump
         num = re.search(r"(?i)(?:to|with|from)\s+(\+?\d[\d\s\-]+)", raw)
         if num:
             info.remote = num.group(1).strip()
