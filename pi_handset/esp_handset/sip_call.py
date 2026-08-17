@@ -29,7 +29,16 @@ def available() -> bool:
 
 
 def missing_hint() -> str:
-    return "Linphone missing — Update Digivice again"
+    # Prefer last ensure status if present
+    try:
+        p = Path("/etc/esp-handset/linphone.status")
+        if p.is_file():
+            st = p.read_text(encoding="utf-8", errors="replace").strip()
+            if st.startswith("missing") or not st.startswith("ok"):
+                return "Linphone apt failed — see ensure log"
+    except Exception:
+        pass
+    return "Linphone missing — SSH: sudo digivice-ensure-linphone"
 
 
 def _run(args: List[str], timeout: float = 3.0) -> str:

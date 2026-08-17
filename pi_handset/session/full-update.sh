@@ -281,8 +281,17 @@ install -m 755 "$ROOT/session/ensure-cardkb.sh" /usr/local/bin/digivice-ensure-c
 if [[ -f "$ROOT/session/ensure-linphone.sh" ]]; then
   install -m 755 "$ROOT/session/ensure-linphone.sh" "$PREFIX/session/ensure-linphone.sh"
   install -m 755 "$ROOT/session/ensure-linphone.sh" /usr/local/bin/digivice-ensure-linphone
-  bash /usr/local/bin/digivice-ensure-linphone 2>&1 | tee -a "$LOG" \
-    || log "WARN: digivice-ensure-linphone failed — VoIP dial will not work"
+  log "Ensuring Linphone (VoIP)…"
+  if ! env SUDO_USER="$USER_NAME" DIGIVICE_USER="$USER_NAME" \
+      bash /usr/local/bin/digivice-ensure-linphone 2>&1 | tee -a "$LOG"; then
+    log "ERROR: digivice-ensure-linphone FAILED — calls will not work"
+    log "  Run: sudo digivice-ensure-linphone --doctor"
+  fi
+fi
+if command -v linphonecsh >/dev/null 2>&1 || [[ -x /usr/bin/linphonecsh ]]; then
+  log "VoIP OK: $(command -v linphonecsh 2>/dev/null || echo /usr/bin/linphonecsh)"
+else
+  log "ERROR: linphonecsh STILL MISSING after ensure — VoIP broken"
 fi
 if [[ -f "$ROOT/session/home-relaunch.sh" ]]; then
   install -m 755 "$ROOT/session/home-relaunch.sh" "$PREFIX/session/home-relaunch.sh"
@@ -798,6 +807,13 @@ fi
 
 echo ""
 echo "Done.  sudo digivice-full-update"
+if command -v linphonecsh >/dev/null 2>&1 || [[ -x /usr/bin/linphonecsh ]]; then
+  echo "VoIP: OK ($(command -v linphonecsh 2>/dev/null || echo /usr/bin/linphonecsh))"
+else
+  echo "VoIP: FAILED — linphonecsh missing"
+  echo "  sudo digivice-ensure-linphone"
+  echo "  sudo digivice-ensure-linphone --doctor"
+fi
 echo "If Digivice blank:  digivice-start"
 echo "If 2\" still static:  tail -50 ~/.esp-handset/handset.log"
 echo ""
