@@ -163,6 +163,7 @@ def make_sip_account_page(on_back: Callable[[], None]) -> QWidget:
         lay.addWidget(_label(lab))
         lay.addWidget(w)
     status = _status()
+    status.setMinimumHeight(90)
     save = _btn("Save SIP", primary=True)
     test = _btn("Test SIP")
     lay.addWidget(save)
@@ -188,12 +189,11 @@ def make_sip_account_page(on_back: Callable[[], None]) -> QWidget:
             status.setText(f"Saved · register later ({e})")
 
     def do_test() -> None:
-        status.setText("Testing SIP…")
+        status.setText("Testing SIP…\n(wait up to ~30s)")
         try:
             from esp_handset import sip_call
-
-            # Run off the UI thread so Digivice stays responsive
             import threading
+            from PyQt5.QtCore import QTimer
 
             def work() -> None:
                 try:
@@ -204,8 +204,6 @@ def make_sip_account_page(on_back: Callable[[], None]) -> QWidget:
                 def show() -> None:
                     status.setText(report)
                     status.setWordWrap(True)
-
-                from PyQt5.QtCore import QTimer
 
                 QTimer.singleShot(0, show)
 

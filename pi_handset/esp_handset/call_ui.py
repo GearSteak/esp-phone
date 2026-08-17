@@ -580,6 +580,9 @@ class CallController(QObject):
         self.state_changed.emit("idle")
 
     def _tick(self) -> None:
+        # Don't touch linphonecsh pipe while dial/register worker owns it
+        if self._awaiting_dial:
+            return
         try:
             info = sip_call.poll()
         except Exception:
