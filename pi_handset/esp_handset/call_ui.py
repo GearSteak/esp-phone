@@ -462,10 +462,11 @@ class CallController(QObject):
         if self._user_hangup or self._phase not in ("dialing", "ringing"):
             return
         if not ok:
+            detail = reason or sip_call.last_error() or "Check SIP / number / Wi‑Fi"
             clog.finish(self._entry_id, status="failed", duration_s=0)
             self._phase = "ended"
-            self._show_ended("Could not dial", reason or "Check SIP / number / Wi‑Fi")
-            self.on_status(reason or "Could not dial")
+            self._show_ended("Could not dial", detail)
+            self.on_status(detail)
             self.state_changed.emit("ended")
             return
         self._phase = "ringing"

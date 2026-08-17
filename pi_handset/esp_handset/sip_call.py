@@ -14,11 +14,37 @@ from typing import Dict, List, Optional, Tuple
 _ensure_lock = threading.Lock()
 _ensured_once = False
 _bin_cache: Optional[str] = None
+_last_error = ""
 _WRAPPER = "/usr/local/bin/digivice-linphonecsh"
 _BIN_HINTS = (
     Path("/etc/esp-handset/linphone.bin"),
     Path.home() / ".esp-handset" / "linphone.bin",
 )
+_LOG = Path.home() / ".esp-handset" / "sip-last.log"
+
+
+def last_error() -> str:
+    return _last_error
+
+
+def _set_error(msg: str) -> str:
+    global _last_error
+    _last_error = (msg or "").strip()
+    return _last_error
+
+
+def _log(msg: str) -> None:
+    line = f"{time.strftime('%Y-%m-%d %H:%M:%S')} {msg}"
+    print(f"[sip_call] {msg}", flush=True)
+    try:
+        _LOG.parent.mkdir(parents=True, exist_ok=True)
+        prev = ""
+        if _LOG.is_file():
+            prev = _LOG.read_text(encoding="utf-8", errors="replace")
+        lines = (prev + line + "\n").splitlines()[-120:]
+        _LOG.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    except OSError:
+        pass
 
 
 def _is_exe(path: str) -> bool:
@@ -217,17 +243,56 @@ def _sip_env() -> Dict[str, str]:
 
 def _register_ok(status: str, user: str = "", server: str = "") -> bool:
     st = status or ""
-    if re.search(r"(?i)unregistered|not registered|registration failed|forbidden|unauthorized|403|401", st):
+    if not st.strip():
         return False
-    if re.search(r"(?i)\bregistered\b|Registration successful|Ok\b", st):
+    if re.search(
+        r"(?i)registered\s*=\s*-1|not\s*registered|unregistered|"
+        r"registration failed|forbidden|unauthorized|403|401",
+        st,
+    ):
+        return False
+    if re.search(r"(?i)\bregistered\b", st):
+        return True
+    if re.search(r"(?i)Registration successful|Ok\b", st):
         if user and user in st:
             return True
         if server and server in st:
             return True
-        # Some builds only print "registered" / "Ok"
-        if re.search(r"(?i)\bregistered\b", st):
+        # "Ok" alone from status register is often enough on linphone 5
+        if re.search(r"(?i)^Ok\b|status:\s*Ok", st):
             return True
     return False
+
+
+def _daemon_alive(exe: str) -> bool:
+    st = _run([exe, "status", "register"], timeout=2.0)
+    if re.search(r"(?i)no running|not running|failed to connect|could not", st):
+        return False
+    if st.startswith("ERR") and "timeout" not in st.lower():
+        # empty/ERR without "no running" — try status once more
+        st2 = _run([exe, "status"], timeout=2.0)
+        if re.search(r"(?i)no running|not running|failed to connect", st2):
+            return False
+    return True
+
+
+def _ensure_daemon(exe: str) -> str:
+    if _daemon_alive(exe):
+        return ""
+    _log("init linphonec daemon")
+    _run([exe, "init"], timeout=5.0)
+    time.sleep(0.5)
+    if not _daemon_alive(exe):
+        # Fresh start
+        _run([exe, "exit"], timeout=2.0)
+        time.sleep(0.3)
+        _run([exe, "init"], timeout=5.0)
+        time.sleep(0.6)
+    if not _daemon_alive(exe):
+        return _set_error("Linphone daemon failed to start")
+    # Zadarma recommends STUN for NAT
+    _run([exe, "generic", "stun stun.zadarma.com"], timeout=3.0)
+    return ""
 
 
 def ensure() -> str:
@@ -235,36 +300,31 @@ def ensure() -> str:
 
     Never runs apt — that freezes Digivice. Package install is apply-update only.
     """
+    with _ensure_lock:
+        return _ensure_unlocked()
+
+
+def _ensure_unlocked() -> str:
     exe = _bin()
     if not exe:
-        return missing_hint()
+        return _set_error(missing_hint())
     try:
-        st = _run([exe, "status", "register"], timeout=2.5)
-        dead = (
-            not st
-            or st.startswith("ERR")
-            or re.search(
-                r"(?i)no running|not running|could not|unable|failed to connect", st
-            )
-        )
+        dead = _ensure_daemon(exe)
         if dead:
-            _run([exe, "init"], timeout=4.0)
-            time.sleep(0.4)
-            st = _run([exe, "status", "register"], timeout=2.5)
-            if st.startswith("ERR") and re.search(r"(?i)no running|not running", st):
-                return "Linphone daemon failed to start"
+            return dead
+        st = _run([exe, "status", "register"], timeout=2.5)
         env = _sip_env()
         user = (env.get("SIP_USER") or "").strip()
         server = (env.get("SIP_SERVER") or "").strip()
         password = (env.get("SIP_PASS") or "").strip()
         if not user or not password or not server:
-            return "Set SIP in Settings → Accounts"
+            return _set_error("Set SIP in Settings → Accounts")
         if _register_ok(st, user, server):
+            _log(f"already registered ({user}@{server})")
+            _set_error("")
             return ""
-        # Prefer legacy positional (Debian linphone-cli); then flag form
+        # Bookworm linphone-cli uses flags; older builds use positional
         attempts = [
-            [exe, "register", f"sip:{user}@{server}", server, password],
-            [exe, "register", f"sip:{user}@{server}", f"sip:{server}", password],
             [
                 exe,
                 "register",
@@ -275,30 +335,39 @@ def ensure() -> str:
                 "--password",
                 password,
             ],
+            [exe, "register", f"sip:{user}@{server}", server, password],
+            [exe, "register", f"sip:{user}@{server}", f"sip:{server}", password],
+            [exe, "generic", f"register sip:{user}@{server} {server} {password}"],
         ]
-        last = ""
+        auth_fail = False
         for args in attempts:
-            last = _run(args, timeout=8.0)
-            print(f"[sip_call] register → {last[:160]!r}", flush=True)
-            if re.search(r"(?i)unknown option|invalid option|usage:", last):
+            # Never log password
+            safe = " ".join(args[:4]) + (" …" if len(args) > 4 else "")
+            _log(f"register try: {safe}")
+            out = _run(args, timeout=10.0)
+            _log(f"register out: {out[:180]!r}")
+            if re.search(r"(?i)unknown option|invalid option|usage:", out):
                 continue
-            # Wait briefly for REGISTER round-trip
-            for _ in range(5):
-                time.sleep(0.35)
-                st = _run([exe, "status", "register"], timeout=2.0)
+            if re.search(r"(?i)forbidden|unauthorized|403|401|denied|password", out):
+                auth_fail = True
+                continue
+            for _ in range(8):
+                time.sleep(0.4)
+                st = _run([exe, "status", "register"], timeout=2.5)
                 if _register_ok(st, user, server):
+                    _log(f"registered OK: {st[:120]!r}")
+                    _set_error("")
                     return ""
-            if re.search(r"(?i)forbidden|unauthorized|403|401|denied|password", last):
-                return "SIP auth failed — check password"
-            break  # one serious attempt is enough; dial may still work
-        st = _run([exe, "status", "register"], timeout=2.0)
+        st = _run([exe, "status", "register"], timeout=2.5)
+        _log(f"register final status: {st[:200]!r}")
         if _register_ok(st, user, server):
+            _set_error("")
             return ""
-        print(f"[sip_call] register status still bad: {st[:200]!r}", flush=True)
-        # Don't hard-block dial — some builds report oddly while calls still work
-        return ""
+        if auth_fail:
+            return _set_error("SIP auth failed — check password")
+        return _set_error("SIP not registered — check Wi‑Fi / Accounts")
     except Exception as e:
-        return f"SIP error: {e}"
+        return _set_error(f"SIP error: {e}")
 
 
 def ensure_async() -> None:
@@ -307,22 +376,15 @@ def ensure_async() -> None:
 
     def work() -> None:
         global _ensured_once
-        with _ensure_lock:
-            if _ensured_once and available():
-                try:
-                    ensure()
-                except Exception:
-                    pass
-                return
-            try:
-                hint = ensure()
-                _ensured_once = True
-                if hint:
-                    print(f"[sip_call] ensure: {hint}", flush=True)
-                else:
-                    print("[sip_call] linphone ready", flush=True)
-            except Exception as e:
-                print(f"[sip_call] ensure failed ({e})", flush=True)
+        try:
+            hint = ensure()
+            _ensured_once = True
+            if hint:
+                _log(f"ensure: {hint}")
+            else:
+                _log("linphone ready")
+        except Exception as e:
+            _log(f"ensure failed ({e})")
 
     threading.Thread(target=work, name="sip-ensure", daemon=True).start()
 
@@ -375,19 +437,14 @@ def _dial_targets(number: str) -> List[str]:
     e164 = _e164(raw)
     digits = re.sub(r"[^\d+*#]", "", raw)
     out: List[str] = []
-    if server:
-        if e164.startswith("+"):
-            out.append(f"sip:{e164}@{server}")
-        if digits and f"sip:{digits}@{server}" not in out:
-            out.append(f"sip:{digits}@{server}")
-        bare_plus = e164 if e164.startswith("+") else ""
-        if bare_plus:
-            out.append(bare_plus)
-    if e164 and e164 not in out:
+    if server and e164.startswith("+"):
+        out.append(f"sip:{e164}@{server}")
+    if server and digits:
+        out.append(f"sip:{digits}@{server}")
+    if e164.startswith("+"):
         out.append(e164)
-    if digits and digits not in out:
+    if digits:
         out.append(digits)
-    # Preserve order, drop empties
     seen = set()
     uniq: List[str] = []
     for t in out:
@@ -398,12 +455,13 @@ def _dial_targets(number: str) -> List[str]:
 
 
 def _hard_dial_error(text: str) -> bool:
-    """True only for clear reject — not soft chatter like 'failed to connect' after init."""
+    """True only for clear reject."""
     t = text or ""
     return bool(
         re.search(
             r"(?i)not registered|forbidden|unauthorized|403|401|denied|declined|"
-            r"could not resolve|no route|temporarily unavailable|486|603",
+            r"could not resolve|no route|temporarily unavailable|486|603|"
+            r"registration required",
             t,
         )
     )
@@ -419,61 +477,95 @@ def dial_ex(number: str) -> Tuple[bool, str]:
     """Return (ok, reason). reason is '' on success, else a short UI hint."""
     num = (number or "").strip()
     if not num:
-        return False, "No number"
+        return False, _set_error("No number")
     exe = _bin()
     if not exe:
-        return False, missing_hint() or "VoIP tool missing"
-    hint = ensure()
-    if hint and re.search(r"(?i)missing|daemon failed|auth failed|Set SIP", hint):
-        print(f"[sip_call] dial blocked: {hint}", flush=True)
-        return False, hint
+        return False, _set_error(missing_hint() or "VoIP tool missing")
+
+    with _ensure_lock:
+        hint = _ensure_unlocked()
+        if hint:
+            _log(f"dial blocked: {hint}")
+            return False, hint
+        st = _run([exe, "status", "register"], timeout=2.5)
+        env = _sip_env()
+        if not _register_ok(st, env.get("SIP_USER", ""), env.get("SIP_SERVER", "")):
+            _log(f"dial abort — not registered: {st[:160]!r}")
+            return False, _set_error("SIP not registered — Save SIP in Accounts")
 
     targets = _dial_targets(num)
     if not targets:
-        return False, "Bad number"
+        return False, _set_error("Bad number")
 
     last_out = ""
     for target in targets:
-        print(f"[sip_call] dial → {target}", flush=True)
-        out = _run([exe, "dial", target], timeout=8.0)
-        last_out = out or last_out
-        if re.search(r"(?i)no running|failed to connect", out):
-            _run([exe, "init"], timeout=4.0)
-            ensure()
-            out = _run([exe, "dial", target], timeout=8.0)
-            last_out = out or last_out
-        if re.search(r"(?i)unknown|invalid|usage", out) or _hard_dial_error(out):
-            out2 = _run([exe, "generic", f"call {target}"], timeout=8.0)
-            if out2:
-                out = out2
-                last_out = out2
-        if _hard_dial_error(out):
-            print(f"[sip_call] dial reject: {out[:200]}", flush=True)
-            continue
-        # Brief poll, then accept soft/empty success so UI isn't stuck waiting
-        for _ in range(4):
-            time.sleep(0.2)
-            info = poll()
-            if info.phase in ("dialing", "ringing", "early", "active"):
-                return True, ""
-            if info.phase == "error":
-                break
-        soft_ok = not _hard_dial_error(out) and not re.search(
-            r"(?i)unknown|invalid|usage|no running", out or ""
-        )
-        if soft_ok or not (out or "").strip() or (out or "").strip().lower() in (
-            "ok",
-            "done",
+        _log(f"dial → {target}")
+        outs: List[str] = []
+        for args in (
+            [exe, "dial", target],
+            [exe, "generic", f"call {target}"],
         ):
-            print(f"[sip_call] dial accepted → {target}", flush=True)
-            return True, ""
+            out = _run(args, timeout=8.0)
+            outs.append(out)
+            last_out = out or last_out
+            _log(f"dial cmd {' '.join(args[1:3])} → {out[:140]!r}")
+            if re.search(r"(?i)no running|failed to connect", out):
+                with _ensure_lock:
+                    _ensure_daemon(exe)
+                    _ensure_unlocked()
+                out = _run(args, timeout=8.0)
+                last_out = out or last_out
+            if _hard_dial_error(out):
+                continue
+            if re.search(r"(?i)unknown|invalid|usage", out):
+                continue
+            for _ in range(20):
+                time.sleep(0.25)
+                info = poll()
+                if info.phase in ("dialing", "ringing", "early", "active"):
+                    _log(f"call up phase={info.phase}")
+                    _set_error("")
+                    return True, ""
+                if info.phase == "error":
+                    _log(f"call error: {info.raw[:120]!r}")
+                    break
+        if any(
+            (not (o or "").strip()) or (o or "").strip().lower() in ("ok", "done")
+            for o in outs
+        ):
+            for _ in range(8):
+                time.sleep(0.25)
+                info = poll()
+                if info.phase in ("dialing", "ringing", "early", "active"):
+                    _set_error("")
+                    return True, ""
 
-    print(f"[sip_call] dial produced no call; last={last_out[:160]!r}", flush=True)
+    _log(f"dial failed; last={last_out[:180]!r}")
     if _hard_dial_error(last_out):
-        return False, "SIP rejected call"
+        return False, _set_error("SIP rejected call")
     if re.search(r"(?i)not registered", last_out):
-        return False, "SIP not registered"
-    return False, "Dial failed — check Wi‑Fi / number"
+        return False, _set_error("SIP not registered")
+    return False, _set_error("Dial failed — see Accounts → Test SIP")
+
+def doctor() -> str:
+    """Short multi-line SIP/linphone status for the Accounts UI."""
+    lines: List[str] = []
+    exe = _bin()
+    lines.append(f"bin: {exe or 'MISSING'}")
+    env = _sip_env()
+    lines.append(
+        f"sip: {env.get('SIP_USER') or '?'}@{env.get('SIP_SERVER') or '?'}"
+    )
+    if not exe:
+        return "\n".join(lines)
+    with _ensure_lock:
+        hint = _ensure_unlocked()
+        st = _run([exe, "status", "register"], timeout=2.5)
+        lines.append(f"register: {(st or 'empty')[:80]}")
+        lines.append(f"ensure: {hint or 'OK'}")
+        if _last_error:
+            lines.append(f"last: {_last_error}")
+    return "\n".join(lines)
 
 
 def hangup() -> None:

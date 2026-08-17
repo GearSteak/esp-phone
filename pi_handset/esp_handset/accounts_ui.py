@@ -164,7 +164,9 @@ def make_sip_account_page(on_back: Callable[[], None]) -> QWidget:
         lay.addWidget(w)
     status = _status()
     save = _btn("Save SIP", primary=True)
+    test = _btn("Test SIP")
     lay.addWidget(save)
+    lay.addWidget(test)
     lay.addWidget(status)
     lay.addStretch(1)
 
@@ -185,7 +187,34 @@ def make_sip_account_page(on_back: Callable[[], None]) -> QWidget:
         except Exception as e:
             status.setText(f"Saved · register later ({e})")
 
+    def do_test() -> None:
+        status.setText("Testing SIP…")
+        try:
+            from esp_handset import sip_call
+
+            # Run off the UI thread so Digivice stays responsive
+            import threading
+
+            def work() -> None:
+                try:
+                    report = sip_call.doctor()
+                except Exception as e:
+                    report = f"Test failed: {e}"
+
+                def show() -> None:
+                    status.setText(report)
+                    status.setWordWrap(True)
+
+                from PyQt5.QtCore import QTimer
+
+                QTimer.singleShot(0, show)
+
+            threading.Thread(target=work, name="sip-doctor", daemon=True).start()
+        except Exception as e:
+            status.setText(f"Test failed: {e}")
+
     save.clicked.connect(do_save)
+    test.clicked.connect(do_test)
     return page_chrome("SIP", body, on_back, scroll=True)
 
 
