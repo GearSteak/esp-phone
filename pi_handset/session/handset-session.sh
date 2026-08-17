@@ -266,6 +266,9 @@ show_desktop_chrome() {
   # Restart panels Digivice may have killed (Bookworm wf-panel-pi / lxpanel)
   pgrep -x lxpanel >/dev/null 2>&1 || (nohup lxpanel --profile LXDE-pi >/dev/null 2>&1 &) || true
   pgrep -x wf-panel-pi >/dev/null 2>&1 || (nohup wf-panel-pi >/dev/null 2>&1 &) || true
+  # CardKB daemon for Linux desktop (Digivice used in-process reader)
+  sudo -n systemctl start cardkb-inputd 2>/dev/null \
+    || systemctl start cardkb-inputd 2>/dev/null || true
   local r
   for r in \
     "$PREFIX/session/restore-desktop-displays.sh" \
@@ -389,12 +392,15 @@ ensure_buttons_daemon() {
 }
 
 ensure_cardkb_daemon() {
+  # Digivice reads CardKB in-process (cardkb_qt). Stop systemd injector so two
+  # clients do not fight over I2C 0x5F (stolen/missing keys).
   if systemctl is-active --quiet cardkb-inputd 2>/dev/null \
     || systemctl is-active --quiet cardkb-inputd.service 2>/dev/null; then
-    log "cardkb-inputd already active"
-    return 0
+    log "stopping cardkb-inputd for in-process Digivice CardKB"
+    sudo -n systemctl stop cardkb-inputd 2>>"$LOG" \
+      || systemctl stop cardkb-inputd 2>>"$LOG" || true
   fi
-  log "cardkb-inputd not active — enabling"
+  # Keep unit installed/healthy for Linux desktop when Digivice exits
   local e
   for e in \
     /usr/local/bin/digivice-ensure-cardkb \
@@ -403,19 +409,17 @@ ensure_cardkb_daemon() {
   do
     if [[ -f "$e" ]]; then
       if [[ "$(id -u)" -eq 0 ]]; then
-        bash "$e" >>"$LOG" 2>&1 && return 0
+        bash "$e" >>"$LOG" 2>&1 || true
+      else
+        sudo -n bash "$e" >>"$LOG" 2>&1 || bash "$e" >>"$LOG" 2>&1 || true
       fi
-      sudo -n bash "$e" >>"$LOG" 2>&1 && return 0
-      bash "$e" >>"$LOG" 2>&1 && return 0
+      break
     fi
   done
-  sudo -n systemctl enable --now cardkb-inputd 2>>"$LOG" \
-    || systemctl enable --now cardkb-inputd 2>>"$LOG" || true
-  if systemctl is-active --quiet cardkb-inputd 2>/dev/null; then
-    log "cardkb-inputd started"
-  else
-    log "WARN: cardkb-inputd still down — sudo digivice-ensure-cardkb --doctor"
-  fi
+  # ensure-cardkb starts the unit — stop again while Digivice owns the bus
+  sudo -n systemctl stop cardkb-inputd 2>>"$LOG" \
+    || systemctl stop cardkb-inputd 2>>"$LOG" || true
+  log "CardKB: Digivice in-process (daemon stopped)"
 }
 
 launch_phone() {

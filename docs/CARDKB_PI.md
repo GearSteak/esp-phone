@@ -20,28 +20,28 @@ CardKB wants a solid **5V** rail (brownout → LED blinks, no keys).
 ```bash
 cd ~/esp-phone && git pull && sudo digivice-full-update
 
-# Or just the CardKB stack:
-sudo digivice-ensure-cardkb
+# Doctor (I2C + wiring):
 sudo digivice-ensure-cardkb --doctor
+sudo usermod -aG i2c "$USER"   # needed for Digivice in-process reader
+# then reboot once if group was just added
 ```
 
-Doctor checks: `i2cdetect` for **`5f`**, service journal, baudrate, packages.
+Doctor checks: `i2cdetect` for **`5f`**, baudrate, packages.
 
 ```bash
 sudo raspi-config nonint do_i2c 0
 sudo i2cdetect -y 1          # must show 5f
-sudo systemctl status cardkb-inputd
-journalctl -u cardkb-inputd -f
-# live key log:
-sudo python3 /opt/esp-handset/cardkb_inputd.py -v
 ```
 
 `full-update` seeds `dtparam=i2c_arm_baudrate=50000` (Pi Zero clock-stretch). **Reboot once** after that line is first added.
 
 ## How keys reach Digivice
 
-`cardkb-inputd` injects via **xdotool** into the Digivice X session (same path as hard buttons).
-Confirm on a text field (or start typing) so focus lands in the field.
+**While Digivice is running**, CardKB is read **in-process** over I2C (no xdotool). That keeps typing instant in Accounts and other fields.
+
+`cardkb-inputd` is **stopped** during Digivice and restarted when you exit to Linux Desktop (for desktop typing).
+
+Confirm on a text field (yellow ring + “Typing · Back exits”), then type. **Back** leaves the field.
 
 ## “LED blinks once, then dead”
 
@@ -51,3 +51,4 @@ Usually I2C wedged or under-voltage — not Digivice UI.
 2. If it vanished: power/wiring or baudrate → reboot with `i2c_arm_baudrate=50000`
 3. Keep CardKB on **5V**, not 3.3V
 4. `sudo digivice-ensure-cardkb --doctor`
+5. Digivice log should show: `[cardkb] in-process OK` — if you see `cannot open I2C`, add user to group `i2c` and reboot

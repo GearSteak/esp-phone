@@ -91,16 +91,50 @@ class _KioskKeyFilter(QObject):
         return None
 
     def _deliver_to_field(self, field, event) -> bool:
-        """Insert / edit in field even when X focus is on the kiosk host."""
+        """Fast path: mutate the field directly (no scroll / no event clone lag)."""
         try:
             if not field.hasFocus():
                 field.setFocus(Qt.OtherFocusReason)
-            from esp_handset import digi_nav
-
-            digi_nav.ensure_visible(field)
         except Exception:
             pass
-        # Do not reuse the in-flight event object — clone for the field
+
+        key = event.key()
+        text = event.text() or ""
+
+        if isinstance(field, QLineEdit):
+            if key == Qt.Key_Backspace:
+                field.backspace()
+                return True
+            if key == Qt.Key_Delete:
+                field.del_()
+                return True
+            if key == Qt.Key_Left:
+                field.cursorBackward(False, 1)
+                return True
+            if key == Qt.Key_Right:
+                field.cursorForward(False, 1)
+                return True
+            if key == Qt.Key_Home:
+                field.home(False)
+                return True
+            if key == Qt.Key_End:
+                field.end(False)
+                return True
+            if text and text.isprintable():
+                field.insert(text)
+                return True
+
+        if isinstance(field, (QTextEdit, QPlainTextEdit)):
+            if key == Qt.Key_Backspace:
+                cursor = field.textCursor()
+                cursor.deletePreviousChar()
+                field.setTextCursor(cursor)
+                return True
+            if text and text.isprintable():
+                field.insertPlainText(text)
+                return True
+
+        # Fallback for odd keys
         try:
             from PyQt5.QtGui import QKeyEvent
 
@@ -764,6 +798,27 @@ def main() -> int:
 
     win = build_app(bridge, modem)
     app.installEventFilter(_KioskKeyFilter(win))
+    # CardKB: read I2C in-process (instant typing). Prefer over cardkb-inputd/xdotool.
+    try:
+        from esp_handset.cardkb_qt import start_cardkb
+
+        win._cardkb = start_cardkb(win)  # type: ignore[attr-defined]
+        if win._cardkb is None:
+            print("[handset] CardKB in-process off/unavailable", flush=True)
+    except Exception as e:
+        print(f"[handset] CardKB in-process failed ({e})", flush=True)
+        try:
+            import subprocess
+
+            subprocess.run(
+                ["systemctl", "start", "cardkb-inputd"],
+                timeout=3,
+                check=False,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        except Exception:
+            pass
     # Skip PIN unlock in kiosk by default (set ESP_HANDSET_SKIP_PIN=0 to require)
     if os.environ.get("ESP_HANDSET_SKIP_PIN", "1").strip() not in ("1", "true", "yes"):
         if not features.verify_pin_dialog(win):

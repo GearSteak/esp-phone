@@ -110,14 +110,13 @@ def _find_xauthority() -> Optional[str]:
 
 
 class XInject:
-    """Mirror digi-buttons: push keys into the Digivice X session."""
+    """Fast X key inject — same idea as digi-buttons (no windowactivate)."""
 
     def __init__(self) -> None:
         self.display = os.environ.get("DISPLAY") or ":0"
         self.auth = _find_xauthority()
         self.xdotool = _which("xdotool")
         self.ok = bool(self.xdotool)
-        self._last_focus_try = 0.0
         if self.ok:
             log(
                 f"X inject ON display={self.display} "
@@ -142,50 +141,26 @@ class XInject:
                 env=self._env(),
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
-                timeout=0.8,
+                timeout=0.25,
                 check=False,
             )
         except Exception:
             pass
 
-    def ensure_digivice_focus(self) -> None:
-        """Bring Digivice (or its HDMI host) to the front so type/key land."""
-        now = time.monotonic()
-        if now - self._last_focus_try < 0.35:
-            return
-        self._last_focus_try = now
-        # Title set by PhoneShell / ScaledScreenHost
-        for pattern in ("ESP Digivice", "Digivice", "handset_app"):
-            self._run(
-                [
-                    "search",
-                    "--name",
-                    pattern,
-                    "windowactivate",
-                    "--sync",
-                ]
-            )
-
     def key_named(self, name: str) -> None:
-        if not name:
-            return
-        self.ensure_digivice_focus()
-        self._run(["key", "--clearmodifiers", name])
+        if name:
+            self._run(["key", "--clearmodifiers", name])
 
     def type_char(self, ch: str) -> None:
         if not ch:
             return
-        self.ensure_digivice_focus()
-        # Prefer per-key for letters/digits (more reliable than `type` on Pi)
-        if len(ch) == 1 and (ch.isalnum() or ch == " "):
-            if ch == " ":
-                self._run(["key", "--clearmodifiers", "space"])
-            elif ch.isupper():
-                self._run(["key", "--clearmodifiers", f"shift+{ch.lower()}"])
-            else:
-                self._run(["key", "--clearmodifiers", ch])
+        if len(ch) == 1 and ch.isalnum():
+            self._run(["key", "--clearmodifiers", ch.lower() if ch.isalpha() else ch])
             return
-        self._run(["type", "--clearmodifiers", "--delay", "1", "--", ch])
+        if ch == " ":
+            self._run(["key", "--clearmodifiers", "space"])
+            return
+        self._run(["type", "--clearmodifiers", "--delay", "0", "--", ch])
 
 
 def _open_bus(smbus_mod: Any, bus_id: int) -> Any:
