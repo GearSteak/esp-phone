@@ -361,23 +361,55 @@ class LibretroCore:
         lib.retro_get_system_info(byref(info))
         need_path = bool(info.need_fullpath)
 
-        game = _GameInfo()
         self._rom_path_p = c_char_p(str(self.rom).encode("utf-8"))
         self._c_keep.append(self._rom_path_p)
-        game.path = self._rom_path_p
-        game.meta = None
-        if need_path:
-            game.data = None
-            game.size = 0
-        else:
+        raw = b""
+        try:
             raw = self.rom.read_bytes()
-            self._rom_buf = ctypes.create_string_buffer(raw, len(raw))
-            game.data = ctypes.cast(self._rom_buf, c_void_p)
-            game.size = len(raw)
+        except OSError as e:
+            raise RuntimeError(f"could not read ROM ({e})") from e
+        if not raw:
+            raise RuntimeError("ROM file is empty")
+        # Binary buffer — do NOT use create_string_buffer(bytes, len)
+        # (that requires size >= len+1 and can truncate/raise).
+        self._rom_buf = (ctypes.c_char * len(raw)).from_buffer_copy(raw)
+        self._c_keep.append(self._rom_buf)
 
         lib.retro_load_game.restype = c_bool
-        if not lib.retro_load_game(byref(game)):
-            raise RuntimeError(f"core rejected ROM ({self.so_path.name})")
+        attempts: List[Tuple[str, bool]] = []
+        if need_path:
+            attempts.append(("path", False))
+            attempts.append(("data", True))
+        else:
+            attempts.append(("data", True))
+            attempts.append(("path", False))
+        last_mode = attempts[0][0]
+        loaded = False
+        tried = False
+        for mode, with_data in attempts:
+            last_mode = mode
+            game = _GameInfo()
+            game.path = self._rom_path_p
+            game.meta = None
+            if with_data:
+                game.data = ctypes.cast(self._rom_buf, c_void_p)
+                game.size = len(raw)
+            else:
+                game.data = None
+                game.size = 0
+            if tried:
+                try:
+                    lib.retro_unload_game()
+                except Exception:
+                    pass
+            tried = True
+            if lib.retro_load_game(byref(game)):
+                loaded = True
+                break
+        if not loaded:
+            raise RuntimeError(
+                f"core rejected ROM ({self.so_path.name}, last={last_mode})"
+            )
 
         av = _AvInfo()
         lib.retro_get_system_av_info(byref(av))

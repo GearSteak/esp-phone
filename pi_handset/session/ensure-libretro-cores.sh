@@ -124,6 +124,28 @@ if [[ "$(id -u)" -eq 0 ]]; then
   chown -R "$USER_NAME:$USER_NAME" "$DEST" 2>/dev/null || true
 fi
 
+# Nestopia needs NstDatabase.xml in GET_SYSTEM_DIRECTORY
+NES_BIOS_DIRS=(
+  "$PREFIX/bios/nes"
+  "$USER_HOME/.esp-handset/bios/nes"
+)
+NST_URL="https://raw.githubusercontent.com/libretro/nestopia/master/NstDatabase.xml"
+for bios in "${NES_BIOS_DIRS[@]}"; do
+  mkdir -p "$bios" 2>/dev/null || true
+  if [[ ! -s "$bios/NstDatabase.xml" ]]; then
+    log "fetch NstDatabase.xml → $bios"
+    if command -v curl >/dev/null 2>&1; then
+      curl -fsSL --max-time 40 -o "$bios/NstDatabase.xml" "$NST_URL" || true
+    elif command -v wget >/dev/null 2>&1; then
+      wget -q -T 40 -O "$bios/NstDatabase.xml" "$NST_URL" || true
+    fi
+  fi
+done
+if [[ "$(id -u)" -eq 0 ]]; then
+  chown -R "$USER_NAME:$USER_NAME" "$PREFIX/bios" \
+    "$USER_HOME/.esp-handset/bios" 2>/dev/null || true
+fi
+
 log "cores in $DEST:"
 ls -1 "$DEST"/*_libretro.so 2>/dev/null | sed 's#.*/#  #' || log "  (none yet)"
 exit 0

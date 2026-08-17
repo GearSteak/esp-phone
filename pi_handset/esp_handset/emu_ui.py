@@ -99,11 +99,11 @@ SYSTEMS: Dict[str, EmuSystem] = {
     "nes": EmuSystem(
         "nes",
         "NES",
-        "Famicom · fceumm",
+        "Famicom · nestopia",
         "◆",
         "nes",
-        (".nes", ".fds", ".unf", ".unif", ".zip"),
-        ("fceumm_libretro.so", "nestopia_libretro.so", "quicknes_libretro.so"),
+        (".nes", ".fds", ".unf", ".unif", ".zip", ".nsf"),
+        ("nestopia_libretro.so", "fceumm_libretro.so", "quicknes_libretro.so"),
         (256, 240),
     ),
     "smsgg": EmuSystem(
@@ -167,18 +167,39 @@ def rom_root() -> Path:
 
 def system_rom_dirs(sys: EmuSystem) -> List[Path]:
     sub = sys.folder
-    return [
-        DATA / "roms" / sub,
-        Path.home() / "roms" / sub,
-        Path.home() / "ROMs" / sub,
-        Path("/opt/esp-handset/roms") / sub,
-    ]
+    alts = {sub, sub.lower(), sub.upper(), sub.title()}
+    dirs: List[Path] = []
+    roots = (
+        DATA / "roms",
+        Path.home() / "roms",
+        Path.home() / "ROMs",
+        Path("/opt/esp-handset/roms"),
+    )
+    for root in roots:
+        for name in alts:
+            dirs.append(root / name)
+        dirs.append(root)
+    return dirs
 
 
 def ensure_rom_dir(sys: EmuSystem) -> Path:
     d = DATA / "roms" / sys.folder
     d.mkdir(parents=True, exist_ok=True)
     return d
+
+
+def _bios_dir(sys: EmuSystem) -> Path:
+    """Nestopia looks here for NstDatabase.xml; keep user + /opt copies."""
+    user = DATA / "bios" / sys.folder
+    user.mkdir(parents=True, exist_ok=True)
+    shared = Path("/opt/esp-handset/bios") / sys.folder
+    want = "NstDatabase.xml" if sys.key == "nes" else ""
+    if want:
+        if (shared / want).is_file():
+            return shared
+        if (user / want).is_file():
+            return user
+    return user
 
 
 def list_roms(sys: EmuSystem) -> List[Path]:
@@ -190,6 +211,8 @@ def list_roms(sys: EmuSystem) -> List[Path]:
             continue
         try:
             for p in sorted(d.iterdir(), key=lambda x: x.name.casefold()):
+                if not p.is_file():
+                    continue
                 if p.suffix.lower() not in sys.extensions:
                     continue
                 if p.name.upper() == "README.TXT":
@@ -412,12 +435,14 @@ class EmuWorker(QThread):
                 continue
         if self._sys.key == "gb":
             return False
-        self.failed.emit(str(last_err)[:140] if last_err else "Core failed")
+        names = ", ".join(p.name.replace("_libretro.so", "") for p in core_paths[:3])
+        detail = str(last_err)[:120] if last_err else "could not start"
+        self.failed.emit(f"{detail}\nTried {names}")
         return True
 
     def _run_one_core(self, core_path: Path, LibretroCore, raw_to_rgb888) -> bool:
         save_dir = DATA / "saves" / self._sys.folder
-        sys_dir = DATA / "bios" / self._sys.folder
+        sys_dir = _bios_dir(self._sys)
         core = None
         pcm = None
         try:
@@ -688,7 +713,7 @@ class EmuPlayView(QWidget):
         self._worker = w
         w.start(QThread.HighPriority)
         self._exit_timer.start()
-        self._boot_timer.start(6000)
+        self._boot_timer.start(12000 if self._sys.key == "nes" else 6000)
         self.setFocus(Qt.OtherFocusReason)
         self.raise_()
 
@@ -792,7 +817,12 @@ class EmuPlayView(QWidget):
     def _boot_timeout(self) -> None:
         if self._last_frame is not None:
             return
-        msg = "No video from core.\nNeed fceumm / nestopia\n(Settings → Update)\nor ROM not valid.\nBack = list"
+        msg = (
+            "No picture from core.\n"
+            "ROM may still be loading,\n"
+            "or nestopia/fceumm missing.\n"
+            "Back = list"
+        )
         _emu_log("ui boot timeout (no frames)")
         self.screen.setText(msg)
 

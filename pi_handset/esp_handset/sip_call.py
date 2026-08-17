@@ -27,6 +27,11 @@ _log_lock = threading.Lock()
 _eng_lock = threading.Lock()
 _csh_lock = threading.Lock()
 _ENGINE: Optional["LinphoneEngine"] = None
+_DISC: Dict[str, Tuple[Optional[str], float]] = {
+    "csh": (None, 0.0),
+    "linphonec": (None, 0.0),
+}
+_DISC_TTL = 90.0
 _last_error = ""
 _last_register_raw = ""
 _LOG = Path.home() / ".esp-handset" / "sip-last.log"
@@ -239,10 +244,16 @@ def _is_linphonec_cli(path: str) -> bool:
     if not path or not _exists(path):
         return False
     try:
-        base = os.path.basename(os.path.realpath(path)).lower()
+        real = os.path.realpath(path)
+        base = os.path.basename(real).lower()
     except OSError:
+        real = path
         base = os.path.basename(path).lower()
-    if "daemon" in base or "linphonecsh" in base:
+    if "daemon" in base or "linphonecsh" in base or "digivice-linphonec" in base:
+        return False
+    if "digivice-linphonec" in path.lower() or "digivice-linphonec" in real.lower():
+        return False
+    if _looks_like_script_wrapper(path) or _looks_like_script_wrapper(real):
         return False
     return "linphonec" in base
 
@@ -261,9 +272,32 @@ def _dpkg_bin(*suffixes: str) -> Optional[str]:
     want = tuple(suffixes)
     for line in (r.stdout or "").splitlines():
         line = line.strip()
-        if any(line.endswith(s) for s in want) and _exists(line):
-            return line
+        if not any(line.endswith(s) for s in want) or not _exists(line):
+            continue
+        if _is_csh_wrapper(line):
+            continue
+        if line.endswith("linphonec") and not _is_linphonec_cli(line):
+            continue
+        return line
     return None
+
+
+def _looks_like_script_wrapper(path: str) -> bool:
+    try:
+        with open(path, "rb") as f:
+            head = f.read(400)
+    except OSError:
+        return False
+    if head.startswith(b"\x7fELF"):
+        return False
+    low = head.lower()
+    return (
+        b"linphonecsh not found" in low
+        or b"linphonec not found" in low
+        or b"digivice-linphonecsh" in low
+        or b"digivice-linphonec:" in low
+        or b"install linphone-cli" in low
+    )
 
 
 def _is_csh_wrapper(path: str) -> bool:
@@ -273,18 +307,35 @@ def _is_csh_wrapper(path: str) -> bool:
         real = os.path.realpath(path)
     except OSError:
         real = path
-    return "digivice-linphonecsh" in real.lower() or "digivice-linphonecsh" in path.lower()
+    blob = f"{path}\n{real}".lower()
+    if "digivice-linphonecsh" in blob:
+        return True
+    return _looks_like_script_wrapper(path) or _looks_like_script_wrapper(real)
+
+
+def _cached(kind: str, fn) -> Optional[str]:
+    now = time.time()
+    prev, ts = _DISC.get(kind, (None, 0.0))
+    if ts and (now - ts) < _DISC_TTL:
+        return prev
+    hit = fn()
+    _DISC[kind] = (hit, now)
+    return hit
+
+
+def _bust_voip_cache() -> None:
+    _DISC["csh"] = (None, 0.0)
+    _DISC["linphonec"] = (None, 0.0)
 
 
 def _find_via_find(name: str) -> Optional[str]:
+    """Slow — only for Test SIP / install, never the 500ms poll path."""
     try:
         r = subprocess.run(
             [
                 "find",
                 "/usr/bin",
                 "/usr/local/bin",
-                "/usr/lib",
-                "/usr/libexec",
                 "-name",
                 name,
             ],
@@ -302,35 +353,25 @@ def _find_via_find(name: str) -> Optional[str]:
     return None
 
 
-def _discover_linphonec() -> Optional[str]:
+def _discover_linphonec_uncached() -> Optional[str]:
     pinned = _read_pin("linphonec.bin")
     if pinned and _is_linphonec_cli(pinned):
         return pinned
     for p in (
         "/usr/bin/linphonec",
-        shutil.which("linphonec"),
         "/usr/local/bin/linphonec",
-        "/usr/local/bin/digivice-linphonec",
+        shutil.which("linphonec"),
     ):
         if p and _is_linphonec_cli(p):
             return p
-    try:
-        r = subprocess.run(
-            ["bash", "-lc", "command -v linphonec"],
-            capture_output=True,
-            text=True,
-            timeout=2.0,
-            check=False,
-        )
-        hit = (r.stdout or "").strip().splitlines()
-        if hit and _is_linphonec_cli(hit[0].strip()):
-            return hit[0].strip()
-    except Exception:
-        pass
-    return _dpkg_bin("/linphonec") or _find_via_find("linphonec")
+    return None
 
 
-def _discover_csh() -> Optional[str]:
+def _discover_linphonec() -> Optional[str]:
+    return _cached("linphonec", _discover_linphonec_uncached)
+
+
+def _discover_csh_uncached() -> Optional[str]:
     pinned = _read_pin("linphone.bin")
     if pinned and _exists(pinned) and not _is_csh_wrapper(pinned):
         return pinned
@@ -341,10 +382,11 @@ def _discover_csh() -> Optional[str]:
     ):
         if p and _exists(p) and not _is_csh_wrapper(p):
             return p
-    hit = _dpkg_bin("/linphonecsh") or _find_via_find("linphonecsh")
-    if hit:
-        return hit
     return None
+
+
+def _discover_csh() -> Optional[str]:
+    return _cached("csh", _discover_csh_uncached)
 
 
 def available() -> bool:
@@ -659,6 +701,9 @@ def ensure() -> str:
 def ensure_async() -> None:
     def work() -> None:
         try:
+            if not _discover_linphonec() and not _discover_csh():
+                _log("no voip binary yet — skip boot start")
+                return
             hint = ensure()
             if hint:
                 _log(f"ensure: {hint}")
@@ -674,7 +719,7 @@ def ensure_async() -> None:
 
 def _csh_cmd(*args: str, timeout: float = 8.0) -> str:
     csh = _discover_csh()
-    if not csh:
+    if not csh or _is_csh_wrapper(csh):
         return ""
     with _csh_lock:
         try:
@@ -893,14 +938,10 @@ def answer() -> None:
 
 
 def poll() -> CallInfo:
+    """Cheap: never spawn linphonecsh from the UI timer."""
     eng = _engine()
     if eng.alive():
         return eng.snapshot()
-    if _discover_csh():
-        hook = _csh_cmd("status", "hook", timeout=1.5)
-        calls = _csh_calls()
-        phase = _csh_phase(hook, calls)
-        return CallInfo(raw=f"{hook}\n{calls}", phase=phase, state=phase)
     return CallInfo()
 
 
@@ -931,38 +972,67 @@ def _sudo_ensure_linphone(timeout: float = 55.0) -> str:
             continue
         out = ((r.stdout or "") + (r.stderr or "")).strip()
         _log(f"ensure rc={r.returncode} {(out or '')[-120:]}")
+        _bust_voip_cache()
         return out[-400:] or f"ensure rc={r.returncode}"
     return last
 
 
+def _install_voip_bg() -> None:
+    try:
+        _sudo_ensure_linphone(90.0)
+    finally:
+        _bust_voip_cache()
+
+
 def doctor() -> str:
-    """SIP check for the 2\" screen. Installs linphone-cli if the real binary is missing."""
+    """Fast SIP check. If linphonecsh is missing, start install in the background."""
     env = _sip_env()
     user = (env.get("SIP_USER") or "").strip() or "?"
     server = (env.get("SIP_SERVER") or "").strip() or "?"
+    _bust_voip_cache()
+    csh = _discover_csh_uncached()
+    lp = _discover_linphonec_uncached()
+    if not csh:
+        csh = _dpkg_bin("/linphonecsh")
+        if csh and _is_csh_wrapper(csh):
+            csh = None
+    if not lp:
+        lp = _dpkg_bin("/linphonec")
+        if lp and not _is_linphonec_cli(lp):
+            lp = None
     lines = [
-        f"linphonec: {_discover_linphonec() or 'MISSING'}",
-        f"linphonecsh: {_discover_csh() or 'MISSING'}",
+        f"linphonec: {lp or 'MISSING'}",
+        f"linphonecsh: {csh or 'MISSING'}",
         f"sip: {user}@{server}",
     ]
-    csh = _discover_csh()
-    if not csh:
-        lines.append("Installing linphone-cli…")
-        inst = _sudo_ensure_linphone(55.0)
-        if inst:
-            lines.append(inst.replace("\n", " ")[:180])
-        csh = _discover_csh()
-        lines.append(f"linphonecsh now: {csh or 'STILL MISSING'}")
+    if not csh and not lp:
+        threading.Thread(
+            target=_install_voip_bg, name="voip-apt", daemon=True
+        ).start()
+        lines.insert(0, "RESULT: INSTALLING VOIP")
+        lines.append("Installing linphone-cli in the background.")
+        lines.append("Wait about a minute, then Test SIP again.")
+        lines.append("This is not the wrapper — the real CLI is missing.")
+        lines.append("--- log ---")
+        lines.append(recent_log(8))
+        return "\n".join(lines)
+    if csh:
+        _DISC["csh"] = (csh, time.time())
+    if lp:
+        _DISC["linphonec"] = (lp, time.time())
     eng = _engine()
     lines.append(f"proc: {'up' if eng.alive() else 'down'}")
     lines.append(f"cli-registered: {eng.registered}")
     result = "NOT REGISTERED"
     if csh:
-        st = _csh_cmd("status", "register", timeout=3.0)
+        st = _csh_cmd("status", "register", timeout=2.0)
         compact = (st or "").replace("\n", " ").strip()
         if re.search(r"(?i)linphonecsh not found", compact):
-            lines.append("wrapper: real linphonecsh still missing")
-            result = "LINPHONE NOT INSTALLED"
+            threading.Thread(
+                target=_install_voip_bg, name="voip-apt", daemon=True
+            ).start()
+            result = "INSTALLING VOIP"
+            lines.append("wrapper could not find real linphonecsh")
         elif re.search(r"(?i)no running|not running|failed to connect", compact):
             lines.append("daemon: not running (Save SIP to register)")
             result = "NOT REGISTERED"
@@ -980,12 +1050,9 @@ def doctor() -> str:
                 ok = True
             result = "REGISTERED" if ok else "NOT REGISTERED"
         else:
-            lines.append("register: (empty)")
             result = "REGISTERED" if eng.registered else "NOT REGISTERED"
     elif eng.registered:
         result = "REGISTERED"
-    else:
-        result = "LINPHONE NOT INSTALLED"
     if _last_error:
         lines.append(f"last: {_last_error}")
     lines.insert(0, f"RESULT: {result}")

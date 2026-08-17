@@ -6,7 +6,6 @@ Stop systemd cardkb-inputd while Digivice runs to avoid two readers fighting.
 from __future__ import annotations
 
 import os
-import time
 from typing import Any, Optional
 
 from PyQt5.QtCore import QObject, QTimer, Qt, QEvent

@@ -294,6 +294,72 @@ class BootSplash(QWidget):
             p.drawText(8, h - 20, w - 16, 14, Qt.AlignHCenter, self._sub)
 
 
+class SplashStatus(QWidget):
+    """In-page splash look (Settings → Update)."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._line = "hello ·"
+        self._sub = "checking updates"
+        self._pulse = 0
+        self._logo = QPixmap()
+        path = _splash_logo_path()
+        if path is not None:
+            pm = QPixmap(str(path))
+            if not pm.isNull():
+                self._logo = pm
+        self._tick = QTimer(self)
+        self._tick.timeout.connect(self._on_pulse)
+        self._tick.start(120)
+        self.setMinimumHeight(140)
+
+    def set_line(self, line: str, sub: str = "") -> None:
+        self._line = line
+        self._sub = sub
+        self.update()
+
+    def _on_pulse(self) -> None:
+        self._pulse = (self._pulse + 1) % 40
+        self.update()
+
+    def paintEvent(self, _event) -> None:  # noqa: N802
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        p.setRenderHint(QPainter.SmoothPixmapTransform)
+        w, h = self.width(), self.height()
+        p.fillRect(self.rect(), QColor("#000000"))
+        glow = 8 + (self._pulse % 16)
+        p.setPen(Qt.NoPen)
+        p.setBrush(QColor(160, 50, 45, glow))
+        p.drawEllipse(int(w * 0.16), int(h * 0.04), int(w * 0.68), int(h * 0.55))
+        logo_bottom = h // 2
+        if not self._logo.isNull():
+            scaled = self._logo.scaled(
+                max(40, w - 36),
+                max(40, h - 48),
+                Qt.KeepAspectRatio,
+                Qt.SmoothTransformation,
+            )
+            x = (w - scaled.width()) // 2
+            y = max(2, (h - 44 - scaled.height()) // 2)
+            p.drawPixmap(x, y, scaled)
+            logo_bottom = y + scaled.height()
+        p.setPen(QColor("#e8eef5"))
+        p.setFont(QFont("DejaVu Sans", 10))
+        p.drawText(
+            6,
+            max(logo_bottom + 2, h - 32),
+            w - 12,
+            14,
+            Qt.AlignHCenter,
+            self._line,
+        )
+        if self._sub:
+            p.setPen(QColor("#6a7a8a"))
+            p.setFont(QFont("DejaVu Sans", 8))
+            p.drawText(6, h - 16, w - 12, 14, Qt.AlignHCenter, self._sub)
+
+
 def _pump(app: QApplication, seconds: float) -> None:
     end = time.time() + max(0.0, seconds)
     while time.time() < end:

@@ -2547,37 +2547,38 @@ def make_power_page(on_back: Callable[[], None]) -> QWidget:
 
 
 def make_update_page(on_back: Callable[[], None]) -> QWidget:
-    """Stage update to /opt/esp-handset.staging, then exit → apply → relaunch.
+    """Check GitHub first (splash-style). Only pull/install if an update exists."""
+    from PyQt5.QtCore import QObject, QProcess, QProcessEnvironment, QTimer, pyqtSignal
+    import threading
 
-    Never overwrites live /opt while Digivice is running. Never KILLs itself.
-    """
-    from PyQt5.QtCore import QProcess, QProcessEnvironment, QTimer
+    from esp_handset.boot_splash import SplashStatus, check_for_updates
 
     body = QWidget()
+    body.setStyleSheet("background:#000;")
     lay = QVBoxLayout(body)
-    tip = QLabel(
-        "Confirm in Settings starts update.\n"
-        "Pull → install → restart. Keep Wi‑Fi on.\n"
-        "May take several minutes (apt)."
-    )
-    tip.setWordWrap(True)
-    tip.setStyleSheet("color:#9ab;font-size:10px;")
-    status = QLabel("Opening…")
+    lay.setContentsMargins(0, 0, 0, 4)
+    lay.setSpacing(4)
+    splash = SplashStatus(body)
+    splash.set_line("hello ·", "checking updates")
+    status = QLabel("")
     status.setWordWrap(True)
-    meta = QLabel("")
-    meta.setWordWrap(True)
-    meta.setStyleSheet("color:#678;font-size:9px;")
+    status.setStyleSheet("color:#9ab;font-size:10px; padding:0 6px;")
     log = QTextEdit()
     log.setReadOnly(True)
-    log.setMinimumHeight(100)
-    log.setStyleSheet("font-size:9px; font-family: monospace;")
-    update_btn = QPushButton("Retry update")
-    update_btn.setStyleSheet("font-weight:700; min-height:36px;")
-    lay.addWidget(tip)
+    log.setMaximumHeight(72)
+    log.setVisible(False)
+    log.setStyleSheet(
+        "font-size:8px; font-family: monospace; background:#0a0a0a; color:#8a9;"
+    )
+    action_btn = QPushButton("Check again")
+    action_btn.setStyleSheet(
+        "font-weight:700; min-height:32px; background:#1a1a1a; color:#e8eef5;"
+        " border:1px solid #333; border-radius:8px;"
+    )
+    lay.addWidget(splash, 1)
     lay.addWidget(status)
-    lay.addWidget(meta)
-    lay.addWidget(log, 1)
-    lay.addWidget(update_btn)
+    lay.addWidget(log)
+    lay.addWidget(action_btn)
 
     proc = QProcess(body)
     proc.setProcessChannelMode(QProcess.MergedChannels)
@@ -2597,6 +2598,12 @@ def make_update_page(on_back: Callable[[], None]) -> QWidget:
     watchdog = QTimer(body)
     watchdog.setSingleShot(True)
     applying = {"on": False}
+    phase = {"mode": "check"}  # check | ready | updating | current
+
+    class _Bridge(QObject):
+        checked = pyqtSignal(object)
+
+    bridge = _Bridge(body)
 
     def _read_stamp() -> str:
         for p in (
@@ -2611,32 +2618,14 @@ def make_update_page(on_back: Callable[[], None]) -> QWidget:
                 continue
         return "(never)"
 
-    def _installed_hint() -> str:
-        for p in (
-            Path("/opt/esp-handset/handset_app.py"),
-            Path("/opt/esp-handset/esp_handset/__init__.py"),
-        ):
-            if p.is_file():
-                try:
-                    import time as _t
-
-                    ts = _t.strftime(
-                        "%Y-%m-%d %H:%M", _t.localtime(p.stat().st_mtime)
-                    )
-                    return f"Installed files: {ts}"
-                except OSError:
-                    return "Installed: /opt/esp-handset"
-        return "Installed: missing — run sudo digivice-full-update once"
-
     def refresh_meta() -> None:
-        meta.setText(f"Last: {_read_stamp()}\n{_installed_hint()}")
-
-    refresh_meta()
+        status.setText(f"Last: {_read_stamp()}")
 
     def append_out() -> None:
         data = bytes(proc.readAllStandardOutput()).decode("utf-8", "replace")
         if not data:
             return
+        log.setVisible(True)
         log.moveCursor(QTextCursor.End)
         log.insertPlainText(data)
         log.moveCursor(QTextCursor.End)
@@ -2648,8 +2637,8 @@ def make_update_page(on_back: Callable[[], None]) -> QWidget:
         applying["on"] = True
         import shlex
 
+        splash.set_line("applying ·", "restarting Digivice")
         status.setText("Quitting → apply staged update…")
-        log.append("\n--- scheduling apply, then clean quit ---\n")
         DATA.mkdir(parents=True, exist_ok=True)
         log_path = str(DATA / "apply-update.log")
         apply = "/usr/local/bin/digivice-apply-update"
@@ -2664,7 +2653,6 @@ def make_update_page(on_back: Callable[[], None]) -> QWidget:
 
         qlog = shlex.quote(log_path)
         qapply = shlex.quote(apply)
-        # Start apply FIRST so it is waiting; then we quit. No KILL race.
         script = (
             f"exec >>{qlog} 2>&1; "
             'echo "=== apply wait $(date -Iseconds) ==="; '
@@ -2685,7 +2673,7 @@ def make_update_page(on_back: Callable[[], None]) -> QWidget:
         except Exception as e:
             status.setText(f"Apply spawn failed: {e}")
             applying["on"] = False
-            update_btn.setEnabled(True)
+            action_btn.setEnabled(True)
             return
 
         def _quit() -> None:
@@ -2698,41 +2686,35 @@ def make_update_page(on_back: Callable[[], None]) -> QWidget:
             except Exception:
                 pass
 
-        # Give apply time to start waiting before we tear down Qt/SPI
         QTimer.singleShot(800, _quit)
 
     def on_timeout() -> None:
         if proc.state() == QProcess.NotRunning:
             return
-        log.append("\n--- TIMEOUT (10 min) — stopping updater ---\n")
         proc.terminate()
-        update_btn.setEnabled(True)
-        status.setText("Timed out — Digivice still running")
+        action_btn.setEnabled(True)
+        phase["mode"] = "ready"
+        splash.set_line("timed out ·", "Digivice still running")
+        status.setText("Update timed out")
 
     def on_finished(code: int, _st) -> None:
         watchdog.stop()
         append_out()
         refresh_meta()
         if code == 0:
-            status.setText("Staged OK — applying…")
-            log.append("\n--- OK — apply after quit ---\n")
+            splash.set_line("staged ·", "applying…")
             QTimer.singleShot(300, restart_digivice)
         else:
-            update_btn.setEnabled(True)
-            status.setText(f"Failed (exit {code}) — UI left running")
-            log.append(
-                "\n--- FAILED (safe: no restart) ---\n"
-                "Common fixes:\n"
-                "  • Wi‑Fi / GitHub down → try later\n"
-                "  • sudo denied → sudo digivice-full-update once\n"
-                "  • Or from SSH: cd ~/esp-phone && git pull && sudo digivice-update\n"
-            )
+            action_btn.setEnabled(True)
+            phase["mode"] = "check"
+            splash.set_line("update failed ·", "Confirm = try again")
+            status.setText(f"Failed (exit {code})")
 
     def on_error(err) -> None:
         watchdog.stop()
-        update_btn.setEnabled(True)
+        action_btn.setEnabled(True)
+        splash.set_line("couldn't start ·", str(err)[:40])
         status.setText(f"Start error: {err}")
-        log.append(f"\nQProcess error: {err}\n")
 
     proc.readyReadStandardOutput.connect(append_out)
     proc.finished.connect(on_finished)
@@ -2743,7 +2725,6 @@ def make_update_page(on_back: Callable[[], None]) -> QWidget:
         pass
 
     def _gui_update_bin() -> list:
-        # Only sudoers-allowlisted paths (not arbitrary repo bash — that fails sudo -n)
         for p in (
             "/usr/local/bin/digivice-gui-update",
             "/opt/esp-handset/session/gui-update.sh",
@@ -2763,63 +2744,104 @@ def make_update_page(on_back: Callable[[], None]) -> QWidget:
                 check=False,
             )
             if r.returncode != 0:
-                return (
-                    "Passwordless sudo missing.\n"
-                    "Seed once over HDMI/SSH:\n"
-                    "  sudo digivice-full-update"
-                )
+                return "Need sudo digivice-full-update once"
         except Exception as e:
             return f"sudo check failed: {e}"
         if not os.path.isfile("/usr/local/bin/digivice-gui-update") and not os.path.isfile(
             "/opt/esp-handset/session/gui-update.sh"
         ):
-            return (
-                "digivice-gui-update missing.\n"
-                "  sudo digivice-full-update"
-            )
+            return "digivice-gui-update missing"
         return None
 
     def do_update() -> None:
         if proc.state() != QProcess.NotRunning or applying["on"]:
-            status.setText("Already running…")
             return
         err = _preflight()
         if err:
-            status.setText("Cannot update")
-            log.clear()
-            log.append(err + "\n")
-            update_btn.setEnabled(True)
+            splash.set_line("can't update ·", err[:48])
+            status.setText(err)
+            action_btn.setEnabled(True)
             return
+        phase["mode"] = "updating"
         log.clear()
-        update_btn.setEnabled(False)
-        bin_cmd = _gui_update_bin()
+        log.setVisible(True)
+        action_btn.setEnabled(False)
+        splash.set_line("updating ·", "keep Wi‑Fi on")
         status.setText("Staging (live Digivice untouched)…")
-        log.append("$ " + " ".join(bin_cmd) + "\n\n")
+        bin_cmd = _gui_update_bin()
         prog, *argv = bin_cmd
         proc.start(prog, argv)
         if not proc.waitForStarted(5000):
-            status.setText("Could not start updater")
-            update_btn.setEnabled(True)
-            log.append(
-                "Missing digivice-gui-update.\n"
-                "  sudo digivice-full-update\n"
-            )
+            splash.set_line("couldn't start ·", "missing updater")
+            action_btn.setEnabled(True)
+            phase["mode"] = "check"
             return
         watchdog.start(10 * 60 * 1000)
 
-    update_btn.clicked.connect(do_update)
+    def on_checked(result) -> None:
+        action_btn.setEnabled(True)
+        st = getattr(result, "status", "error")
+        detail = getattr(result, "detail", "") or ""
+        if st == "available":
+            phase["mode"] = "ready"
+            splash.set_line("update ready ·", "Confirm = install")
+            status.setText(detail)
+            action_btn.setText("Install update")
+        elif st == "up_to_date":
+            phase["mode"] = "current"
+            splash.set_line("all set ·", "up to date")
+            status.setText(detail or _read_stamp())
+            action_btn.setText("Check again")
+        elif st == "offline":
+            phase["mode"] = "check"
+            splash.set_line("no signal ·", detail or "offline")
+            action_btn.setText("Check again")
+        else:
+            phase["mode"] = "check"
+            splash.set_line("ready ·", detail or "couldn't check")
+            action_btn.setText("Check again")
 
-    chrome = page_chrome("Update", body, on_back)
+    bridge.checked.connect(on_checked)
 
-    def on_page_show() -> None:
-        # Settings → Update Confirm lands here — start immediately (no second press)
+    def start_check() -> None:
         if proc.state() != QProcess.NotRunning or applying["on"]:
             return
-        status.setText("Starting update…")
-        QTimer.singleShot(120, do_update)
+        phase["mode"] = "check"
+        action_btn.setEnabled(False)
+        action_btn.setText("Checking…")
+        splash.set_line("hello ·", "checking updates")
+        status.setText("")
+
+        def work() -> None:
+            try:
+                res = check_for_updates(timeout_s=8.0)
+            except Exception as e:
+                from esp_handset.boot_splash import UpdateCheck
+
+                res = UpdateCheck("error", str(e)[:60])
+            bridge.checked.emit(res)
+
+        threading.Thread(target=work, name="upd-check", daemon=True).start()
+
+    def on_action() -> None:
+        if phase["mode"] == "ready":
+            do_update()
+            return
+        start_check()
+
+    action_btn.clicked.connect(on_action)
+
+    chrome = page_chrome("Update", body, on_back, scroll=False)
+
+    def on_page_show() -> None:
+        if proc.state() != QProcess.NotRunning or applying["on"]:
+            return
+        if phase["mode"] in ("updating", "ready"):
+            return
+        QTimer.singleShot(80, start_check)
 
     chrome.on_page_show = on_page_show  # type: ignore[attr-defined]
-    chrome.digi_activate = lambda: (do_update(), True)[1]  # type: ignore[attr-defined]
+    chrome.digi_activate = lambda: (on_action(), True)[1]  # type: ignore[attr-defined]
     return chrome
 
 
