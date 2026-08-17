@@ -437,10 +437,11 @@ class CallController(QObject):
         )
         self._entry_id = str(entry.get("id") or "")
 
-        if not sip_call.dial(num):
+        ok, reason = sip_call.dial_ex(num)
+        if not ok:
             clog.finish(self._entry_id, status="failed", duration_s=0)
             self._phase = "idle"
-            self._show_ended("Could not dial", "Check SIP account")
+            self._show_ended("Could not dial", reason or "Check SIP / number / Wi‑Fi")
             return False
 
         self._phase = "ringing"
