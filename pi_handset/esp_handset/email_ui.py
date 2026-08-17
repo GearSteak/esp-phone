@@ -148,10 +148,52 @@ def _parse_date(hdr: str) -> Optional[datetime]:
 
 
 def _creds() -> dict:
-    return store.load(
+    raw = store.load(
         "email.json",
         {"user": "", "pass": "", "host": "imap.gmail.com", "smtp": "smtp.gmail.com"},
     )
+    if not isinstance(raw, dict):
+        raw = {}
+    user = str(raw.get("user") or "").strip()
+    # Google app passwords are often typed with spaces (xxxx xxxx xxxx xxxx)
+    password = "".join(str(raw.get("pass") or "").split())
+    host = str(raw.get("host") or "imap.gmail.com").strip() or "imap.gmail.com"
+    smtp = str(raw.get("smtp") or "smtp.gmail.com").strip() or "smtp.gmail.com"
+    return {"user": user, "pass": password, "host": host, "smtp": smtp}
+
+
+def _auth_hint(err: str, user: str) -> str:
+    """Human tip when IMAP/SMTP rejects the login."""
+    e = (err or "").lower()
+    gmail = "gmail" in (user or "").lower() or "@gmail." in (user or "").lower()
+    if any(
+        x in e
+        for x in (
+            "authentication failed",
+            "invalid credentials",
+            "auth",
+            "login failed",
+            "application-specific",
+        )
+    ):
+        if gmail:
+            return (
+                "Gmail rejected the password.\n\n"
+                "Use a Google App Password, not your normal login:\n"
+                "1. Google Account → Security\n"
+                "2. Turn on 2-Step Verification\n"
+                "3. App passwords → Mail → Digivice\n"
+                "4. Paste the 16-letter code in\n"
+                "   Settings → Accounts → Email\n\n"
+                "Also enable IMAP in Gmail Settings → Forwarding/IMAP."
+            )
+        return (
+            "Login rejected.\n\n"
+            "Check address + password in\n"
+            "Settings → Accounts → Email.\n"
+            "Many hosts need an app password."
+        )
+    return err or "Unknown error"
 
 
 def _cache_get() -> List[dict]:

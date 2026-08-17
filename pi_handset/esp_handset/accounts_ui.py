@@ -188,7 +188,8 @@ def make_email_account_page(on_back: Callable[[], None]) -> QWidget:
     lay.addWidget(
         _header(
             "Email",
-            "Confirm on a field to type · Gmail needs an App Password",
+            "Gmail: App Password only (not your normal password). "
+            "Google Account → Security → 2-Step → App passwords.",
         )
     )
     em = store.load(
@@ -201,7 +202,7 @@ def make_email_account_page(on_back: Callable[[], None]) -> QWidget:
         },
     )
     user = _field("you@gmail.com")
-    password = _field("app password", password=True)
+    password = _field("16-letter app password", password=True)
     imap_host = _field("imap.gmail.com")
     smtp_host = _field("smtp.gmail.com")
     user.setText(str(em.get("user") or ""))
@@ -218,24 +219,61 @@ def make_email_account_page(on_back: Callable[[], None]) -> QWidget:
         lay.addWidget(w)
     status = _status()
     save = _btn("Save Email", primary=True)
+    test = _btn("Test login")
     lay.addWidget(save)
+    lay.addWidget(test)
     lay.addWidget(status)
     lay.addStretch(1)
 
+    def _normalized() -> dict:
+        return {
+            "user": user.text().strip(),
+            "pass": "".join(password.text().split()),
+            "host": imap_host.text().strip() or "imap.gmail.com",
+            "smtp": smtp_host.text().strip() or "smtp.gmail.com",
+        }
+
     def do_save() -> None:
-        store.save(
-            "email.json",
-            {
-                "user": user.text().strip(),
-                "pass": password.text().strip(),
-                "host": imap_host.text().strip() or "imap.gmail.com",
-                "smtp": smtp_host.text().strip() or "smtp.gmail.com",
-            },
-        )
+        data = _normalized()
+        # Keep spaces out of stored app password
+        password.setText(data["pass"])
+        store.save("email.json", data)
         status.setText("Saved · Email inbox will use these")
         store.push_notif("Email", "Account saved", "settings")
 
+    def do_test() -> None:
+        data = _normalized()
+        if not data["user"] or not data["pass"]:
+            status.setText("Need address + app password first")
+            return
+        if "@" not in data["user"]:
+            status.setText("Address should look like you@gmail.com")
+            return
+        status.setText("Testing IMAP…")
+        try:
+            import imaplib
+
+            M = imaplib.IMAP4_SSL(data["host"], 993)
+            M.login(data["user"], data["pass"])
+            M.select("INBOX")
+            M.logout()
+            store.save("email.json", data)
+            password.setText(data["pass"])
+            status.setText("OK · Signed in to IMAP")
+            store.push_notif("Email", "Login OK", "settings")
+        except Exception as e:
+            msg = str(e)
+            low = msg.lower()
+            if "auth" in low or "invalid" in low or "login" in low:
+                status.setText(
+                    "Auth failed · use a Google App Password "
+                    "(Security → App passwords), not your normal password"
+                )
+            else:
+                status.setText(f"Failed · {msg[:80]}")
+
     save.clicked.connect(do_save)
+    test.clicked.connect(do_test)
     return page_chrome("Email", body, on_back, scroll=True)
 
 
