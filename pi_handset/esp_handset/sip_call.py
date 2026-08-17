@@ -313,7 +313,7 @@ def _linphonerc_path() -> Path:
 
 
 def _write_linphonerc(env: Dict[str, str]) -> Optional[Path]:
-    """Persist Zadarma/SIP proxy so `init -c` auto-registers."""
+    """Linphone 5 + Zadarma UDP — same idea as Windows Linphone."""
     user = (env.get("SIP_USER") or "").strip()
     server = (env.get("SIP_SERVER") or "").strip()
     password = (env.get("SIP_PASS") or "").strip()
@@ -323,14 +323,16 @@ def _write_linphonerc(env: Dict[str, str]) -> Optional[Path]:
     path = _linphonerc_path()
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        # Minimal linphonerc — enough for linphonec daemon + register
         body = (
             "[sip]\n"
             "sip_port=5060\n"
+            "sip_tcp_port=-1\n"
+            "sip_tls_port=-1\n"
             "use_info=0\n"
             "guess_hostname=1\n"
-            "inc_timeout=15\n"
+            "inc_timeout=30\n"
             "use_ipv6=0\n"
+            "default_proxy=0\n"
             f"display_name={display}\n"
             "\n"
             "[rtp]\n"
@@ -345,9 +347,10 @@ def _write_linphonerc(env: Dict[str, str]) -> Optional[Path]:
             f"userid={user}\n"
             f"passwd={password}\n"
             f"realm={server}\n"
+            f"domain={server}\n"
             "\n"
             "[proxy_0]\n"
-            f"reg_proxy=sip:{server}\n"
+            f"reg_proxy=<sip:{server};transport=udp>\n"
             f"reg_identity=sip:{user}@{server}\n"
             "reg_expires=3600\n"
             "reg_sendregister=1\n"
@@ -542,12 +545,28 @@ def _e164(number: str) -> str:
     return digits or kept
 
 
-def _dial_targets(number: str) -> List[str]:
-    """URIs for linphonecsh. Never pass a leading '+' as its own argv token.
+def _dial_script() -> Optional[str]:
+    for p in (
+        "/usr/local/bin/digivice-sip-dial",
+        str(Path.home() / "esp-phone/pi_handset/session/digivice-sip-dial.sh"),
+        "/opt/esp-handset/session/digivice-sip-dial.sh",
+    ):
+        if _exists(p):
+            return p
+    return None
 
-    Windows Linphone worked after adding country code 1 (11 digits), not '+'.
-    linphonecsh treats a leading '+' like flags, so the call does nothing.
-    """
+
+def _pstn_digits(number: str) -> str:
+    """11-digit NANP like Windows Linphone (1 + 10 digits), no plus."""
+    e164 = _e164(number)
+    if e164.lower().startswith("sip:"):
+        return ""
+    digits = re.sub(r"\D", "", e164)
+    return digits
+
+
+def _dial_targets(number: str) -> List[str]:
+    """Windows-style: dial 1XXXXXXXXXX through the registered UDP proxy."""
     raw = (number or "").strip()
     if not raw:
         return []
@@ -555,19 +574,16 @@ def _dial_targets(number: str) -> List[str]:
         return [raw]
     env = _sip_env()
     server = (env.get("SIP_SERVER") or "").strip()
-    e164 = _e164(raw)
-    if "*" in e164 or "#" in e164:
-        return [e164]
-    cc_num = e164[1:] if e164.startswith("+") else e164
+    cc_num = _pstn_digits(raw)
+    if "*" in raw or "#" in raw:
+        return [re.sub(r"[^\d*#]", "", raw)]
     if not cc_num:
         return []
     out: List[str] = []
+    # Same as typing in Windows Linphone after register
+    out.append(cc_num)
     if server:
-        # Same form that worked on Windows: 1 + 10 digits, no plus
         out.append(f"sip:{cc_num}@{server}")
-        # RFC 3966 plus (encoded so CLI cannot eat it)
-        out.append(f"sip:%2B{cc_num}@{server}")
-        out.append(f"sip:+{cc_num}@{server}")
     seen = set()
     uniq: List[str] = []
     for t in out:
@@ -607,6 +623,24 @@ def dial_ex(number: str) -> Tuple[bool, str]:
     if not exe:
         return False, _set_error(missing_hint() or "VoIP tool missing")
 
+    digits = _pstn_digits(num) or re.sub(r"\D", "", num)
+    script = _dial_script()
+    if script and digits:
+        _log(f"sip-dial script {script} {digits}")
+        out = _run([script, digits], timeout=28.0)
+        _log(f"sip-dial → {out[-400:]!r}")
+        if re.search(r"(?m)^OK\s*$", out) or re.search(r"(?i)\bOK\b", out.splitlines()[-1] if out else ""):
+            _set_error("")
+            return True, ""
+        fail = ""
+        for line in reversed(out.splitlines()):
+            if line.startswith("FAIL:"):
+                fail = line[5:].strip()
+                break
+        if fail:
+            return False, _set_error(fail[:80])
+        # Script missing/old — fall through to Python path
+
     hint = _ensure_unlocked()
     if hint and re.search(r"(?i)missing|daemon failed|Set SIP", hint):
         _log(f"dial blocked: {hint}")
@@ -614,7 +648,6 @@ def dial_ex(number: str) -> Tuple[bool, str]:
 
     st = _status_register(exe)
     if _register_definitely_down(st):
-        # One more forced register pass
         hint2 = _ensure_unlocked()
         st = _status_register(exe)
         if _register_definitely_down(st):
@@ -629,11 +662,9 @@ def dial_ex(number: str) -> Tuple[bool, str]:
     last_out = ""
     for target in targets:
         _log(f"dial → {target}")
-        fired_ok = False
         for args in (
             [exe, "dial", target],
             [exe, "generic", f"call {target}"],
-            [exe, "generic", f'call "{target}"'],
         ):
             out = _run(args, timeout=8.0)
             last_out = out or last_out
@@ -647,7 +678,6 @@ def dial_ex(number: str) -> Tuple[bool, str]:
                 continue
             if re.search(r"(?i)unknown|invalid|usage", out):
                 continue
-            fired_ok = True
             for _ in range(16):
                 time.sleep(0.25)
                 info = poll()
@@ -657,13 +687,8 @@ def dial_ex(number: str) -> Tuple[bool, str]:
                     return True, ""
                 if info.phase == "error":
                     _log(f"call error: {info.raw[:120]!r}")
-                    fired_ok = False
                     break
-            # Do NOT claim success without a visible call — that left Digivice
-            # stuck on "Ringing" with nothing on the wire.
-            if fired_ok:
-                _log(f"dial cmd ok but no call state yet → try next ({target})")
-                continue
+            _log(f"dial cmd ok but no call state yet → try next ({target})")
 
     _log(f"dial failed; last={last_out[:180]!r}")
     raw = (_last_register_raw or last_out or "")[:48]

@@ -112,7 +112,9 @@ install_live_from_repo() {
     "ensure-buttons.sh:digivice-ensure-buttons" \
     "ensure-cardkb.sh:digivice-ensure-cardkb" \
     "ensure-linphone.sh:digivice-ensure-linphone" \
+    "ensure-libretro-cores.sh:digivice-libretro-cores" \
     "digivice-linphonecsh.sh:digivice-linphonecsh" \
+    "digivice-sip-dial.sh:digivice-sip-dial" \
     "digivice-audio-doctor.sh:digivice-audio-doctor" \
     "digivice-audio-usb.sh:digivice-audio-usb" \
     "digivice-audio-fix.sh:digivice-audio-fix" \
@@ -188,6 +190,7 @@ if [[ -d "$STAGE" && -f "$STAGE/.ready" ]]; then
     ensure-gb-wrappers.sh:digivice-ensure-gb \
     ensure-linphone.sh:digivice-ensure-linphone \
     digivice-linphonecsh.sh:digivice-linphonecsh \
+    digivice-sip-dial.sh:digivice-sip-dial \
     full-update.sh:digivice-full-update \
     digivice-audio-doctor.sh:digivice-audio-doctor \
     digivice-audio-usb.sh:digivice-audio-usb \
