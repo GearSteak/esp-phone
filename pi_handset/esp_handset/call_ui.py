@@ -87,8 +87,12 @@ class CallOverlay(QWidget):
         lay.addStretch(1)
 
         self.hangup_btn = _CircleAction("decline", self)
+        self.hangup_btn.setAutoDefault(False)
+        self.hangup_btn.setDefault(False)
         self.ok_btn = QPushButton("OK")
         self.ok_btn.setFixedHeight(36)
+        self.ok_btn.setAutoDefault(False)
+        self.ok_btn.setDefault(False)
         self.ok_btn.setFocusPolicy(Qt.StrongFocus)
         self.ok_btn.setStyleSheet(
             "QPushButton { font-size:13px; font-weight:800; color:#0a1218;"
@@ -116,6 +120,14 @@ class CallOverlay(QWidget):
         self._pulse = QTimer(self)
         self._pulse.timeout.connect(self._tick_pulse)
         self._pulse_n = 0
+        # Ignore Confirm key-release that follows the key that opened this overlay
+        self._input_ready_at = 0.0
+
+    def _arm_input(self) -> None:
+        self._input_ready_at = time.time() + 0.5
+
+    def _input_ready(self) -> bool:
+        return time.time() >= float(self._input_ready_at or 0.0)
 
     def _set_avatar(self, name: str, initial: str, photo: Optional[str]) -> None:
         size = 88
@@ -205,6 +217,7 @@ class CallOverlay(QWidget):
         self.hangup_btn.show()
         self.ok_btn.hide()
         self.hint.setText("Confirm · Hang up")
+        self._arm_input()
         self._show_and_focus(self.hangup_btn)
         self._pulse_n = 0
         self._pulse.start(400)
@@ -228,6 +241,7 @@ class CallOverlay(QWidget):
         self.hangup_btn.show()
         self.ok_btn.hide()
         self.hint.setText("Confirm · Hang up")
+        self._arm_input()
         self._show_and_focus(self.hangup_btn)
         self._pulse.stop()
 
@@ -250,6 +264,7 @@ class CallOverlay(QWidget):
         self.hangup_btn.hide()
         self.ok_btn.show()
         self.hint.setText("Confirm · OK")
+        self._arm_input()
         self._show_and_focus(self.ok_btn)
         self._pulse.stop()
 
@@ -291,11 +306,15 @@ class CallOverlay(QWidget):
         return self._mode
 
     def _do_hangup(self) -> None:
+        if not self._input_ready():
+            return
         cb = self._on_hangup
         if callable(cb):
             cb()
 
     def _do_dismiss(self) -> None:
+        if not self._input_ready():
+            return
         cb = self._on_dismiss
         self.hide_call()
         if callable(cb):
@@ -309,6 +328,9 @@ class CallOverlay(QWidget):
 
     def keyPressEvent(self, event) -> None:  # noqa: N802
         key = event.key()
+        if not self._input_ready():
+            event.accept()
+            return
         if self._mode == "ended":
             if key in (Qt.Key_Return, Qt.Key_Enter, Qt.Key_Escape):
                 self._do_dismiss()
@@ -352,6 +374,18 @@ class CallController(QObject):
         return self._phase in ("dialing", "ringing", "active")
 
     def start_outbound(self, number: str) -> bool:
+        try:
+            return self._start_outbound_inner(number)
+        except Exception as e:
+            print(f"[call] start_outbound crashed: {e}", flush=True)
+            self._phase = "idle"
+            try:
+                self.on_status("Call failed")
+            except Exception:
+                pass
+            return False
+
+    def _start_outbound_inner(self, number: str) -> bool:
         num = (number or "").strip()
         if not num:
             self.on_status("Enter a number")
@@ -710,14 +744,31 @@ def make_call_log_page(
     def redial_selected(_item: Optional[QListWidgetItem] = None) -> None:
         if not on_redial:
             return
-        item = _item or lst.currentItem()
+        item = _item if isinstance(_item, QListWidgetItem) else lst.currentItem()
         if item is None:
             return
         num = str(item.data(Qt.UserRole) or "").strip()
         if not num:
             return
-        on_redial(num)
+        # Digi Confirm emits itemClicked + itemActivated; also defer so the
+        # Confirm key-release cannot immediately hit Hang up on the overlay.
+        if pending["num"]:
+            return
+        pending["num"] = num
 
+        def go() -> None:
+            n = pending["num"]
+            pending["num"] = ""
+            if not n:
+                return
+            try:
+                on_redial(n)
+            except Exception as e:
+                print(f"[call_log] redial failed: {e}", flush=True)
+
+        QTimer.singleShot(80, go)
+
+    pending = {"num": ""}
     lst.itemActivated.connect(redial_selected)
     lst.itemClicked.connect(redial_selected)
 
@@ -792,7 +843,8 @@ def make_phone_page(
             on_status("Enter a number")
             return
         if callable(start_call):
-            start_call(num)
+            # Defer so Confirm key-release does not hang up the new overlay
+            QTimer.singleShot(80, lambda n=num: start_call(n))
             return
         # Fallback without controller
         from esp_handset import sip_call as sc
