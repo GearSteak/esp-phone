@@ -111,6 +111,10 @@ install -m 755 "$ROOT/session/install-home-request.sh" "$PREFIX/session/install-
 bash "$ROOT/session/install-home-request.sh" 2>/dev/null || true
 install -m 755 "$ROOT/session/ensure-buttons.sh" "$PREFIX/session/ensure-buttons.sh"
 install -m 755 "$ROOT/session/ensure-buttons.sh" /usr/local/bin/digivice-ensure-buttons
+if [[ -f "$ROOT/session/digivice-cardkb-ctl.sh" ]]; then
+  install -m 755 "$ROOT/session/digivice-cardkb-ctl.sh" "$PREFIX/session/digivice-cardkb-ctl.sh"
+  install -m 755 "$ROOT/session/digivice-cardkb-ctl.sh" /usr/local/bin/digivice-cardkb-ctl
+fi
 # Seed binary only — do NOT enable udev auto HDMI (breaks 2\" SPI)
 install -m 755 "$ROOT/session/hdmi-hotplug.sh" "$PREFIX/session/hdmi-hotplug.sh"
 install -m 755 "$ROOT/session/hdmi-hotplug.sh" /usr/local/bin/digivice-hdmi-hotplug
@@ -134,6 +138,16 @@ $USER_NAME ALL=(root) NOPASSWD: $PREFIX/session/gui-update.sh
 $USER_NAME ALL=(root) NOPASSWD: $PREFIX/session/power.sh
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-ensure-buttons
 $USER_NAME ALL=(root) NOPASSWD: $PREFIX/session/ensure-buttons.sh
+$USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-ensure-cardkb
+$USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-cardkb-ctl
+$USER_NAME ALL=(root) NOPASSWD: /usr/bin/systemctl stop cardkb-inputd
+$USER_NAME ALL=(root) NOPASSWD: /usr/bin/systemctl stop cardkb-inputd.service
+$USER_NAME ALL=(root) NOPASSWD: /usr/bin/systemctl start cardkb-inputd
+$USER_NAME ALL=(root) NOPASSWD: /usr/bin/systemctl start cardkb-inputd.service
+$USER_NAME ALL=(root) NOPASSWD: /bin/systemctl stop cardkb-inputd
+$USER_NAME ALL=(root) NOPASSWD: /bin/systemctl stop cardkb-inputd.service
+$USER_NAME ALL=(root) NOPASSWD: /bin/systemctl start cardkb-inputd
+$USER_NAME ALL=(root) NOPASSWD: /bin/systemctl start cardkb-inputd.service
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-fix-cursor
 $USER_NAME ALL=(root) NOPASSWD: /usr/bin/bash $PREFIX/session/gui-update.sh
 $USER_NAME ALL=(root) NOPASSWD: /bin/bash $PREFIX/session/gui-update.sh

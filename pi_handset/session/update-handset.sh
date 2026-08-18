@@ -214,6 +214,7 @@ install_tree() {
       "update-handset.sh:digivice-update" \
       "ensure-buttons.sh:digivice-ensure-buttons" \
       "ensure-cardkb.sh:digivice-ensure-cardkb" \
+      "digivice-cardkb-ctl.sh:digivice-cardkb-ctl" \
       "ensure-linphone.sh:digivice-ensure-linphone" \
       "digivice-linphonecsh.sh:digivice-linphonecsh" \
       "digivice-linphonec.sh:digivice-linphonec" \
@@ -314,6 +315,15 @@ $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-power
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-set-rotation
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-ensure-buttons
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-ensure-cardkb
+$USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-cardkb-ctl
+$USER_NAME ALL=(root) NOPASSWD: /usr/bin/systemctl stop cardkb-inputd
+$USER_NAME ALL=(root) NOPASSWD: /usr/bin/systemctl stop cardkb-inputd.service
+$USER_NAME ALL=(root) NOPASSWD: /usr/bin/systemctl start cardkb-inputd
+$USER_NAME ALL=(root) NOPASSWD: /usr/bin/systemctl start cardkb-inputd.service
+$USER_NAME ALL=(root) NOPASSWD: /bin/systemctl stop cardkb-inputd
+$USER_NAME ALL=(root) NOPASSWD: /bin/systemctl stop cardkb-inputd.service
+$USER_NAME ALL=(root) NOPASSWD: /bin/systemctl start cardkb-inputd
+$USER_NAME ALL=(root) NOPASSWD: /bin/systemctl start cardkb-inputd.service
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-ensure-linphone
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-ensure-gb
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-stop-gb

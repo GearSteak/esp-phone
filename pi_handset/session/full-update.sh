@@ -275,6 +275,7 @@ install -m 755 "$ROOT/session/gui-update.sh" /usr/local/bin/digivice-gui-update
 install -m 755 "$ROOT/session/update-handset.sh" /usr/local/bin/digivice-update 2>/dev/null || true
 install -m 755 "$ROOT/session/ensure-buttons.sh" /usr/local/bin/digivice-ensure-buttons 2>/dev/null || true
 install -m 755 "$ROOT/session/ensure-cardkb.sh" /usr/local/bin/digivice-ensure-cardkb 2>/dev/null || true
+install -m 755 "$ROOT/session/digivice-cardkb-ctl.sh" /usr/local/bin/digivice-cardkb-ctl 2>/dev/null || true
 if [[ -f "$ROOT/session/ensure-linphone.sh" ]]; then
   install -m 755 "$ROOT/session/ensure-linphone.sh" "$PREFIX/session/ensure-linphone.sh"
   install -m 755 "$ROOT/session/ensure-linphone.sh" /usr/local/bin/digivice-ensure-linphone
@@ -518,6 +519,15 @@ $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-power
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-set-rotation
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-ensure-buttons
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-ensure-cardkb
+$USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-cardkb-ctl
+$USER_NAME ALL=(root) NOPASSWD: /usr/bin/systemctl stop cardkb-inputd
+$USER_NAME ALL=(root) NOPASSWD: /usr/bin/systemctl stop cardkb-inputd.service
+$USER_NAME ALL=(root) NOPASSWD: /usr/bin/systemctl start cardkb-inputd
+$USER_NAME ALL=(root) NOPASSWD: /usr/bin/systemctl start cardkb-inputd.service
+$USER_NAME ALL=(root) NOPASSWD: /bin/systemctl stop cardkb-inputd
+$USER_NAME ALL=(root) NOPASSWD: /bin/systemctl stop cardkb-inputd.service
+$USER_NAME ALL=(root) NOPASSWD: /bin/systemctl start cardkb-inputd
+$USER_NAME ALL=(root) NOPASSWD: /bin/systemctl start cardkb-inputd.service
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-ensure-linphone
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-ensure-gb
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-stop-gb

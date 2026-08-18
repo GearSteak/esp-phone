@@ -15,6 +15,26 @@ mkdir -p "$(dirname "$MODE_FILE")" "$LOG_DIR"
 
 log() { echo "[$(date '+%H:%M:%S')] $*" | tee -a "$LOG" >&2; }
 
+# Never fall back to bare systemctl — that pops polkit "Authentication is required"
+cardkb_ctl() {
+  local op="${1:-}"
+  case "$op" in
+    start|stop) ;;
+    *) return 1 ;;
+  esac
+  if [[ "$(id -u)" -eq 0 ]]; then
+    systemctl "$op" cardkb-inputd.service >/dev/null 2>&1 || true
+    return 0
+  fi
+  if command -v digivice-cardkb-ctl >/dev/null 2>&1; then
+    sudo -n digivice-cardkb-ctl "$op" >/dev/null 2>&1 && return 0
+  fi
+  sudo -n /usr/bin/systemctl "$op" cardkb-inputd >/dev/null 2>&1 && return 0
+  sudo -n /bin/systemctl "$op" cardkb-inputd >/dev/null 2>&1 && return 0
+  log "WARN: cannot $op cardkb-inputd (no passwordless sudo) — skipped"
+  return 1
+}
+
 mode_get() {
   if [[ -f "$MODE_FILE" ]]; then
     tr -d '[:space:]' <"$MODE_FILE"
@@ -267,8 +287,7 @@ show_desktop_chrome() {
   pgrep -x lxpanel >/dev/null 2>&1 || (nohup lxpanel --profile LXDE-pi >/dev/null 2>&1 &) || true
   pgrep -x wf-panel-pi >/dev/null 2>&1 || (nohup wf-panel-pi >/dev/null 2>&1 &) || true
   # CardKB daemon for Linux desktop (Digivice used in-process reader)
-  sudo -n systemctl start cardkb-inputd 2>/dev/null \
-    || systemctl start cardkb-inputd 2>/dev/null || true
+  cardkb_ctl start
   local r
   for r in \
     "$PREFIX/session/restore-desktop-displays.sh" \
@@ -382,8 +401,7 @@ ensure_buttons_daemon() {
       bash "$e" >>"$LOG" 2>&1 && return 0
     fi
   done
-  sudo -n systemctl enable --now digi-buttons-inputd 2>>"$LOG" \
-    || systemctl enable --now digi-buttons-inputd 2>>"$LOG" || true
+  sudo -n systemctl enable --now digi-buttons-inputd 2>>"$LOG" || true
   if systemctl is-active --quiet digi-buttons-inputd 2>/dev/null; then
     log "digi-buttons-inputd started"
   else
@@ -397,8 +415,7 @@ ensure_cardkb_daemon() {
   if systemctl is-active --quiet cardkb-inputd 2>/dev/null \
     || systemctl is-active --quiet cardkb-inputd.service 2>/dev/null; then
     log "stopping cardkb-inputd for in-process Digivice CardKB"
-    sudo -n systemctl stop cardkb-inputd 2>>"$LOG" \
-      || systemctl stop cardkb-inputd 2>>"$LOG" || true
+    cardkb_ctl stop
   fi
   # Keep unit installed/healthy for Linux desktop when Digivice exits
   local e
@@ -411,14 +428,13 @@ ensure_cardkb_daemon() {
       if [[ "$(id -u)" -eq 0 ]]; then
         bash "$e" >>"$LOG" 2>&1 || true
       else
-        sudo -n bash "$e" >>"$LOG" 2>&1 || bash "$e" >>"$LOG" 2>&1 || true
+        sudo -n bash "$e" >>"$LOG" 2>&1 || true
       fi
       break
     fi
   done
   # ensure-cardkb starts the unit — stop again while Digivice owns the bus
-  sudo -n systemctl stop cardkb-inputd 2>>"$LOG" \
-    || systemctl stop cardkb-inputd 2>>"$LOG" || true
+  cardkb_ctl stop
   log "CardKB: Digivice in-process (daemon stopped)"
 }
 

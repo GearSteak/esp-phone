@@ -839,7 +839,7 @@ def main() -> int:
             import subprocess
 
             subprocess.run(
-                ["systemctl", "start", "cardkb-inputd"],
+                ["sudo", "-n", "systemctl", "start", "cardkb-inputd"],
                 timeout=3,
                 check=False,
                 stdout=subprocess.DEVNULL,

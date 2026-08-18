@@ -111,6 +111,7 @@ install_live_from_repo() {
     "desktop-spi-mirror.sh:digivice-desktop-mirror" \
     "ensure-buttons.sh:digivice-ensure-buttons" \
     "ensure-cardkb.sh:digivice-ensure-cardkb" \
+    "digivice-cardkb-ctl.sh:digivice-cardkb-ctl" \
     "ensure-linphone.sh:digivice-ensure-linphone" \
     "ensure-libretro-cores.sh:digivice-libretro-cores" \
     "digivice-linphonecsh.sh:digivice-linphonecsh" \
@@ -190,6 +191,8 @@ if [[ -d "$STAGE" && -f "$STAGE/.ready" ]]; then
     digivice-stop-gb.sh:digivice-stop-gb \
     ensure-gb-wrappers.sh:digivice-ensure-gb \
     ensure-linphone.sh:digivice-ensure-linphone \
+    ensure-cardkb.sh:digivice-ensure-cardkb \
+    digivice-cardkb-ctl.sh:digivice-cardkb-ctl \
     ensure-libretro-cores.sh:digivice-libretro-cores \
     digivice-linphonecsh.sh:digivice-linphonecsh \
     digivice-linphonec.sh:digivice-linphonec \
@@ -300,6 +303,15 @@ $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-power
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-set-rotation
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-ensure-buttons
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-ensure-cardkb
+$USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-cardkb-ctl
+$USER_NAME ALL=(root) NOPASSWD: /usr/bin/systemctl stop cardkb-inputd
+$USER_NAME ALL=(root) NOPASSWD: /usr/bin/systemctl stop cardkb-inputd.service
+$USER_NAME ALL=(root) NOPASSWD: /usr/bin/systemctl start cardkb-inputd
+$USER_NAME ALL=(root) NOPASSWD: /usr/bin/systemctl start cardkb-inputd.service
+$USER_NAME ALL=(root) NOPASSWD: /bin/systemctl stop cardkb-inputd
+$USER_NAME ALL=(root) NOPASSWD: /bin/systemctl stop cardkb-inputd.service
+$USER_NAME ALL=(root) NOPASSWD: /bin/systemctl start cardkb-inputd
+$USER_NAME ALL=(root) NOPASSWD: /bin/systemctl start cardkb-inputd.service
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-ensure-linphone
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-libretro-cores
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-ensure-gb
