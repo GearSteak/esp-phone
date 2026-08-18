@@ -362,9 +362,14 @@ def _qimage_from_rgb(arr) -> Optional[QImage]:
     if arr is None:
         return None
     try:
-        h, w = int(arr.shape[0]), int(arr.shape[1])
-        rgb = arr if arr.flags["C_CONTIGUOUS"] else arr.copy()
-        qimg = QImage(rgb.data, w, h, 3 * w, QImage.Format_RGB888)
+        import numpy as np
+
+        rgb = np.ascontiguousarray(arr[:, :, :3])
+        h, w = int(rgb.shape[0]), int(rgb.shape[1])
+        buf = rgb.tobytes()
+        qimg = QImage(buf, w, h, 3 * w, QImage.Format_RGB888)
+        if qimg.isNull():
+            return None
         return qimg.copy()
     except Exception:
         return None
@@ -423,9 +428,13 @@ class EmuWorker(QThread):
         self._pending_press: Set[str] = set()
         self._pending_release: Set[str] = set()
         self._pad_lock = threading.Lock()
+        self._in_flight = 0
 
     def request_stop(self) -> None:
         self._stop = True
+
+    def frame_consumed(self) -> None:
+        self._in_flight = 0
 
     def button_down(self, name: str) -> None:
         with self._pad_lock:
@@ -453,6 +462,17 @@ class EmuWorker(QThread):
             return set(self._held)
 
     def run(self) -> None:
+        try:
+            import faulthandler
+
+            fault = DATA / "emu-fault.log"
+            try:
+                fh = open(fault, "a", encoding="utf-8")
+                faulthandler.enable(file=fh, all_threads=True)
+            except Exception:
+                faulthandler.enable(all_threads=True)
+        except Exception:
+            pass
         try:
             _emu_log(f"start {self._sys.key} {self._rom.name}")
             if self._run_libretro():
@@ -571,7 +591,7 @@ class EmuWorker(QThread):
             pcm = self._open_pcm(rate, want)
             fps = core.fps if core.fps > 1 else 60.0
             frame_s = 1.0 / fps
-            emit_every = 1.0 / min(30.0, fps)
+            emit_every = 1.0 / (15.0 if self._sys.key == "nes" else 20.0)
             next_t = time.perf_counter()
             last_emit = 0.0
             no_picture = 0
@@ -582,18 +602,17 @@ class EmuWorker(QThread):
                 except Exception as e:
                     self.failed.emit(f"{core_path.name} crashed\n{str(e)[:80]}")
                     return True
+                # Always drain — if aplay dies, skipping this OOMs the Pi.
+                blob = core.take_audio()
                 if want and pcm is not None:
-                    pcm = _write_pcm(pcm, core.take_audio())
+                    pcm = _write_pcm(pcm, blob)
                 now = time.perf_counter()
-                if raw and (now - last_emit) >= emit_every:
+                if raw and (now - last_emit) >= emit_every and self._in_flight == 0:
                     last_emit = now
                     use_pitch = pitch or (len(raw) // max(h, 1))
-                    img = _frame_to_qimage(raw, w, h, use_pitch, fmt)
-                    if img is not None:
-                        no_picture = 0
-                        self.frame.emit(img)
-                    else:
-                        no_picture += 1
+                    self._in_flight = 1
+                    self.frame.emit((raw, w, h, use_pitch, fmt))
+                    no_picture = 0
                 elif not raw:
                     no_picture += 1
                 if no_picture > 240:
@@ -681,10 +700,11 @@ class EmuWorker(QThread):
                 if want and pcm is not None:
                     pcm = self._feed_pyboy_audio(boy, pcm)
 
-                if render:
+                if render and self._in_flight == 0:
                     last_emit = t0
                     img = self._pyboy_qimage(boy)
                     if img is not None:
+                        self._in_flight = 1
                         self.frame.emit(img)
 
                 tick_ms = (time.perf_counter() - t0) * 1000.0
@@ -843,11 +863,17 @@ class EmuPlayView(QWidget):
         self.screen.setPixmap(QPixmap())
         self.screen.setText(f"Loading\n{rom.name}")
         _emu_log(f"ui start {self._sys.key} {rom}")
-        w = EmuWorker(rom, self._sys, self)
+        try:
+            from esp_handset.display_geom import set_heavy_ui
+
+            set_heavy_ui(True)
+        except Exception:
+            pass
+        w = EmuWorker(rom, self._sys, None)
         w.frame.connect(self._on_frame)
         w.failed.connect(self._on_fail)
         self._worker = w
-        w.start(QThread.HighPriority)
+        w.start()
         self._exit_timer.start()
         self._boot_timer.start(12000 if self._sys.key == "nes" else 6000)
         self.setFocus(Qt.OtherFocusReason)
@@ -858,6 +884,12 @@ class EmuPlayView(QWidget):
         self._boot_timer.stop()
         self._exit_since = None
         self._surface = False
+        try:
+            from esp_handset.display_geom import set_heavy_ui
+
+            set_heavy_ui(False)
+        except Exception:
+            pass
         w = self._worker
         self._worker = None
         self._held_qt.clear()
@@ -930,21 +962,38 @@ class EmuPlayView(QWidget):
         return QSize(iw, ih)
 
     def _paint_frame(self, qimg: QImage) -> None:
-        target = self._fit_size(qimg.width(), qimg.height())
-        pix = QPixmap.fromImage(qimg).scaled(
-            target,
-            Qt.IgnoreAspectRatio,
-            Qt.FastTransformation,
-        )
-        self.screen.setPixmap(pix)
+        try:
+            target = self._fit_size(qimg.width(), qimg.height())
+            pix = QPixmap.fromImage(qimg).scaled(
+                target,
+                Qt.IgnoreAspectRatio,
+                Qt.FastTransformation,
+            )
+            self.screen.setPixmap(pix)
+        except Exception as e:
+            _emu_log(f"blit {e}")
 
-    def _on_frame(self, qimg: QImage) -> None:
-        if qimg is None or qimg.isNull():
-            return
-        self._boot_timer.stop()
-        self._last_frame = qimg
-        self.screen.setText("")
-        self._paint_frame(qimg)
+    def _on_frame(self, payload) -> None:
+        try:
+            if payload is None:
+                return
+            if isinstance(payload, QImage):
+                qimg = payload
+            else:
+                raw, w, h, pitch, fmt = payload
+                qimg = _frame_to_qimage(raw, w, h, pitch, fmt)
+            if qimg is None or qimg.isNull():
+                return
+            self._boot_timer.stop()
+            self._last_frame = qimg
+            self.screen.setText("")
+            self._paint_frame(qimg)
+        except Exception as e:
+            _emu_log(f"paint {e}")
+        finally:
+            w = self._worker
+            if w is not None:
+                w.frame_consumed()
 
     def _on_fail(self, msg: str) -> None:
         self._boot_timer.stop()

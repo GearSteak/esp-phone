@@ -301,6 +301,7 @@ class LibretroCore:
         self._got_frame = False
         self._audio = bytearray()
         self._alive = False
+        self._inited = False
         self._c_keep = []  # keep ctypes objects alive
 
         self.save_dir.mkdir(parents=True, exist_ok=True)
@@ -377,6 +378,7 @@ class LibretroCore:
         lib.retro_set_input_poll(self._poll_cb)
         lib.retro_set_input_state(self._input_cb)
         lib.retro_init()
+        self._inited = True
 
         info = _SystemInfo()
         lib.retro_get_system_info(byref(info))
@@ -457,6 +459,12 @@ class LibretroCore:
         self._audio.clear()
         return out
 
+    def _trim_audio(self) -> None:
+        # ~0.35s of stereo s16 — if aplay stalls, drop old samples instead of OOM
+        extra = len(self._audio) - 65536
+        if extra > 0:
+            del self._audio[:extra]
+
     def close(self) -> None:
         if self._lib is None:
             return
@@ -465,16 +473,38 @@ class LibretroCore:
                 self._save_sram()
         except Exception:
             pass
-        try:
-            self._lib.retro_unload_game()
-        except Exception:
-            pass
-        try:
-            self._lib.retro_deinit()
-        except Exception:
-            pass
+        if self._inited:
+            try:
+                self._lib.retro_unload_game()
+            except Exception:
+                pass
+            try:
+                self._lib.retro_deinit()
+            except Exception:
+                pass
         self._alive = False
+        self._inited = False
+        self._dlclose()
         self._lib = None
+        self._c_keep.clear()
+        self._rom_buf = None
+
+    def _dlclose(self) -> None:
+        """Drop the .so so the next ROM does not retro_init a dirty handle."""
+        lib = self._lib
+        if lib is None:
+            return
+        handle = getattr(lib, "_handle", None)
+        if not handle:
+            return
+        try:
+            libc = ctypes.CDLL(None)
+            libc.dlclose.argtypes = [c_void_p]
+            libc.dlclose.restype = c_int
+            libc.dlclose(c_void_p(handle))
+            libc.dlclose(c_void_p(handle))
+        except Exception:
+            pass
 
     def _srm_path(self) -> Path:
         return self.save_dir / (self.rom.stem + ".srm")
@@ -557,22 +587,22 @@ class LibretroCore:
         if cmd == RETRO_ENVIRONMENT_GET_VARIABLE:
             if not data:
                 return False
-            var = cast(data, POINTER(_Variable)).contents
-            raw_key = var.key
+            vp = cast(data, POINTER(_Variable))
+            raw_key = vp.contents.key
             if isinstance(raw_key, bytes):
                 key = raw_key.decode("utf-8", "replace")
             else:
                 key = raw_key or ""
             val = self._vars.get(key)
             if not val:
-                var.value = None
+                vp.contents.value = None
                 return True
             buf = self._var_bufs.get(key)
             if buf is None:
                 buf = c_char_p(val.encode("utf-8"))
                 self._var_bufs[key] = buf
                 self._c_keep.append(buf)
-            var.value = buf
+            vp.contents.value = buf
             return True
         if cmd == RETRO_ENVIRONMENT_SET_VARIABLES:
             self._ingest_variables(data)
@@ -633,9 +663,7 @@ class LibretroCore:
             RETRO_ENVIRONMENT_SET_CONTENT_INFO_OVERRIDE,
         ):
             return False
-        # Optional callbacks many cores probe — ignore safely.
-        if cmd >= 70:
-            return True
+        # Unknown cmds: NEVER claim support (cmd>=70 True crashed fceumm randomly).
         return False
 
     def _ingest_variables(self, data) -> None:
@@ -683,8 +711,9 @@ class LibretroCore:
 
     def _audio_sample(self, left: int, right: int) -> None:
         try:
-            self._audio += int(left).to_bytes(2, "little", signed=True)
-            self._audio += int(right).to_bytes(2, "little", signed=True)
+            self._audio.extend(int(left).to_bytes(2, "little", signed=True))
+            self._audio.extend(int(right).to_bytes(2, "little", signed=True))
+            self._trim_audio()
         except Exception:
             return
 
@@ -693,7 +722,8 @@ class LibretroCore:
             n = int(frames)
             if n <= 0 or not data or n > 8192:
                 return 0
-            self._audio += string_at(data, n * 4)
+            self._audio.extend(string_at(data, n * 4))
+            self._trim_audio()
             return n
         except Exception:
             return 0
@@ -702,19 +732,22 @@ class LibretroCore:
         return
 
     def _input(self, port: int, device: int, index: int, ident: int) -> int:
-        if port != 0 or device != RETRO_DEVICE_JOYPAD:
-            return 0
-        held = self._held
-        if ident == RETRO_DEVICE_ID_JOYPAD_MASK:
-            mask = 0
+        try:
+            if port != 0 or device != RETRO_DEVICE_JOYPAD:
+                return 0
+            held = self._held
+            if ident == RETRO_DEVICE_ID_JOYPAD_MASK:
+                mask = 0
+                for name, bid in BTN_IDS.items():
+                    if name in held:
+                        mask |= 1 << bid
+                return mask
             for name, bid in BTN_IDS.items():
-                if name in held:
-                    mask |= 1 << bid
-            return mask
-        for name, bid in BTN_IDS.items():
-            if bid == ident and name in held:
-                return 1
-        return 0
+                if bid == ident and name in held:
+                    return 1
+            return 0
+        except Exception:
+            return 0
 
 
 def raw_to_rgb888(raw: bytes, w: int, h: int, pitch: int, pix_fmt: int):

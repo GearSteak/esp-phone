@@ -44,6 +44,15 @@ def _default_wh() -> Tuple[int, int]:
 
 W, H = _default_wh()
 PHONE_AREA_MAX = 200_000
+# Emulator play: drop HDMI/SPI grab rate so Qt doesn't OOM the Pi
+_heavy_ui = False
+_heavy_skip = 0
+
+
+def set_heavy_ui(on: bool) -> None:
+    global _heavy_ui, _heavy_skip
+    _heavy_ui = bool(on)
+    _heavy_skip = 0
 
 
 def _screens():
@@ -221,6 +230,11 @@ class SpiUserspaceMirror:
     def _tick(self) -> None:
         if not self._active or self._st is None:
             return
+        global _heavy_skip
+        if _heavy_ui:
+            _heavy_skip = (_heavy_skip + 1) % 3
+            if _heavy_skip != 0:
+                return
         try:
             self._st.blit_qimage(self.source.grab().toImage())
         except Exception as e:
@@ -349,6 +363,11 @@ class MultiDisplayKiosk:
                 pass
 
     def _tick(self) -> None:
+        global _heavy_skip
+        if _heavy_ui:
+            _heavy_skip = (_heavy_skip + 1) % 2
+            if _heavy_skip != 0:
+                return
         for h in self.hosts:
             h.update()
 
