@@ -14,9 +14,6 @@ echo "Waiting 2s (chip wake)…"
 sleep 2
 amixer -c 1 -q sset Speaker 35% unmute 2>/dev/null
 amixer -c 1 -q sset PCM 35% unmute 2>/dev/null
-
-NAME="$(aplay -l 2>/dev/null | awk '/^card 0:/{gsub(/:/,"",$2); print $2; exit}')"
-[[ -n "$NAME" ]] || NAME=Device
 WAV="/usr/share/sounds/alsa/Front_Center.wav"
 
 play() {

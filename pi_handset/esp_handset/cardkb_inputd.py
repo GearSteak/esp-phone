@@ -116,14 +116,30 @@ class XInject:
         self.display = os.environ.get("DISPLAY") or ":0"
         self.auth = _find_xauthority()
         self.xdotool = _which("xdotool")
-        self.ok = bool(self.xdotool)
+        self.ok = False
+        if self.xdotool:
+            try:
+                r = subprocess.run(
+                    [self.xdotool, "getactivewindow"],
+                    env=self._env(),
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    timeout=0.8,
+                    check=False,
+                )
+                self.ok = r.returncode == 0
+            except Exception:
+                self.ok = False
         if self.ok:
             log(
                 f"X inject ON display={self.display} "
                 f"XAUTHORITY={self.auth or '(none)'}"
             )
         else:
-            log("X inject OFF — sudo apt install xdotool (uinput only)")
+            log(
+                "X inject OFF/unreachable — falling back to uinput "
+                f"display={self.display} XAUTHORITY={self.auth or '(none)'}"
+            )
 
     def _env(self) -> dict:
         env = os.environ.copy()

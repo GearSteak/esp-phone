@@ -34,9 +34,6 @@ _ROM_SYSTEMS: Tuple[Tuple[str, str, str, Tuple[str, ...]], ...] = (
     ("rom_gb", "Game Boy", "gb", (".gb", ".gbc", ".sgb")),
     ("rom_nes", "NES", "nes", (".nes", ".fds", ".unf", ".unif")),
     ("rom_sms", "SMS / GG", "sms", (".sms", ".gg", ".sg")),
-    ("rom_genesis", "Genesis", "genesis", (".md", ".gen", ".smd", ".bin")),
-    ("rom_gba", "GBA", "gba", (".gba", ".agb", ".mb")),
-    ("rom_chip8", "CHIP-8", "chip8", (".ch8", ".c8", ".chip8")),
 )
 
 _ROM_EXTS = tuple(
@@ -89,15 +86,6 @@ _FILES_OK = (
     ".sms",
     ".gg",
     ".sg",
-    ".md",
-    ".gen",
-    ".smd",
-    ".bin",
-    ".gba",
-    ".agb",
-    ".ch8",
-    ".c8",
-    ".chip8",
     ".mp3",
     ".wav",
     ".ogg",
@@ -267,7 +255,7 @@ def _list_folder(dest_key: str) -> List[Path]:
     _label, folder, allowed = DESTINATIONS[dest_key]
     roots = [folder]
     if dest_key == "roms":
-        roots = [folder / sub for sub in ("gb", "nes", "sms", "genesis", "gba", "chip8")]
+        roots = [folder / sub for sub in ("gb", "nes", "sms")]
         roots.append(folder)
     out: List[Path] = []
     for root in roots:
@@ -298,7 +286,7 @@ def _resolve_file(dest_key: str, name: str) -> Optional[Path]:
     candidates = [folder / safe]
     if dest_key == "roms":
         candidates.insert(0, _rom_folder_for(safe) / safe)
-        for sub in ("gb", "nes", "sms", "genesis", "gba", "chip8"):
+        for sub in ("gb", "nes", "sms"):
             candidates.append(folder / sub / safe)
     try:
         folder_r = folder.resolve()
@@ -517,7 +505,7 @@ def _make_handler(get_dest: Callable[[], str], signals: _UploadSignals):
 <button type="submit">Send to Digivice</button>
 </form>
 </div>
-<p class="muted">Photos → Pictures/phone · each console → roms/gb, nes, sms, genesis, gba, chip8 · Files → inbox</p>
+<p class="muted">Photos → Pictures/phone · each console → roms/gb, nes, sms · Files → inbox</p>
 """
             self._html("Digivice Transfer", inner)
 
@@ -763,7 +751,7 @@ def make_wifi_transfer_page(
     lay.setContentsMargins(2, 2, 2, 2)
     lay.setSpacing(3)
 
-    tip = QLabel("Start · PC: pick GB/NES/SMS/Genesis/GBA/CHIP-8")
+    tip = QLabel("Start · PC: pick GB/GBC, NES, or SMS/GG")
     tip.setWordWrap(True)
     tip.setStyleSheet("color:#9ab;font-size:9px;")
 

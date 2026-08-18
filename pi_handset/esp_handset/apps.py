@@ -96,10 +96,30 @@ def _release_all_keyboards() -> None:
         pass
 
 
+def _stop_cardkb_poller() -> None:
+    try:
+        from PyQt5.QtWidgets import QApplication
+
+        app = QApplication.instance()
+        if app is None:
+            return
+        for w in app.topLevelWidgets():
+            poller = getattr(w, "_cardkb", None)
+            if poller is None:
+                continue
+            try:
+                poller.stop()
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+
 def exit_to_desktop() -> None:
     """Leave Digivice: mode=desktop, hand off SPI to desktop mirror, quit."""
     print("[handset] EXIT → Linux desktop (SPI will mirror desktop)", flush=True)
     _release_all_keyboards()
+    _stop_cardkb_poller()
     _write_mode_desktop()
 
     # Release SPI bus without blanking — handset-session starts desktop_spi_mirror
@@ -141,6 +161,7 @@ def open_browser() -> None:
     """Leave Digivice, open a light browser fullscreen, return when it exits."""
     print("[handset] OPEN browser…", flush=True)
     _release_all_keyboards()
+    _stop_cardkb_poller()
     try:
         from esp_handset import st7789_spi as st
 

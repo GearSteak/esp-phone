@@ -1,4 +1,4 @@
-"""In-UI console emulators — libretro cores (C, fast) + PyBoy/CHIP-8 fallbacks.
+"""In-UI console emulators — libretro cores (C, fast) + PyBoy fallback.
 
 Digivice keeps the SPI panel; frames are blitted into Qt like the original GB view.
 """
@@ -68,7 +68,6 @@ _BTN_MAP = {
     Qt.Key_Q: "x",
     Qt.Key_W: "l",
     Qt.Key_E: "r",
-    Qt.Key_C: "x",  # Genesis C ≈ X on SNES layout in many cores
 }
 
 
@@ -83,7 +82,7 @@ class EmuSystem:
     cores: Tuple[str, ...]
     native: Tuple[int, int]
     tip_extra: str = ""
-    builtin: bool = False  # CHIP-8 always available
+    builtin: bool = False
 
 
 SYSTEMS: Dict[str, EmuSystem] = {
@@ -94,18 +93,18 @@ SYSTEMS: Dict[str, EmuSystem] = {
         "♠",
         "gb",
         (".gb", ".gbc", ".sgb"),
-        ("gambatte_libretro.so", "mgba_libretro.so"),
+        ("gambatte_libretro.so",),
         (160, 144),
         "C core (gambatte) when present · PyBoy fallback",
     ),
     "nes": EmuSystem(
         "nes",
         "NES",
-        "Famicom · nestopia",
+        "Famicom · fceumm",
         "◆",
         "nes",
-        (".nes", ".fds", ".unf", ".unif", ".zip", ".nsf"),
-        ("nestopia_libretro.so", "fceumm_libretro.so", "quicknes_libretro.so"),
+        (".nes", ".fds", ".unf", ".unif", ".nsf"),
+        ("fceumm_libretro.so",),
         (256, 240),
     ),
     "smsgg": EmuSystem(
@@ -115,42 +114,8 @@ SYSTEMS: Dict[str, EmuSystem] = {
         "◎",
         "sms",
         (".sms", ".gg", ".sg"),
-        ("genesis_plus_gx_libretro.so", "picodrive_libretro.so", "smsplus_libretro.so"),
+        ("genesis_plus_gx_libretro.so",),
         (256, 192),
-    ),
-    "genesis": EmuSystem(
-        "genesis",
-        "Genesis",
-        "Mega Drive",
-        "▶",
-        "genesis",
-        (".md", ".gen", ".smd", ".bin"),
-        ("genesis_plus_gx_libretro.so", "picodrive_libretro.so"),
-        (320, 224),
-        "Confirm=A · Back=B · Select=C",
-    ),
-    "gba": EmuSystem(
-        "gba",
-        "Game Boy Adv",
-        "GBA · gpSP",
-        "■",
-        "gba",
-        (".gba", ".agb", ".mb"),
-        ("gpsp_libretro.so", "mgba_libretro.so"),
-        (240, 160),
-        "Pi Zero 2W: gpSP is the fast core",
-    ),
-    "chip8": EmuSystem(
-        "chip8",
-        "CHIP-8",
-        "Tiny ROMs · always on",
-        "8",
-        "chip8",
-        (".ch8", ".c8", ".chip8"),
-        (),
-        (64, 32),
-        "D-pad + Confirm. No extra install.",
-        builtin=True,
     ),
 }
 
@@ -308,7 +273,13 @@ def _install_cores_bg() -> None:
         out = _sudo_ensure_cores(300.0)
         from esp_handset.libretro_host import find_core
 
-        if find_core(("nestopia_libretro.so", "fceumm_libretro.so", "gambatte_libretro.so")):
+        if find_core(
+            (
+                "gambatte_libretro.so",
+                "fceumm_libretro.so",
+                "genesis_plus_gx_libretro.so",
+            )
+        ):
             with _CORE_INSTALL_LOCK:
                 _CORE_INSTALL_STATE = "ok"
                 _CORE_INSTALL_MSG = ""
@@ -475,9 +446,6 @@ class EmuWorker(QThread):
     def run(self) -> None:
         try:
             _emu_log(f"start {self._sys.key} {self._rom.name}")
-            if self._sys.builtin or self._sys.key == "chip8":
-                self._run_chip8()
-                return
             if self._run_libretro():
                 return
             if self._sys.key == "gb":
@@ -535,39 +503,17 @@ class EmuWorker(QThread):
             return now + frame_s
         return next_t + frame_s
 
-    def _run_chip8(self) -> None:
-        from esp_handset.chip8_core import Chip8
-
-        cpu = Chip8(self._rom.read_bytes())
-        frame_s = 1.0 / 60.0
-        next_t = time.perf_counter()
-        acc = 0.0
-        last_emit = 0.0
-        while not self._stop and cpu.alive:
-            held = self._sync_held()
-            cpu.step(held, n=12)
-            acc += 1.0
-            if acc >= 1.0:
-                cpu.tick_timers()
-                acc = 0.0
-            now = time.perf_counter()
-            if cpu.draw and (now - last_emit) >= (1.0 / 30.0):
-                cpu.draw = False
-                last_emit = now
-                img = _qimage_from_rgb(cpu.rgb888())
-                if img is not None:
-                    self.frame.emit(img)
-            next_t = self._pace(next_t, frame_s)
-
     def _run_libretro(self) -> bool:
         from esp_handset.libretro_host import LibretroCore, find_cores
 
         if not prepare_cores(self._sys, 120.0):
             _emu_log(f"no cores for {self._sys.key}: {self._sys.cores}")
             self.failed.emit(
-                "NES core missing.\nSettings → Update,\nwait ~2 min, Play again."
-                if self._sys.key == "nes"
-                else "Core missing — Settings → Update"
+                (
+                    "NES core missing.\nSettings → Update,\nwait ~2 min, Play again."
+                    if self._sys.key == "nes"
+                    else "SMS / GG core missing.\nSettings → Update,\nwait ~2 min, Play again."
+                )
             )
             return True
         core_paths = find_cores(self._sys.cores)
@@ -641,7 +587,7 @@ class EmuWorker(QThread):
                     self.failed.emit(
                         f"{core_path.name}: no video\n"
                         "Try Settings → Update\n"
-                        "or a .nes file (not .zip)"
+                        "or a plain ROM file"
                     )
                     return True
                 next_t = self._pace(next_t, frame_s)
@@ -996,13 +942,13 @@ class EmuPlayView(QWidget):
                 "Settings → Update,\n"
                 "wait ~2 min, try again."
                 if self._sys.key == "nes"
-                else "Core missing.\nSettings → Update"
+                else "SMS / GG core missing.\nSettings → Update"
             )
         else:
             msg = (
                 f"No picture from {core.name}.\n"
-                "Try a plain .nes ROM\n"
-                "(not .zip) · Back = list"
+                "Try a plain ROM file\n"
+                "Back = list"
             )
         _emu_log(f"ui boot timeout (no frames) core={core}")
         self.screen.setText(msg)
