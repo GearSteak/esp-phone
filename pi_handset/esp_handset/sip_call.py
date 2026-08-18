@@ -130,6 +130,30 @@ def _linphonerc_path() -> Path:
     return Path.home() / ".esp-handset" / "linphonerc"
 
 
+def _alsa_usb_label() -> str:
+    """Card name linphonec's ALSA backend understands (skip HDMI)."""
+    try:
+        r = subprocess.run(
+            ["aplay", "-l"],
+            capture_output=True,
+            text=True,
+            timeout=5.0,
+            check=False,
+        )
+    except Exception:
+        return "ALSA: default"
+    for line in (r.stdout or "").splitlines():
+        m = re.match(r"^card \d+:\s*\S+\s*\[([^\]]+)\]", line)
+        if not m:
+            continue
+        if any(x in line.lower() for x in ("hdmi", "vc4", "bcm2835")):
+            continue
+        name = m.group(1).strip()
+        if name:
+            return f"ALSA: {name}"
+    return "ALSA: default"
+
+
 def _write_linphonerc(env: Dict[str, str]) -> Optional[Path]:
     user = (env.get("SIP_USER") or "").strip()
     server = (env.get("SIP_SERVER") or "").strip()
@@ -137,7 +161,9 @@ def _write_linphonerc(env: Dict[str, str]) -> Optional[Path]:
     display = (env.get("SIP_DISPLAY") or user or "Digivice").strip()
     if not user or not server or not password:
         return None
-    path = _linphonerc_path()
+    sound = _alsa_usb_label()
+    # firewall_policy: 0=none 1=manual NAT 2=STUN 3=ICE
+    # We used 1 for months (NAT with no address) — Zadarma calls died.
     body = (
         "[sip]\n"
         "sip_port=5060\n"
@@ -145,20 +171,53 @@ def _write_linphonerc(env: Dict[str, str]) -> Optional[Path]:
         "sip_tls_port=-1\n"
         "use_info=0\n"
         "guess_hostname=1\n"
-        "inc_timeout=30\n"
+        "inc_timeout=45\n"
         "use_ipv6=0\n"
+        "ipv6_enabled=0\n"
         "default_proxy=0\n"
         f"display_name={display}\n"
         "\n"
         "[rtp]\n"
         "audio_rtp_port=7078\n"
+        "audio_jitt_comp=60\n"
+        "nortp_timeout=30\n"
         "\n"
         "[net]\n"
         "stun_server=stun.zadarma.com\n"
-        "firewall_policy=1\n"
+        "firewall_policy=2\n"
+        "nat_policy_ref=nat_policy_0\n"
+        "mtu=1300\n"
+        "\n"
+        "[nat_policy_0]\n"
+        "stun_server=stun.zadarma.com\n"
+        "stun_enabled=1\n"
+        "ice_enabled=0\n"
+        "turn_enabled=0\n"
+        "protocols=stun\n"
         "\n"
         "[sound]\n"
         "echocancellation=0\n"
+        f"playback_dev_id={sound}\n"
+        f"capture_dev_id={sound}\n"
+        f"ringer_dev_id={sound}\n"
+        "\n"
+        "[audio_codec_0]\n"
+        "mime=PCMU\n"
+        "rate=8000\n"
+        "channels=1\n"
+        "enabled=1\n"
+        "\n"
+        "[audio_codec_1]\n"
+        "mime=PCMA\n"
+        "rate=8000\n"
+        "channels=1\n"
+        "enabled=1\n"
+        "\n"
+        "[audio_codec_2]\n"
+        "mime=opus\n"
+        "rate=48000\n"
+        "channels=2\n"
+        "enabled=0\n"
         "\n"
         "[auth_info_0]\n"
         f"username={user}\n"
@@ -175,15 +234,22 @@ def _write_linphonerc(env: Dict[str, str]) -> Optional[Path]:
         "publish=0\n"
         "dial_escape_plus=0\n"
     )
+    path = _linphonerc_path()
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(body, encoding="utf-8")
         os.chmod(path, 0o600)
-        # Some linphonec builds ignore -c and only read ~/.linphonerc
         home_rc = Path.home() / ".linphonerc"
         try:
             home_rc.write_text(body, encoding="utf-8")
             os.chmod(home_rc, 0o600)
+        except OSError:
+            pass
+        cfg_dir = Path.home() / ".config" / "linphone"
+        try:
+            cfg_dir.mkdir(parents=True, exist_ok=True)
+            (cfg_dir / "linphonerc").write_text(body, encoding="utf-8")
+            os.chmod(cfg_dir / "linphonerc", 0o600)
         except OSError:
             pass
         return path
@@ -588,8 +654,16 @@ def _phase_from_line(line: str, current: str) -> str:
     return current
 
 
+_ANSI = re.compile(r"\x1b\[[0-9;?=]*[A-Za-z]|\x1b\].*?(?:\x07|\x1b\\)")
+
+
+def _clean_cli(line: str) -> str:
+    s = _ANSI.sub("", line or "")
+    return s.replace("\x00", "").replace("linphonec>", "").strip()
+
+
 class LinphoneEngine:
-    """One long-lived `linphonec -c rc` with commands on stdin (PTY so output isn't stuck)."""
+    """One long-lived `linphonec -c rc`. PTY + CR so readline actually accepts commands."""
 
     def __init__(self) -> None:
         self.proc: Optional[subprocess.Popen] = None
@@ -600,11 +674,15 @@ class LinphoneEngine:
         self._reader: Optional[threading.Thread] = None
         self.bin = ""
         self._pty: Optional[int] = None
+        self._user = ""
+        self._server = ""
+        self._password = ""
 
     def alive(self) -> bool:
         return self.proc is not None and self.proc.poll() is None
 
     def _handle_line(self, line: str) -> None:
+        line = _clean_cli(line)
         if not line:
             return
         _log(f"linphonec | {line[:200]}")
@@ -613,12 +691,15 @@ class LinphoneEngine:
             low = line.lower()
             if re.search(
                 r"(?i)registration (successful|ok)|registered to|"
-                r"identity=|LinphoneRegistrationOk",
+                r"identity=|identity: sip:|LinphoneRegistrationOk|"
+                r"^registered ",
                 line,
             ):
-                self.registered = True
+                if "not registered" not in low and "unregistered" not in low:
+                    self.registered = True
             if re.search(
-                r"(?i)registration failed|unregistered|registered=-1",
+                r"(?i)registration failed|not registered|unregistered|"
+                r"registered=-1|LinphoneRegistrationFailed",
                 line,
             ):
                 if "successful" not in low:
@@ -644,7 +725,10 @@ class LinphoneEngine:
                     buf = buf.replace("\r\n", "\n").replace("\r", "\n")
                     while "\n" in buf:
                         line, buf = buf.split("\n", 1)
-                        self._handle_line(line.strip())
+                        self._handle_line(line)
+                    if "linphonec>" in buf:
+                        self._handle_line(buf)
+                        buf = ""
                 return
             proc = self.proc
             if proc is None or proc.stdout is None:
@@ -693,14 +777,22 @@ class LinphoneEngine:
         )
 
     def start(self) -> str:
-        if self.alive():
-            return ""
         env = _sip_env()
         user = (env.get("SIP_USER") or "").strip()
         server = (env.get("SIP_SERVER") or "").strip()
         password = (env.get("SIP_PASS") or "").strip()
         if not user or not server or not password:
             return _set_error("Set SIP in Settings → Accounts")
+        self._user, self._server, self._password = user, server, password
+        if self.alive() and self.registered:
+            return ""
+        if self.alive() and not self.registered:
+            _log("linphonec up but not registered — retry REGISTER")
+            if self.ensure_registered(12.0, send_register=True):
+                return ""
+            _log("still unregistered — restart linphonec")
+            self.stop()
+            time.sleep(0.4)
         rc = _write_linphonerc(env)
         if rc is None:
             return _set_error("Could not write linphonerc")
@@ -710,13 +802,13 @@ class LinphoneEngine:
         _kill_stray_linphone()
         args = [self.bin, "-c", str(rc)]
         last_err = ""
-        _log(f"start {' '.join(args)}")
+        _log(f"start {' '.join(args)} sound={_alsa_usb_label()}")
         try:
             self._spawn(args)
         except Exception as e:
             last_err = str(e)
             self.proc = None
-        time.sleep(0.4)
+        time.sleep(0.5)
         if self.proc is None or self.proc.poll() is not None:
             leftover = last_err
             _log(f"linphonec died immediately: {leftover!r}")
@@ -729,38 +821,34 @@ class LinphoneEngine:
             target=self._read_loop, name="linphonec-out", daemon=True
         )
         self._reader.start()
-        time.sleep(0.8)
-        self.cmd("stun stun.zadarma.com")
-        time.sleep(0.4)
-        self._send_register(user, server, password)
-        if not self._wait_registered(12.0):
-            self._send_register(user, server, password, sip_proxy=True)
-            self._wait_registered(10.0)
-        if not self.registered:
-            _log("no register banner yet — will still try call")
-        if not self.alive():
-            return _set_error("linphonec exited during register")
+        # rc has reg_sendregister=1 — wait for that before shoving extra commands
+        if not self.ensure_registered(10.0, send_register=False):
+            if not self.ensure_registered(12.0, send_register=True):
+                if not self.alive():
+                    return _set_error("linphonec exited during register")
+                return _set_error("SIP not registered — check Wi‑Fi / Accounts")
         with self._lock:
             self.phase = "idle"
         _set_error("")
+        _log("SIP registered — ready to dial")
         return ""
 
-    def _send_register(self, user: str, server: str, password: str, *, sip_proxy: bool = False) -> None:
-        if sip_proxy:
-            self.cmd(f"register sip:{user}@{server} sip:{server} {password}")
-        else:
-            self.cmd(f"register sip:{user}@{server} {server} {password}")
-
-    def _wait_registered(self, timeout_s: float) -> bool:
-        deadline = time.time() + max(0.5, timeout_s)
+    def ensure_registered(self, timeout_s: float, *, send_register: bool) -> bool:
+        if send_register and self._user and self._server:
+            self.cmd(f"register sip:{self._user}@{self._server} {self._server} {self._password}")
+        deadline = time.time() + max(1.0, timeout_s)
+        n = 0
         while time.time() < deadline:
             if self.registered:
                 _log("linphonec registered")
                 return True
             if not self.alive():
                 return False
-            time.sleep(0.3)
-        return False
+            if n and n % 5 == 0:
+                self.cmd("status register")
+            n += 1
+            time.sleep(0.35)
+        return bool(self.registered)
 
     def reset_call_state(self) -> None:
         with self._lock:
@@ -771,8 +859,10 @@ class LinphoneEngine:
         if not self.alive():
             return
         try:
-            _log(f"linphonec < {line.split(maxsplit=1)[0]}")
-            payload = (line + "\n").encode("utf-8")
+            shown = line.split(maxsplit=1)[0]
+            _log(f"linphonec < {shown}")
+            # Readline on a PTY only submits on CR
+            payload = (line + "\r\n").encode("utf-8")
             if self._pty is not None:
                 os.write(self._pty, payload)
                 return
@@ -793,9 +883,10 @@ class LinphoneEngine:
     def stop(self) -> None:
         proc = self.proc
         fd = self._pty
+        self.registered = False
         if proc is not None and proc.poll() is None:
             try:
-                payload = b"quit\n"
+                payload = b"quit\r\n"
                 if fd is not None:
                     os.write(fd, payload)
                 elif proc.stdin is not None:
@@ -807,6 +898,13 @@ class LinphoneEngine:
                 proc.terminate()
             except Exception:
                 pass
+            try:
+                proc.wait(timeout=1.5)
+            except Exception:
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
         self.proc = None
         self._pty = None
         if fd is not None:
@@ -1024,53 +1122,34 @@ def _dial_ex_inner(number: str) -> Tuple[bool, str]:
 
     if _discover_linphonec():
         hint = _engine().start()
-        if hint and "linphonec" in hint.lower() and "not found" in hint.lower():
-            pass
-        elif hint and "Set SIP" in hint:
+        if hint:
             return False, hint
         eng = _engine()
-        if not eng.alive():
-            _log(f"linphonec not alive after start ({hint})")
-        else:
-            if not eng.registered:
-                env2 = _sip_env()
-                u = (env2.get("SIP_USER") or "").strip()
-                s = (env2.get("SIP_SERVER") or "").strip()
-                p = (env2.get("SIP_PASS") or "").strip()
-                if u and s and p:
-                    eng._send_register(u, s, p)
-                    if not eng._wait_registered(10.0):
-                        eng._send_register(u, s, p, sip_proxy=True)
-                        eng._wait_registered(8.0)
-                if not eng.registered:
-                    return False, _set_error(
-                        "SIP not registered — Test SIP / Wi‑Fi"
-                    )
-            _log(f"call {target}")
-            eng.reset_call_state()
-            eng.cmd(f"call {target}")
-            deadline = time.time() + 8.0
-            while time.time() < deadline:
-                info = eng.snapshot()
-                _last_register_raw = (
-                    "registered" if eng.registered else "unregistered"
-                )
-                if info.phase in ("dialing", "ringing", "active"):
-                    _set_error("")
-                    return True, ""
-                if info.phase == "error":
-                    return False, _set_error("SIP rejected call")
-                time.sleep(0.25)
-            if not eng.alive():
-                _log(f"linphonec died after dial ({hint})")
-            else:
-                # INVITE may be in flight even if stdout is quiet — don't kill it
-                with eng._lock:
-                    if eng.phase == "idle":
-                        eng.phase = "dialing"
-                _log("left outbound call up (no state banner yet)")
+        if not eng.alive() or not eng.registered:
+            return False, _set_error(
+                hint or "SIP not registered — check Wi‑Fi / Accounts"
+            )
+        _log(f"call {target}")
+        eng.reset_call_state()
+        eng.cmd(f"call {target}")
+        deadline = time.time() + 10.0
+        while time.time() < deadline:
+            info = eng.snapshot()
+            _last_register_raw = "registered"
+            if info.phase in ("dialing", "ringing", "active"):
                 _set_error("")
                 return True, ""
+            if info.phase == "error":
+                return False, _set_error("SIP rejected call")
+            time.sleep(0.25)
+        if not eng.alive():
+            return False, _set_error("linphonec died after dial")
+        with eng._lock:
+            if eng.phase == "idle":
+                eng.phase = "dialing"
+        _log("left outbound call up (no state banner yet)")
+        _set_error("")
+        return True, ""
 
     if _discover_csh():
         return _dial_via_csh(digits, server)

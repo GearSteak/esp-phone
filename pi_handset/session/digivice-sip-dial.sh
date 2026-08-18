@@ -78,7 +78,7 @@ audio_rtp_port=7078
 
 [net]
 stun_server=stun.zadarma.com
-firewall_policy=1
+firewall_policy=2
 
 [auth_info_0]
 username=${SIP_USER}
