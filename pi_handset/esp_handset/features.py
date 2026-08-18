@@ -246,48 +246,84 @@ def make_weather_page(on_back: Callable[[], None], modem=None) -> QWidget:
 # ----- Steps (Pi SW-520D / tilt switch) -----
 def make_steps_page(on_back: Callable[[], None], bridge=None) -> QWidget:
     del bridge  # Heltec gone — steps are local GPIO only
+    from esp_handset.media_ui import media_btn, style_media_body
+
+    _BG = "#0e1620"
+    _TEXT = "#e8eef5"
+    _MUTED = "#b8c4d4"
+    _ACCENT = "#5ec4a8"
+
     body = QWidget()
+    style_media_body(body)
     lay = QVBoxLayout(body)
+    lay.setContentsMargins(8, 6, 8, 6)
+    lay.setSpacing(6)
+
+    title = QLabel("Steps today")
+    title.setAlignment(Qt.AlignCenter)
+    title.setStyleSheet(
+        f"font-size:14px; font-weight:700; color:{_MUTED};"
+    )
+
     big = QLabel("0")
     big.setAlignment(Qt.AlignCenter)
-    big.setStyleSheet("font-size: 36px; font-weight: bold;")
+    big.setMinimumHeight(56)
+    big.setStyleSheet(
+        f"font-size:52px; font-weight:800; color:{_ACCENT};"
+        f" background:{_BG}; padding:4px 0;"
+    )
+
     hint = QLabel(
-        "Pi tilt switch (SW-520D)\n"
-        "BCM17 / pin 11 → GND\n"
-        "Walk · shake to count"
+        "Tilt switch on pin 11\n"
+        "(BCM 17 → GND)\n"
+        "Walk or shake to count"
     )
     hint.setWordWrap(True)
     hint.setAlignment(Qt.AlignCenter)
-    hint.setStyleSheet("color:#9ab;font-size:11px;")
+    hint.setStyleSheet(f"color:{_TEXT}; font-size:12px;")
+
     status = QLabel("")
     status.setWordWrap(True)
     status.setAlignment(Qt.AlignCenter)
-    status.setStyleSheet("color:#7a8;font-size:10px;")
-    refresh = QPushButton("Refresh")
-    bump = QPushButton("+1 test")
-    reset = QPushButton("Reset today")
-    probe = QPushButton("Probe GPIO")
-    lay.addStretch(1)
+    status.setMinimumHeight(36)
+    status.setStyleSheet(
+        f"color:{_TEXT}; font-size:12px; font-weight:600;"
+        f" background:#16202c; border:1px solid #243040;"
+        f" border-radius:8px; padding:6px;"
+    )
+
+    row = QHBoxLayout()
+    row.setSpacing(6)
+    refresh = media_btn("Refresh")
+    bump = media_btn("+1 test", primary=True)
+    row.addWidget(refresh)
+    row.addWidget(bump)
+
+    row2 = QHBoxLayout()
+    row2.setSpacing(6)
+    reset = media_btn("Reset today")
+    probe = media_btn("Probe")
+    row2.addWidget(reset)
+    row2.addWidget(probe)
+
+    lay.addWidget(title)
     lay.addWidget(big)
     lay.addWidget(hint)
     lay.addWidget(status)
-    lay.addWidget(refresh)
-    lay.addWidget(bump)
-    lay.addWidget(reset)
-    lay.addWidget(probe)
+    lay.addLayout(row)
+    lay.addLayout(row2)
     lay.addStretch(1)
 
     def show_local() -> None:
         st = store.steps_state()
         big.setText(str(int(st.get("count") or 0)))
         try:
-            from esp_handset.steps_pi import monitor_status, start_monitor
+            from esp_handset.steps_pi import start_monitor, user_status
 
-            # Retry start if boot failed early
             start_monitor()
-            status.setText(monitor_status())
+            status.setText(user_status())
         except Exception as e:
-            status.setText(str(e)[:48])
+            status.setText(str(e)[:72])
 
     def do_refresh() -> None:
         show_local()
@@ -309,12 +345,12 @@ def make_steps_page(on_back: Callable[[], None], bridge=None) -> QWidget:
             steps_pi._monitor = None  # type: ignore[attr-defined]
             mon = steps_pi.start_monitor()
             if mon is None:
-                status.setText(f"No monitor (BCM{STEPS_BCM})")
+                status.setText(f"No sensor (BCM {STEPS_BCM})")
             else:
                 show_local()
                 status.setText(steps_pi.monitor_status() + " · shake now")
         except Exception as e:
-            status.setText(str(e)[:48])
+            status.setText(str(e)[:72])
 
     refresh.clicked.connect(do_refresh)
     bump.clicked.connect(do_bump)
@@ -324,7 +360,7 @@ def make_steps_page(on_back: Callable[[], None], bridge=None) -> QWidget:
     tick = QTimer(body)
     tick.timeout.connect(show_local)
     tick.start(1500)
-    page = page_chrome("Steps", body, on_back)
+    page = page_chrome("Steps", body, on_back, scroll=False)
     page.refresh_steps = show_local  # type: ignore[attr-defined]
     return page
 

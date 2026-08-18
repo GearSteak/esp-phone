@@ -139,6 +139,7 @@ def start_monitor(on_step: Optional[Callable[[int], None]] = None) -> Optional[S
 
 
 def monitor_status() -> str:
+    """Technical status for Probe / logs."""
     if STEPS_BCM is None:
         return "Steps GPIO disabled"
     if _monitor is None:
@@ -154,3 +155,21 @@ def monitor_status() -> str:
             f"lvl={lvl} edges={_monitor.edges}"
         )
     return f"Error: {_monitor.error or 'unknown'}"
+
+
+def user_status() -> str:
+    """Short status for the Steps screen (not GPIO debug)."""
+    if STEPS_BCM is None:
+        return "Tilt sensor disabled in config"
+    if _monitor is None:
+        return f"Starting sensor (pin {STEPS_BCM})…"
+    if not _monitor.ok:
+        err = (_monitor.error or "could not open GPIO").strip()
+        return f"Sensor error: {err[:56]}"
+    try:
+        lvl = _monitor._read()
+    except Exception:
+        lvl = None
+    if lvl == 0:
+        return "Sensor: tilt detected · counting"
+    return "Sensor ready · walk or shake"
