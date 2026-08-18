@@ -512,21 +512,35 @@ class LgpioBackend(GpioBackend):
             pass
 
 
-def open_gpio() -> GpioBackend:
-    try:
-        g = RPiGpio()
-        log("GPIO backend: RPi.GPIO")
-        return g
-    except Exception as e:
-        log(f"RPi.GPIO unavailable ({e})")
-    try:
-        g = LgpioBackend()
-        log("GPIO backend: lgpio")
-        return g
-    except Exception as e:
-        raise SystemExit(
-            f"No GPIO backend ({e}) — install python3-rpi.gpio or python3-lgpio"
-        ) from e
+def open_gpio(pins: Dict[str, int]) -> GpioBackend:
+    """Open pins with the first backend that can actually *claim* them.
+
+    New Raspberry Pi OS often lets `import RPi.GPIO` succeed, then fails on
+    setup (use python3-rpi-lgpio / python3-lgpio instead).
+    """
+    errors: List[str] = []
+    for factory, name in (
+        (RPiGpio, "RPi.GPIO"),
+        (LgpioBackend, "lgpio"),
+    ):
+        g: Optional[GpioBackend] = None
+        try:
+            g = factory()
+            g.setup(pins)
+            log(f"GPIO backend: {name}")
+            return g
+        except Exception as e:
+            errors.append(f"{name}: {e}")
+            log(f"{name} failed ({e})")
+            if g is not None:
+                try:
+                    g.cleanup()
+                except Exception:
+                    pass
+    raise SystemExit(
+        "No GPIO backend — install python3-lgpio or python3-rpi-lgpio. "
+        + "; ".join(errors)
+    )
 
 
 def is_pressed(level: int) -> bool:
@@ -636,8 +650,7 @@ def main() -> int:
         return 1
 
     pins = pin_map()
-    gpio = open_gpio()
-    gpio.setup(pins)
+    gpio = open_gpio(pins)
 
     phone_map = {
         "UP": uinput.KEY_UP,

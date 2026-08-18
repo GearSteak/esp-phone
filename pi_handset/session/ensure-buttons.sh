@@ -31,7 +31,18 @@ if [[ -z "$GUI_USER" || "$GUI_USER" == "root" ]]; then
   GUI_USER="$(logname 2>/dev/null || true)"
 fi
 if [[ -z "$GUI_USER" || "$GUI_USER" == "root" ]]; then
+  GUI_USER="$(loginctl list-sessions --no-legend 2>/dev/null \
+    | awk '{print $3}' | grep -v '^root$' | head -n1 || true)"
+fi
+if [[ -z "$GUI_USER" || "$GUI_USER" == "root" ]]; then
   for u in pi isaac; do
+    if id "$u" >/dev/null 2>&1; then GUI_USER=$u; break; fi
+  done
+fi
+# Last resort: first real human home (not root)
+if [[ -z "$GUI_USER" || "$GUI_USER" == "root" ]]; then
+  for d in /home/*; do
+    u="$(basename "$d")"
     if id "$u" >/dev/null 2>&1; then GUI_USER=$u; break; fi
   done
 fi
@@ -55,9 +66,20 @@ install_script() {
 install_deps() {
   command -v xdotool >/dev/null 2>&1 || apt-get install -y xdotool >/dev/null 2>&1 || true
   python3 -c "import uinput" 2>/dev/null || apt-get install -y python3-uinput >/dev/null 2>&1 || true
-  python3 -c "import RPi.GPIO" 2>/dev/null \
-    || python3 -c "import lgpio" 2>/dev/null \
-    || apt-get install -y python3-rpi.gpio python3-lgpio >/dev/null 2>&1 || true
+  # Bookworm/Trixie: classic python3-rpi.gpio often imports then dies. Prefer lgpio.
+  python3 -c "import lgpio" 2>/dev/null \
+    || apt-get install -y python3-lgpio >/dev/null 2>&1 || true
+  if ! python3 - <<'PY' >/dev/null 2>&1
+import RPi.GPIO as G
+G.setwarnings(False)
+G.setmode(G.BCM)
+G.setup(5, G.IN, pull_up_down=G.PUD_UP)
+G.cleanup()
+PY
+  then
+    apt-get install -y python3-rpi-lgpio >/dev/null 2>&1 \
+      || apt-get install -y python3-rpi.gpio >/dev/null 2>&1 || true
+  fi
   modprobe uinput 2>/dev/null || true
   # Persistent module
   if [[ ! -f /etc/modules-load.d/uinput.conf ]]; then
@@ -121,7 +143,9 @@ run_doctor() {
   echo "--- packages ---"
   python3 -c "import uinput; print('uinput OK')" 2>&1
   python3 -c "import RPi.GPIO; print('RPi.GPIO OK')" 2>&1 \
-    || python3 -c "import lgpio; print('lgpio OK')" 2>&1
+    || echo "RPi.GPIO FAIL"
+  python3 -c "import lgpio; print('lgpio OK')" 2>&1 \
+    || echo "lgpio FAIL"
   command -v xdotool >/dev/null && echo "xdotool OK" || echo "xdotool MISSING"
   echo "--- live GPIO sample (1s) BCM 5,6,12,13,16,19,20 ---"
   python3 - <<'PY' 2>&1 || true
