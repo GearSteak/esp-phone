@@ -150,6 +150,29 @@ if [[ ${rc:-1} -eq 0 && -f "${PREFIX}.staging/.ready" ]]; then
       >>"${HOME:-/tmp}/.esp-handset/linphone-ensure.log" 2>&1 \
       || echo "[gui-update] WARN: ensure-linphone failed (apply will retry)"
   fi
+  # NES/GB/etc libretro cores — same as VoIP, no SSH needed
+  CORES=""
+  for cand in \
+    "${REPO:-}/pi_handset/session/ensure-libretro-cores.sh" \
+    "${PREFIX}.staging/session/ensure-libretro-cores.sh" \
+    "$PREFIX/session/ensure-libretro-cores.sh" \
+    /usr/local/bin/digivice-libretro-cores
+  do
+    if [[ -n "$cand" && -f "$cand" ]]; then
+      CORES="$cand"
+      break
+    fi
+  done
+  if [[ -n "$CORES" ]]; then
+    echo "[gui-update] ensuring libretro cores (NES/GB/…)…"
+    install -m 755 "$CORES" /usr/local/bin/digivice-libretro-cores 2>/dev/null || true
+    RUN_AS="${SUDO_USER:-}"
+    [[ -z "$RUN_AS" || "$RUN_AS" == "root" ]] && RUN_AS="$(logname 2>/dev/null || true)"
+    SUDO_USER="${RUN_AS:-pi}" DIGI_GUI_USER="${RUN_AS:-pi}" \
+      timeout 300 bash /usr/local/bin/digivice-libretro-cores \
+      >>"${HOME:-/tmp}/.esp-handset/libretro-ensure.log" 2>&1 \
+      || echo "[gui-update] WARN: libretro cores failed (apply will retry)"
+  fi
   # Intentionally do NOT schedule apply here — double-apply + pkill crashed Pi Zero.
   exit 0
 fi

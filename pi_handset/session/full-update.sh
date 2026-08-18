@@ -548,6 +548,7 @@ $USER_NAME ALL=(root) NOPASSWD: $PREFIX/session/power.sh
 $USER_NAME ALL=(root) NOPASSWD: $PREFIX/session/ensure-buttons.sh
 $USER_NAME ALL=(root) NOPASSWD: $PREFIX/session/ensure-cardkb.sh
 $USER_NAME ALL=(root) NOPASSWD: $PREFIX/session/ensure-linphone.sh
+$USER_NAME ALL=(root) NOPASSWD: $PREFIX/session/ensure-libretro-cores.sh
 $USER_NAME ALL=(root) NOPASSWD: $PREFIX/session/ensure-gb-wrappers.sh
 $USER_NAME ALL=(root) NOPASSWD: /usr/bin/bash $PREFIX/session/gui-update.sh
 $USER_NAME ALL=(root) NOPASSWD: /bin/bash $PREFIX/session/gui-update.sh
@@ -557,6 +558,8 @@ $USER_NAME ALL=(root) NOPASSWD: /usr/bin/bash $PREFIX/session/ensure-gb-wrappers
 $USER_NAME ALL=(root) NOPASSWD: /bin/bash $PREFIX/session/ensure-gb-wrappers.sh
 $USER_NAME ALL=(root) NOPASSWD: /usr/bin/bash $PREFIX/session/ensure-linphone.sh
 $USER_NAME ALL=(root) NOPASSWD: /bin/bash $PREFIX/session/ensure-linphone.sh
+$USER_NAME ALL=(root) NOPASSWD: /usr/bin/bash $PREFIX/session/ensure-libretro-cores.sh
+$USER_NAME ALL=(root) NOPASSWD: /bin/bash $PREFIX/session/ensure-libretro-cores.sh
 EOF
 chmod 440 /etc/sudoers.d/esp-handset-update
 

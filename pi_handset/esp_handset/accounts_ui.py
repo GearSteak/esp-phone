@@ -248,6 +248,8 @@ def make_sip_account_page(on_back: Callable[[], None]) -> QWidget:
             try:
                 from esp_handset import sip_call
 
+                bridge.progress.emit("Installing VoIP if needed…")
+                sip_call.prepare_voip(180.0)
                 report = sip_call.doctor()
             except Exception as e:
                 report = f"RESULT: TEST FAILED\n{e}"

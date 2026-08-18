@@ -404,9 +404,8 @@ class CallController(QObject):
             self.on_status("Already in a call")
             return False
         if not sip_call.available():
-            hint = sip_call.missing_hint() or "VoIP tool missing"
+            hint = sip_call.missing_hint() or "Installing VoIP…"
             self.on_status(hint)
-            return False
 
         name = ""
         try:
@@ -438,7 +437,9 @@ class CallController(QObject):
         self._show_ringing()
         ov = getattr(self.shell, "_active_call", None)
         if ov is not None:
-            ov.set_ringing_hint("Connecting…")
+            ov.set_ringing_hint(
+                "Installing VoIP…" if not sip_call.available() else "Connecting…"
+            )
         self.on_status(f"Calling {num}")
         self.state_changed.emit("dialing")
 

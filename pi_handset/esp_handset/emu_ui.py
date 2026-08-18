@@ -255,45 +255,111 @@ def backend_status(sys: EmuSystem) -> Tuple[bool, str]:
             return True, f"{msg} (fallback)"
         return False, "Need gambatte core or: sudo pip3 install --break-system-packages pyboy"
     names = ", ".join(sys.cores[:2]) or "libretro"
-    return False, f"Need core ({names}). Downloading…"
+    _kick_libretro_cores()
+    return False, f"Need core ({names}). Installing…"
 
 
 _CORE_KICK = 0.0
+_CORE_INSTALL_LOCK = threading.Lock()
+_CORE_INSTALL_STATE = "idle"
+_CORE_INSTALL_MSG = ""
 
 
-def _kick_libretro_cores() -> None:
+def _sudo_ensure_cores(timeout: float = 240.0) -> str:
+    cmds = (
+        ["sudo", "-n", "digivice-libretro-cores"],
+        ["sudo", "-n", "/usr/local/bin/digivice-libretro-cores"],
+        ["sudo", "-n", "bash", "/usr/local/bin/digivice-libretro-cores"],
+        ["sudo", "-n", "/opt/esp-handset/session/ensure-libretro-cores.sh"],
+        ["sudo", "-n", "bash", "/opt/esp-handset/session/ensure-libretro-cores.sh"],
+    )
+    last = "core install not available"
+    for cmd in cmds:
+        try:
+            r = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                check=False,
+            )
+        except subprocess.TimeoutExpired:
+            return "core install timed out"
+        except FileNotFoundError:
+            continue
+        except Exception as e:
+            last = str(e)
+            continue
+        out = ((r.stdout or "") + (r.stderr or "")).strip()
+        _emu_log(f"cores {' '.join(cmd)} rc={r.returncode}")
+        if r.returncode == 0:
+            return out[-300:] or "cores ok"
+        last = out[-300:] or f"rc={r.returncode}"
+        low = out.lower()
+        if "password is required" in low or "not found" in low:
+            continue
+        return last
+    return last
+
+
+def _install_cores_bg() -> None:
+    global _CORE_INSTALL_STATE, _CORE_INSTALL_MSG
+    try:
+        out = _sudo_ensure_cores(300.0)
+        from esp_handset.libretro_host import find_core
+
+        if find_core(("nestopia_libretro.so", "fceumm_libretro.so", "gambatte_libretro.so")):
+            with _CORE_INSTALL_LOCK:
+                _CORE_INSTALL_STATE = "ok"
+                _CORE_INSTALL_MSG = ""
+            _emu_log("cores install OK")
+            return
+        with _CORE_INSTALL_LOCK:
+            _CORE_INSTALL_STATE = "failed"
+            _CORE_INSTALL_MSG = out or "cores still missing"
+        _emu_log(f"cores install failed: {_CORE_INSTALL_MSG[:100]}")
+    except Exception as e:
+        with _CORE_INSTALL_LOCK:
+            _CORE_INSTALL_STATE = "failed"
+            _CORE_INSTALL_MSG = str(e)
+        _emu_log(f"cores install err: {e}")
+
+
+def prepare_cores(sys: EmuSystem, timeout: float = 150.0) -> bool:
+    """Download/locate libretro cores. Safe from a worker thread."""
+    from esp_handset.libretro_host import find_core
+
+    if sys.builtin or find_core(sys.cores):
+        return True
+    _kick_libretro_cores(force=True)
+    deadline = time.time() + max(30.0, timeout)
+    while time.time() < deadline:
+        if find_core(sys.cores):
+            return True
+        with _CORE_INSTALL_LOCK:
+            state = _CORE_INSTALL_STATE
+        if state != "running":
+            break
+        time.sleep(1.0)
+    left = max(30.0, deadline - time.time())
+    if left >= 30.0:
+        _sudo_ensure_cores(left)
+    return find_core(sys.cores) is not None
+
+
+def _kick_libretro_cores(*, force: bool = False) -> None:
     """Fetch nestopia/fceumm/… in the background. Never blocks the UI."""
     global _CORE_KICK
     now = time.time()
-    if now - _CORE_KICK < 180.0:
-        return
+    with _CORE_INSTALL_LOCK:
+        if _CORE_INSTALL_STATE == "running" and now - _CORE_KICK < 300.0:
+            return
+        if not force and _CORE_INSTALL_STATE != "failed" and now - _CORE_KICK < 120.0:
+            return
+        _CORE_INSTALL_STATE = "running"
+        _CORE_INSTALL_MSG = ""
     _CORE_KICK = now
-
-    def work() -> None:
-        cmds = (
-            ["sudo", "-n", "digivice-libretro-cores"],
-            ["sudo", "-n", "/usr/local/bin/digivice-libretro-cores"],
-            ["sudo", "-n", "/opt/esp-handset/session/ensure-libretro-cores.sh"],
-        )
-        for cmd in cmds:
-            try:
-                r = subprocess.run(
-                    cmd,
-                    capture_output=True,
-                    timeout=300,
-                    check=False,
-                )
-            except FileNotFoundError:
-                continue
-            except Exception as e:
-                _emu_log(f"core install {e}")
-                continue
-            _emu_log(f"core install {' '.join(cmd)} rc={r.returncode}")
-            if r.returncode == 0:
-                return
-        _emu_log("core install: no sudo wrapper")
-
-    threading.Thread(target=work, name="libretro-cores", daemon=True).start()
+    threading.Thread(target=_install_cores_bg, name="libretro-cores", daemon=True).start()
 
 
 def _set_nonblock(fd: int) -> None:
@@ -330,6 +396,42 @@ def _qimage_from_rgb(arr) -> Optional[QImage]:
         return qimg.copy()
     except Exception:
         return None
+
+
+def _qimage_from_raw(raw: bytes, w: int, h: int, pitch: int, pix_fmt: int) -> Optional[QImage]:
+    """Qt-native blit — works when numpy is missing."""
+    if not raw or w <= 0 or h <= 0:
+        return None
+    try:
+        from esp_handset.libretro_host import (
+            RETRO_PIXEL_FORMAT_RGB565,
+            RETRO_PIXEL_FORMAT_XRGB8888,
+        )
+
+        if pix_fmt == RETRO_PIXEL_FORMAT_XRGB8888:
+            row = max(pitch, w * 4)
+            img = QImage(raw, w, h, row, QImage.Format_RGB32)
+        elif pix_fmt == RETRO_PIXEL_FORMAT_RGB565:
+            row = max(pitch, w * 2)
+            img = QImage(raw, w, h, row, QImage.Format_RGB16)
+        else:
+            row = max(pitch, w * 2)
+            img = QImage(raw, w, h, row, QImage.Format_RGB555)
+        if img.isNull():
+            return None
+        return img.convertToFormat(QImage.Format_RGB888)
+    except Exception:
+        return None
+
+
+def _frame_to_qimage(raw: bytes, w: int, h: int, pitch: int, pix_fmt: int) -> Optional[QImage]:
+    from esp_handset.libretro_host import raw_to_rgb888
+
+    arr = raw_to_rgb888(raw, w, h, pitch, pix_fmt)
+    img = _qimage_from_rgb(arr)
+    if img is not None:
+        return img
+    return _qimage_from_raw(raw, w, h, pitch, pix_fmt)
 
 
 class EmuWorker(QThread):
@@ -458,8 +560,16 @@ class EmuWorker(QThread):
             next_t = self._pace(next_t, frame_s)
 
     def _run_libretro(self) -> bool:
-        from esp_handset.libretro_host import LibretroCore, find_cores, raw_to_rgb888
+        from esp_handset.libretro_host import LibretroCore, find_cores
 
+        if not prepare_cores(self._sys, 120.0):
+            _emu_log(f"no cores for {self._sys.key}: {self._sys.cores}")
+            self.failed.emit(
+                "NES core missing.\nSettings → Update,\nwait ~2 min, Play again."
+                if self._sys.key == "nes"
+                else "Core missing — Settings → Update"
+            )
+            return True
         core_paths = find_cores(self._sys.cores)
         if not core_paths:
             _emu_log(f"no cores for {self._sys.key}: {self._sys.cores}")
@@ -468,7 +578,7 @@ class EmuWorker(QThread):
         for core_path in core_paths:
             try:
                 _emu_log(f"load {core_path.name}")
-                return self._run_one_core(core_path, LibretroCore, raw_to_rgb888)
+                return self._run_one_core(core_path, LibretroCore)
             except Exception as e:
                 last_err = e
                 _emu_log(f"fail {core_path.name}: {e}")
@@ -480,7 +590,7 @@ class EmuWorker(QThread):
         self.failed.emit(f"{detail}\nTried {names}")
         return True
 
-    def _run_one_core(self, core_path: Path, LibretroCore, raw_to_rgb888) -> bool:
+    def _run_one_core(self, core_path: Path, LibretroCore) -> bool:
         save_dir = DATA / "saves" / self._sys.folder
         sys_dir = _bios_dir(self._sys)
         core = None
@@ -493,6 +603,14 @@ class EmuWorker(QThread):
                 system_dir=sys_dir,
             )
             core.load()
+            _emu_log(
+                f"loaded {core_path.name} {core.width}x{core.height} "
+                f"need={self._rom.name}"
+            )
+            # Warm up — some NES cores need a few frames before first video cb.
+            for _ in range(45):
+                core.set_held(set())
+                core.run_frame()
             want = self._want_sound()
             rate = int(round(core.sample_rate)) or 44100
             pcm = self._open_pcm(rate, want)
@@ -501,19 +619,31 @@ class EmuWorker(QThread):
             emit_every = 1.0 / min(30.0, fps)
             next_t = time.perf_counter()
             last_emit = 0.0
+            no_picture = 0
             while not self._stop:
                 core.set_held(self._sync_held())
-                raw, w, h, fmt = core.run_frame()
+                raw, w, h, fmt, pitch = core.run_frame()
                 if want and pcm is not None:
                     pcm = _write_pcm(pcm, core.take_audio())
                 now = time.perf_counter()
                 if raw and (now - last_emit) >= emit_every:
                     last_emit = now
-                    pitch = len(raw) // max(h, 1)
-                    arr = raw_to_rgb888(raw, w, h, pitch, fmt)
-                    img = _qimage_from_rgb(arr)
+                    use_pitch = pitch or (len(raw) // max(h, 1))
+                    img = _frame_to_qimage(raw, w, h, use_pitch, fmt)
                     if img is not None:
+                        no_picture = 0
                         self.frame.emit(img)
+                    else:
+                        no_picture += 1
+                elif not raw:
+                    no_picture += 1
+                if no_picture > 240:
+                    self.failed.emit(
+                        f"{core_path.name}: no video\n"
+                        "Try Settings → Update\n"
+                        "or a .nes file (not .zip)"
+                    )
+                    return True
                 next_t = self._pace(next_t, frame_s)
             return True
         finally:
@@ -857,13 +987,24 @@ class EmuPlayView(QWidget):
     def _boot_timeout(self) -> None:
         if self._last_frame is not None:
             return
-        msg = (
-            "No picture from core.\n"
-            "ROM may still be loading,\n"
-            "or nestopia/fceumm missing.\n"
-            "Back = list"
-        )
-        _emu_log("ui boot timeout (no frames)")
+        from esp_handset.libretro_host import find_core
+
+        core = find_core(self._sys.cores)
+        if not core:
+            msg = (
+                "NES core not installed.\n"
+                "Settings → Update,\n"
+                "wait ~2 min, try again."
+                if self._sys.key == "nes"
+                else "Core missing.\nSettings → Update"
+            )
+        else:
+            msg = (
+                f"No picture from {core.name}.\n"
+                "Try a plain .nes ROM\n"
+                "(not .zip) · Back = list"
+            )
+        _emu_log(f"ui boot timeout (no frames) core={core}")
         self.screen.setText(msg)
 
     def resizeEvent(self, e) -> None:  # noqa: N802
@@ -1023,13 +1164,7 @@ def make_emu_page(
         ok, msg = backend_status(system)
         _emu_log(f"launch {system.key} {rom.name} core_ok={ok}")
         show_play()
-        if not ok:
-            _kick_libretro_cores()
-            play_view.screen.setText(
-                msg + "\nCores download in background.\n"
-                "Back, wait ~1 min, Play again."
-            )
-            return
+        play_view.screen.setText(f"Loading\n{rom.name}")
         play_view.start_rom(rom)
 
     def do_receive() -> None:

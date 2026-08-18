@@ -365,7 +365,10 @@ def _discover_linphonec_uncached() -> Optional[str]:
     ):
         if p and _is_linphonec_cli(p):
             return p
-    return None
+    hit = _dpkg_bin("/linphonec")
+    if hit and _is_linphonec_cli(hit):
+        return hit
+    return _find_via_find("linphonec")
 
 
 def _discover_linphonec() -> Optional[str]:
@@ -383,7 +386,10 @@ def _discover_csh_uncached() -> Optional[str]:
     ):
         if p and _exists(p) and not _is_csh_wrapper(p):
             return p
-    return None
+    hit = _dpkg_bin("/linphonecsh")
+    if hit and not _is_csh_wrapper(hit):
+        return hit
+    return _find_via_find("linphonecsh")
 
 
 def _discover_csh() -> Optional[str]:
@@ -391,14 +397,36 @@ def _discover_csh() -> Optional[str]:
 
 
 _INSTALL_STARTED = 0.0
+_INSTALL_LOCK = threading.Lock()
+_INSTALL_STATE = "idle"  # idle | running | failed | ok
+_INSTALL_MSG = ""
 
 
-def _kick_voip_install() -> None:
-    """Start linphone-cli install once; do not block the UI."""
+def _read_voip_status() -> str:
+    try:
+        p = Path("/etc/esp-handset/linphone.status")
+        if p.is_file():
+            return p.read_text(encoding="utf-8", errors="replace").strip()
+    except OSError:
+        pass
+    return ""
+
+
+def _kick_voip_install(*, force: bool = False) -> None:
+    """Start linphone-cli install in the background; do not block the UI."""
     global _INSTALL_STARTED
     now = time.time()
-    if now - _INSTALL_STARTED < 120.0:
-        return
+    with _INSTALL_LOCK:
+        if _INSTALL_STATE == "running" and now - _INSTALL_STARTED < 300.0:
+            return
+        if (
+            not force
+            and _INSTALL_STATE != "failed"
+            and now - _INSTALL_STARTED < 120.0
+        ):
+            return
+        _INSTALL_STATE = "running"
+        _INSTALL_MSG = ""
     _INSTALL_STARTED = now
     threading.Thread(
         target=_install_voip_bg, name="voip-apt", daemon=True
@@ -415,8 +443,70 @@ def available() -> bool:
 def missing_hint() -> str:
     if _discover_linphonec() is not None or _discover_csh() is not None:
         return ""
+    st = _read_voip_status()
+    with _INSTALL_LOCK:
+        state = _INSTALL_STATE
+        msg = _INSTALL_MSG
+    if state == "running":
+        return "Installing VoIP… try again in about a minute"
+    if st.startswith("missing"):
+        tail = ""
+        try:
+            logp = Path.home() / ".esp-handset" / "linphone-ensure.log"
+            if logp.is_file():
+                lines = logp.read_text(encoding="utf-8", errors="replace").splitlines()
+                tail = next(
+                    (
+                        ln.strip()
+                        for ln in reversed(lines[-30:])
+                        if ln.strip() and not ln.startswith("[ensure-linphone]")
+                    ),
+                    "",
+                )
+        except OSError:
+            pass
+        if tail:
+            return f"VoIP missing — {tail[:52]}"
+        return "VoIP missing — Settings → Update, then Test SIP"
+    if state == "failed" and msg:
+        short = msg.replace("\n", " ").strip()
+        if "password" in short.lower() or "sudo" in short.lower():
+            return "VoIP needs Update once (sudo) — Settings → Update"
+        return f"VoIP install failed — {short[:52]}"
     _kick_voip_install()
     return "Installing VoIP… try the call again in about a minute"
+
+
+def prepare_voip(timeout: float = 180.0) -> bool:
+    """Install or locate linphone. Safe from a worker thread (dial / Test SIP)."""
+    global _INSTALL_STATE
+    if _discover_linphonec() or _discover_csh():
+        return True
+    _bust_voip_cache()
+    if _discover_linphonec_uncached() or _discover_csh_uncached():
+        return True
+    _kick_voip_install(force=True)
+    deadline = time.time() + max(30.0, timeout)
+    while time.time() < deadline:
+        _bust_voip_cache()
+        if _discover_linphonec_uncached() or _discover_csh_uncached():
+            with _INSTALL_LOCK:
+                _INSTALL_STATE = "ok"
+            return True
+        with _INSTALL_LOCK:
+            state = _INSTALL_STATE
+        if state != "running":
+            break
+        time.sleep(1.0)
+    left = max(20.0, deadline - time.time())
+    if left >= 20.0:
+        _sudo_ensure_linphone(left)
+        _bust_voip_cache()
+        if _discover_linphonec_uncached() or _discover_csh_uncached():
+            with _INSTALL_LOCK:
+                _INSTALL_STATE = "ok"
+            return True
+    return bool(_discover_linphonec() or _discover_csh())
 
 
 def _kill_stray_linphone() -> None:
@@ -711,6 +801,9 @@ def _engine() -> LinphoneEngine:
 
 def ensure() -> str:
     """Start linphonec when present. linphonecsh-only devices return OK (empty)."""
+    if not _discover_linphonec() and not _discover_csh():
+        if not prepare_voip(120.0):
+            return _set_error(missing_hint())
     if _discover_linphonec():
         return _engine().start()
     if _discover_csh():
@@ -722,7 +815,8 @@ def ensure_async() -> None:
     def work() -> None:
         try:
             if not _discover_linphonec() and not _discover_csh():
-                _log("no voip binary yet — skip boot start")
+                _log("no voip binary yet — starting background install")
+                _kick_voip_install(force=True)
                 return
             hint = ensure()
             if hint:
@@ -883,6 +977,10 @@ def dial_ex(number: str) -> Tuple[bool, str]:
 
 def _dial_ex_inner(number: str) -> Tuple[bool, str]:
     global _last_register_raw
+    if not _discover_linphonec() and not _discover_csh():
+        _log("dial: voip missing — running prepare_voip")
+        if not prepare_voip(180.0):
+            return False, _set_error(missing_hint())
     num = (number or "").strip()
     if not num:
         return False, _set_error("No number")
@@ -965,12 +1063,14 @@ def poll() -> CallInfo:
     return CallInfo()
 
 
-def _sudo_ensure_linphone(timeout: float = 55.0) -> str:
+def _sudo_ensure_linphone(timeout: float = 300.0) -> str:
     """Install/find real linphonecsh. Digivice has passwordless sudo for this."""
     cmds = (
         ["sudo", "-n", "digivice-ensure-linphone"],
         ["sudo", "-n", "/usr/local/bin/digivice-ensure-linphone"],
+        ["sudo", "-n", "bash", "/usr/local/bin/digivice-ensure-linphone"],
         ["sudo", "-n", "/opt/esp-handset/session/ensure-linphone.sh"],
+        ["sudo", "-n", "bash", "/opt/esp-handset/session/ensure-linphone.sh"],
     )
     last = "ensure not available"
     for cmd in cmds:
@@ -993,13 +1093,40 @@ def _sudo_ensure_linphone(timeout: float = 55.0) -> str:
         out = ((r.stdout or "") + (r.stderr or "")).strip()
         _log(f"ensure rc={r.returncode} {(out or '')[-120:]}")
         _bust_voip_cache()
-        return out[-400:] or f"ensure rc={r.returncode}"
+        if r.returncode == 0:
+            return out[-400:] or "ensure ok"
+        last = out[-400:] or f"ensure rc={r.returncode}"
+        low = out.lower()
+        if (
+            "password is required" in low
+            or "not found" in low
+            or "no such file" in low
+        ):
+            continue
+        return last
     return last
 
 
 def _install_voip_bg() -> None:
+    global _INSTALL_STATE, _INSTALL_MSG
     try:
-        _sudo_ensure_linphone(90.0)
+        out = _sudo_ensure_linphone(300.0)
+        _bust_voip_cache()
+        if _discover_linphonec_uncached() or _discover_csh_uncached():
+            with _INSTALL_LOCK:
+                _INSTALL_STATE = "ok"
+                _INSTALL_MSG = ""
+            _log("voip install OK")
+            return
+        with _INSTALL_LOCK:
+            _INSTALL_STATE = "failed"
+            _INSTALL_MSG = out or _read_voip_status() or "linphone not found"
+        _log(f"voip install failed: {_INSTALL_MSG[:120]}")
+    except Exception as e:
+        with _INSTALL_LOCK:
+            _INSTALL_STATE = "failed"
+            _INSTALL_MSG = str(e)
+        _log(f"voip install err: {e}")
     finally:
         _bust_voip_cache()
 

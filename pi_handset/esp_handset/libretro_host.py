@@ -212,6 +212,16 @@ def iter_core_dirs() -> List[Path]:
     return out
 
 
+def _valid_core(path: Path) -> bool:
+    try:
+        if path.stat().st_size < 80000:
+            return False
+        with open(path, "rb") as f:
+            return f.read(4) == b"\x7fELF"
+    except OSError:
+        return False
+
+
 def find_cores(so_names: Sequence[str]) -> List[Path]:
     names = list(so_names)
     found: List[Path] = []
@@ -226,10 +236,7 @@ def find_cores(so_names: Sequence[str]) -> List[Path]:
             except OSError:
                 key = str(p) if p.is_file() else ""
             if key and key not in seen:
-                try:
-                    if p.stat().st_size < 80000:
-                        continue
-                except OSError:
+                if not _valid_core(p):
                     continue
                 seen.add(key)
                 found.append(p)
@@ -242,7 +249,7 @@ def find_cores(so_names: Sequence[str]) -> List[Path]:
                     stem = name.lower().replace("_libretro.so", "")
                     if stem and stem in low:
                         try:
-                            if p.stat().st_size < 80000:
+                            if not _valid_core(p):
                                 break
                             key = str(p.resolve())
                         except OSError:
@@ -428,13 +435,13 @@ class LibretroCore:
         self._load_sram()
         self._alive = True
 
-    def run_frame(self) -> Tuple[Optional[bytes], int, int, int]:
-        """Advance one frame. Returns (raw_pixels or None, w, h, pix_fmt)."""
+    def run_frame(self) -> Tuple[Optional[bytes], int, int, int, int]:
+        """Advance one frame. Returns (raw, w, h, pix_fmt, pitch)."""
         self._got_frame = False
         self._lib.retro_run()
         if not self._got_frame:
-            return None, self.width, self.height, self._pix_fmt
-        return self._raw, self.width, self.height, self._pix_fmt
+            return None, self.width, self.height, self._pix_fmt, self._pitch
+        return self._raw, self.width, self.height, self._pix_fmt, self._pitch
 
     def take_audio(self) -> bytes:
         if not self._audio:
@@ -615,8 +622,14 @@ class LibretroCore:
             RETRO_ENVIRONMENT_SET_CORE_OPTIONS_INTL,
             RETRO_ENVIRONMENT_SET_CORE_OPTIONS_V2,
             RETRO_ENVIRONMENT_SET_CORE_OPTIONS_V2_INTL,
+            RETRO_ENVIRONMENT_GET_GAME_INFO_EXT,
+            RETRO_ENVIRONMENT_GET_USERNAME,
+            RETRO_ENVIRONMENT_SET_CONTENT_INFO_OVERRIDE,
         ):
             return False
+        # Optional callbacks many cores probe — ignore safely.
+        if cmd >= 70:
+            return True
         return False
 
     def _ingest_variables(self, data) -> None:

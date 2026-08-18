@@ -332,6 +332,7 @@ $USER_NAME ALL=(root) NOPASSWD: $PREFIX/session/power.sh
 $USER_NAME ALL=(root) NOPASSWD: $PREFIX/session/ensure-buttons.sh
 $USER_NAME ALL=(root) NOPASSWD: $PREFIX/session/ensure-cardkb.sh
 $USER_NAME ALL=(root) NOPASSWD: $PREFIX/session/ensure-linphone.sh
+$USER_NAME ALL=(root) NOPASSWD: $PREFIX/session/ensure-libretro-cores.sh
 EOF
   chmod 440 /etc/sudoers.d/esp-handset-update
   log "sudoers restored (incl. digivice-ensure-linphone)"
