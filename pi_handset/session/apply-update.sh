@@ -295,6 +295,8 @@ fi
 if [[ -d /etc/sudoers.d ]]; then
   cat >/etc/sudoers.d/esp-handset-update <<EOF
 # Digivice (apply-update) — Update / Power / Audio / Modem
+$USER_NAME ALL=(root) NOPASSWD: /usr/bin/true
+$USER_NAME ALL=(root) NOPASSWD: /bin/true
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-update
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-full-update
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-gui-update

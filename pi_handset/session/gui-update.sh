@@ -27,7 +27,9 @@ find_repo() {
 }
 
 if [[ "$(id -u)" -ne 0 ]]; then
-  if sudo -n true 2>/dev/null; then
+  self="${BASH_SOURCE[0]:-$0}"
+  wrap="/usr/local/bin/digivice-gui-update"
+  if [[ -x "$wrap" ]]; then
     exec sudo -n env \
       HOME="${HOME}" \
       SUDO_USER="${SUDO_USER:-$USER}" \
@@ -39,10 +41,24 @@ if [[ "$(id -u)" -ne 0 ]]; then
       ESP_HANDSET_SOFT_SERVICES=1 \
       ESP_HANDSET_STAGE=1 \
       PATH="/usr/local/bin:/usr/bin:/bin:$PATH" \
-      bash "$0" "$@"
+      "$wrap" "$@"
+  fi
+  if [[ -f "$self" ]]; then
+    exec sudo -n env \
+      HOME="${HOME}" \
+      SUDO_USER="${SUDO_USER:-$USER}" \
+      USER="${USER}" \
+      DISPLAY="${DISPLAY:-:0}" \
+      XAUTHORITY="${XAUTHORITY:-}" \
+      ESP_HANDSET_PREFIX="$PREFIX" \
+      ESP_HANDSET_REPO="${ESP_HANDSET_REPO:-}" \
+      ESP_HANDSET_SOFT_SERVICES=1 \
+      ESP_HANDSET_STAGE=1 \
+      PATH="/usr/local/bin:/usr/bin:/bin:$PATH" \
+      bash "$self" "$@"
   fi
   echo "ERROR: need passwordless sudo for digivice-gui-update"
-  echo "  Fix once: sudo digivice-full-update"
+  echo "  Fix once (SSH): cd ~/esp-phone && git pull && sudo bash pi_handset/session/full-update.sh"
   exit 1
 fi
 

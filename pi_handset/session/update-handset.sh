@@ -307,6 +307,8 @@ EOF
   if [[ -d /etc/sudoers.d ]]; then
     cat >/etc/sudoers.d/esp-handset-update <<EOF
 # Digivice Settings → Update / Power / Audio (passwordless)
+$USER_NAME ALL=(root) NOPASSWD: /usr/bin/true
+$USER_NAME ALL=(root) NOPASSWD: /bin/true
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-update
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-full-update
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-gui-update
@@ -426,8 +428,23 @@ EOF
 # --- main ---
 log "=== digivice-update start ==="
 
-# Elevate early so install path is simple; still do git as real user when root.
+# Elevate via allowlisted wrapper — do NOT require sudo -n true.
 if [[ "$(id -u)" -ne 0 ]]; then
+  wrap="/usr/local/bin/digivice-update"
+  if [[ -x "$wrap" ]]; then
+    log "Elevating via $wrap…"
+    exec sudo -n env \
+      ESP_HANDSET_PREFIX="$PREFIX" \
+      ESP_HANDSET_REPO="${ESP_HANDSET_REPO:-}" \
+      ESP_HANDSET_GIT_URL="$GIT_URL" \
+      ESP_HANDSET_BRANCH="$BRANCH" \
+      ESP_HANDSET_SOFT_SERVICES="${ESP_HANDSET_SOFT_SERVICES:-0}" \
+      ESP_HANDSET_STAGE="${ESP_HANDSET_STAGE:-0}" \
+      HOME="$(real_home)" \
+      SUDO_USER="$(real_user)" \
+      DISPLAY="${DISPLAY:-:0}" \
+      "$wrap" "$@"
+  fi
   if sudo -n true 2>/dev/null; then
     log "Elevating with sudo -n…"
     exec sudo -n env \

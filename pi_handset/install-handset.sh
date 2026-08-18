@@ -126,6 +126,8 @@ install -m 755 "$ROOT/session/power.sh" /usr/local/bin/digivice-power
 # Settings → Update can run without a password prompt on the handset
 cat >/etc/sudoers.d/esp-handset-update <<EOF
 # Digivice full + GUI update (no password)
+$USER_NAME ALL=(root) NOPASSWD: /usr/bin/true
+$USER_NAME ALL=(root) NOPASSWD: /bin/true
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-full-update
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-update
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-gui-update

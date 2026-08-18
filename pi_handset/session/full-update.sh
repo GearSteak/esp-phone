@@ -511,6 +511,8 @@ rm -f /boot/firmware/digivice-desktop /boot/digivice-desktop \
 
 # Sudoers for later GUI / terminal updates
 cat >/etc/sudoers.d/esp-handset-update <<EOF
+$USER_NAME ALL=(root) NOPASSWD: /usr/bin/true
+$USER_NAME ALL=(root) NOPASSWD: /bin/true
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-full-update
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-update
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-gui-update

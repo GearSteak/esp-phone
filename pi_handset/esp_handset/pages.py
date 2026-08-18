@@ -2736,21 +2736,27 @@ def make_update_page(on_back: Callable[[], None]) -> QWidget:
         return ["sudo", "-n", "/usr/local/bin/digivice-gui-update"]
 
     def _preflight() -> Optional[str]:
-        try:
-            r = subprocess.run(
-                ["sudo", "-n", "true"],
-                capture_output=True,
-                timeout=5,
-                check=False,
-            )
-            if r.returncode != 0:
-                return "Need sudo digivice-full-update once"
-        except Exception as e:
-            return f"sudo check failed: {e}"
+        """Do not test `sudo -n true` — sudoers only allowlists Digivice cmds."""
         if not os.path.isfile("/usr/local/bin/digivice-gui-update") and not os.path.isfile(
             "/opt/esp-handset/session/gui-update.sh"
         ):
-            return "digivice-gui-update missing"
+            return "updater missing"
+        try:
+            r = subprocess.run(
+                ["sudo", "-n", "-l"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+                check=False,
+            )
+            blob = (r.stdout or "") + (r.stderr or "")
+            if "digivice-gui-update" in blob or "gui-update.sh" in blob:
+                return None
+            if r.returncode == 0 and "NOPASSWD" in blob:
+                return None
+        except Exception:
+            pass
+        # Binary exists — try the update anyway (sudoers may hide from -l)
         return None
 
     def do_update() -> None:
