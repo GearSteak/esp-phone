@@ -464,7 +464,13 @@ class CallController(QObject):
             detail = reason or sip_call.last_error() or "Check SIP / number / Wi‑Fi"
             clog.finish(self._entry_id, status="failed", duration_s=0)
             self._phase = "ended"
-            self._show_ended("Could not dial", detail)
+            title = "Could not dial"
+            low = detail.lower()
+            if "not registered" in low:
+                title = "SIP not registered"
+            elif "voip" in low or "linphone" in low:
+                title = "VoIP not ready"
+            self._show_ended(title, detail)
             self.on_status(detail)
             self.state_changed.emit("ended")
             return
@@ -539,7 +545,7 @@ class CallController(QObject):
             on_dismiss=self.dismiss_ended,
         )
 
-    def _finish(self, status: str) -> None:
+    def _finish(self, status: str, detail: str = "") -> None:
         dur = 0
         if self._answered and self._talk_started:
             dur = int(time.time() - self._talk_started)
@@ -554,8 +560,8 @@ class CallController(QObject):
             "missed": ("Missed call", ""),
             "ended": ("Call ended", self._fmt_dur(dur) if dur else ""),
         }
-        title, detail = titles.get(status, ("Call ended", ""))
-        self._show_ended(title, detail)
+        title, default_detail = titles.get(status, ("Call ended", ""))
+        self._show_ended(title, detail or default_detail)
         self.on_status(title)
         self.state_changed.emit("ended")
 
@@ -579,14 +585,15 @@ class CallController(QObject):
         self.state_changed.emit("idle")
 
     def _tick(self) -> None:
-        # Connecting (register/dial still running): fail if it hangs too long
+        # Connecting (register/dial still running): don't kill a live INVITE
         if self._awaiting_dial:
             if self._phase in ("dialing", "ringing"):
-                if time.time() - self._ring_started > 35.0:
+                if time.time() - self._ring_started > 90.0:
                     self._awaiting_dial = False
                     self._dial_gen += 1
                     sip_call.hangup()
-                    self._finish("failed")
+                    why = sip_call.last_error() or "SIP took too long"
+                    self._finish("failed", why)
             return
         try:
             info = sip_call.poll()
@@ -630,14 +637,22 @@ class CallController(QObject):
             if info.phase == "error":
                 raw = (info.raw or "").lower()
                 self._awaiting_dial = False
-                self._finish("busy" if "busy" in raw else "failed")
+                if "busy" in raw or "486" in raw:
+                    self._finish("busy")
+                else:
+                    why = sip_call.last_error() or ""
+                    if not why:
+                        lines = [ln.strip() for ln in (info.raw or "").splitlines() if ln.strip()]
+                        why = lines[-1][:80] if lines else "SIP rejected call"
+                    self._finish("failed", why)
                 return
             if info.phase in ("ending", "idle"):
                 if self._user_hangup:
                     return
-                # No real outbound call after dial claimed success
-                if not self._saw_progress and elapsed > 8.0:
-                    self._finish("failed")
+                # Quiet linphonec stdout is common — give INVITE time to ring
+                if not self._saw_progress and elapsed > 25.0:
+                    why = sip_call.last_error() or "No ringback — Test SIP"
+                    self._finish("failed", why)
                     return
                 if self._saw_progress and elapsed > 5.0:
                     self._finish("no_answer")

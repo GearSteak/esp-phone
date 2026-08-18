@@ -270,7 +270,7 @@ def make_sip_account_page(on_back: Callable[[], None]) -> QWidget:
                 pass
             bridge.done.emit("RESULT: TEST TIMED OUT\n" + extra)
 
-        QTimer.singleShot(15000, timed_out)
+        QTimer.singleShot(90000, timed_out)
 
     save.clicked.connect(do_save)
     test.clicked.connect(do_test)

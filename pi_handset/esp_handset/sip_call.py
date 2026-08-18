@@ -551,8 +551,12 @@ def _phase_from_line(line: str, current: str) -> str:
         r"(?i)IncomingReceived|Incoming call|Receiving new call", s
     ):
         return "incoming"
+    # Call-level only. "Not registered" / ICE "failed" must not kill the overlay.
     if re.search(
-        r"(?i)Call (failed|error)|could not call|Unable to call|Not registered",
+        r"(?i)LinphoneCallError|"
+        r"\bCall failed\b|Unable to call|could not call|"
+        r"403 Forbidden|404 Not Found|486 Busy|603 Decline|"
+        r"408 Request Timeout|487 Request Terminated",
         s,
     ):
         return "error"
@@ -576,7 +580,8 @@ def _phase_from_line(line: str, current: str) -> str:
         return "ringing"
     if re.search(
         r"(?i)LinphoneCallOutgoing(Early|Progress|Init)|Early media|"
-        r"OutgoingProgress|OutgoingInit|Contacting|Calling ",
+        r"OutgoingProgress|OutgoingInit|Contacting|Calling |"
+        r"Establishing call",
         s,
     ):
         return "dialing"
@@ -725,22 +730,42 @@ class LinphoneEngine:
         )
         self._reader.start()
         time.sleep(0.8)
-        self.cmd(f"register sip:{user}@{server} {server} {password}")
         self.cmd("stun stun.zadarma.com")
-        deadline = time.time() + 8.0
-        while time.time() < deadline:
-            if self.registered:
-                _log("linphonec registered")
-                break
-            if not self.alive():
-                return _set_error("linphonec exited during register")
-            time.sleep(0.3)
+        time.sleep(0.4)
+        self._send_register(user, server, password)
+        if not self._wait_registered(12.0):
+            self._send_register(user, server, password, sip_proxy=True)
+            self._wait_registered(10.0)
         if not self.registered:
             _log("no register banner yet — will still try call")
+        if not self.alive():
+            return _set_error("linphonec exited during register")
         with self._lock:
             self.phase = "idle"
         _set_error("")
         return ""
+
+    def _send_register(self, user: str, server: str, password: str, *, sip_proxy: bool = False) -> None:
+        if sip_proxy:
+            self.cmd(f"register sip:{user}@{server} sip:{server} {password}")
+        else:
+            self.cmd(f"register sip:{user}@{server} {server} {password}")
+
+    def _wait_registered(self, timeout_s: float) -> bool:
+        deadline = time.time() + max(0.5, timeout_s)
+        while time.time() < deadline:
+            if self.registered:
+                _log("linphonec registered")
+                return True
+            if not self.alive():
+                return False
+            time.sleep(0.3)
+        return False
+
+    def reset_call_state(self) -> None:
+        with self._lock:
+            self.phase = "idle"
+            self.lines.clear()
 
     def cmd(self, line: str) -> None:
         if not self.alive():
@@ -999,13 +1024,32 @@ def _dial_ex_inner(number: str) -> Tuple[bool, str]:
 
     if _discover_linphonec():
         hint = _engine().start()
+        if hint and "linphonec" in hint.lower() and "not found" in hint.lower():
+            pass
+        elif hint and "Set SIP" in hint:
+            return False, hint
         eng = _engine()
-        if eng.alive():
+        if not eng.alive():
+            _log(f"linphonec not alive after start ({hint})")
+        else:
+            if not eng.registered:
+                env2 = _sip_env()
+                u = (env2.get("SIP_USER") or "").strip()
+                s = (env2.get("SIP_SERVER") or "").strip()
+                p = (env2.get("SIP_PASS") or "").strip()
+                if u and s and p:
+                    eng._send_register(u, s, p)
+                    if not eng._wait_registered(10.0):
+                        eng._send_register(u, s, p, sip_proxy=True)
+                        eng._wait_registered(8.0)
+                if not eng.registered:
+                    return False, _set_error(
+                        "SIP not registered — Test SIP / Wi‑Fi"
+                    )
             _log(f"call {target}")
-            with eng._lock:
-                eng.phase = "idle"
+            eng.reset_call_state()
             eng.cmd(f"call {target}")
-            deadline = time.time() + 6.0
+            deadline = time.time() + 8.0
             while time.time() < deadline:
                 info = eng.snapshot()
                 _last_register_raw = (
