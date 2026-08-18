@@ -75,10 +75,39 @@ display_name=${SIP_DISPLAY:-Digivice}
 
 [rtp]
 audio_rtp_port=7078
+audio_jitt_comp=60
+nortp_timeout=30
 
 [net]
 stun_server=stun.zadarma.com
 firewall_policy=2
+nat_policy_ref=nat_policy_0
+mtu=1300
+
+[nat_policy_0]
+stun_server=stun.zadarma.com
+stun_enabled=1
+ice_enabled=0
+turn_enabled=0
+protocols=stun
+
+[audio_codec_0]
+mime=PCMU
+rate=8000
+channels=1
+enabled=1
+
+[audio_codec_1]
+mime=PCMA
+rate=8000
+channels=1
+enabled=1
+
+[audio_codec_2]
+mime=opus
+rate=48000
+channels=2
+enabled=0
 
 [auth_info_0]
 username=${SIP_USER}
@@ -90,7 +119,7 @@ domain=${SIP_SERVER}
 [proxy_0]
 reg_proxy=<sip:${SIP_SERVER};transport=udp>
 reg_identity=sip:${SIP_USER}@${SIP_SERVER}
-reg_expires=3600
+reg_expires=120
 reg_sendregister=1
 publish=0
 dial_escape_plus=0

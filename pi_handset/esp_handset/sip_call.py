@@ -25,6 +25,7 @@ except ImportError:
 
 _log_lock = threading.Lock()
 _eng_lock = threading.Lock()
+_run_lock = threading.Lock()
 _csh_lock = threading.Lock()
 _ENGINE: Optional["LinphoneEngine"] = None
 _DISC: Dict[str, Tuple[Optional[str], float]] = {
@@ -229,7 +230,7 @@ def _write_linphonerc(env: Dict[str, str]) -> Optional[Path]:
         "[proxy_0]\n"
         f"reg_proxy=<sip:{server};transport=udp>\n"
         f"reg_identity=sip:{user}@{server}\n"
-        "reg_expires=3600\n"
+        "reg_expires=120\n"
         "reg_sendregister=1\n"
         "publish=0\n"
         "dial_escape_plus=0\n"
@@ -662,6 +663,39 @@ def _clean_cli(line: str) -> str:
     return s.replace("\x00", "").replace("linphonec>", "").strip()
 
 
+def _line_registered(line: str) -> Optional[bool]:
+    """True/False if this linphonec line reports REGISTER state, else None."""
+    s = _clean_cli(line)
+    if not s:
+        return None
+    low = s.lower()
+    if re.search(
+        r"(?i)registration failed|unregistered|registered\s*=\s*-1|"
+        r"LinphoneRegistrationFailed|not registered",
+        s,
+    ):
+        if not re.search(r"(?i)registration (is )?successful|registration ok", s):
+            return False
+    if re.search(
+        r"(?i)registration (is )?(successful|ok)|registered to|"
+        r"identity\s*=|identity:\s*sip:|LinphoneRegistrationOk|"
+        r"is registered|registered identity|^registered ",
+        s,
+    ):
+        if "not registered" not in low and "unregistered" not in low:
+            return True
+    return None
+
+
+def _text_registered(text: str) -> Optional[bool]:
+    last: Optional[bool] = None
+    for ln in (text or "").splitlines():
+        flag = _line_registered(ln)
+        if flag is not None:
+            last = flag
+    return last
+
+
 class LinphoneEngine:
     """One long-lived `linphonec -c rc`. PTY + CR so readline actually accepts commands."""
 
@@ -677,6 +711,7 @@ class LinphoneEngine:
         self._user = ""
         self._server = ""
         self._password = ""
+        self._rc_key = ""
 
     def alive(self) -> bool:
         return self.proc is not None and self.proc.poll() is None
@@ -688,22 +723,11 @@ class LinphoneEngine:
         _log(f"linphonec | {line[:200]}")
         with self._lock:
             self.lines.append(line)
-            low = line.lower()
-            if re.search(
-                r"(?i)registration (successful|ok)|registered to|"
-                r"identity=|identity: sip:|LinphoneRegistrationOk|"
-                r"^registered ",
-                line,
-            ):
-                if "not registered" not in low and "unregistered" not in low:
-                    self.registered = True
-            if re.search(
-                r"(?i)registration failed|not registered|unregistered|"
-                r"registered=-1|LinphoneRegistrationFailed",
-                line,
-            ):
-                if "successful" not in low:
-                    self.registered = False
+            flag = _line_registered(line)
+            if flag is True:
+                self.registered = True
+            elif flag is False:
+                self.registered = False
             self.phase = _phase_from_line(line, self.phase)
 
     def _read_loop(self) -> None:
@@ -777,16 +801,25 @@ class LinphoneEngine:
         )
 
     def start(self) -> str:
+        with _run_lock:
+            return self._start_inner()
+
+    def _start_inner(self) -> str:
         env = _sip_env()
         user = (env.get("SIP_USER") or "").strip()
         server = (env.get("SIP_SERVER") or "").strip()
         password = (env.get("SIP_PASS") or "").strip()
         if not user or not server or not password:
             return _set_error("Set SIP in Settings → Accounts")
+        rc_key = f"{user}|{server}|{password}"
         self._user, self._server, self._password = user, server, password
-        if self.alive() and self.registered:
+        if self.alive() and self.registered and self._rc_key == rc_key:
             return ""
-        if self.alive() and not self.registered:
+        if self.alive() and self._rc_key != rc_key:
+            _log("SIP account changed — restart linphonec")
+            self.stop()
+            time.sleep(0.4)
+        elif self.alive() and not self.registered:
             _log("linphonec up but not registered — retry REGISTER")
             if self.ensure_registered(12.0, send_register=True):
                 return ""
@@ -817,13 +850,14 @@ class LinphoneEngine:
             return _set_error(f"linphonec failed to start ({(leftover or 'exit')[:80]})")
         self.phase = "idle"
         self.registered = False
+        self._rc_key = rc_key
         self._reader = threading.Thread(
             target=self._read_loop, name="linphonec-out", daemon=True
         )
         self._reader.start()
         # rc has reg_sendregister=1 — wait for that before shoving extra commands
         if not self.ensure_registered(10.0, send_register=False):
-            if not self.ensure_registered(12.0, send_register=True):
+            if not self.ensure_registered(14.0, send_register=True):
                 if not self.alive():
                     return _set_error("linphonec exited during register")
                 return _set_error("SIP not registered — check Wi‑Fi / Accounts")
@@ -835,11 +869,22 @@ class LinphoneEngine:
 
     def ensure_registered(self, timeout_s: float, *, send_register: bool) -> bool:
         if send_register and self._user and self._server:
-            self.cmd(f"register sip:{self._user}@{self._server} {self._server} {self._password}")
+            self.cmd(
+                f"register sip:{self._user}@{self._server} "
+                f"{self._server} {self._password}"
+            )
         deadline = time.time() + max(1.0, timeout_s)
         n = 0
         while time.time() < deadline:
-            if self.registered:
+            with self._lock:
+                if self.registered:
+                    _log("linphonec registered")
+                    return True
+                recent = "\n".join(list(self.lines)[-8:])
+            flag = _text_registered(recent)
+            if flag is True:
+                with self._lock:
+                    self.registered = True
                 _log("linphonec registered")
                 return True
             if not self.alive():
@@ -848,7 +893,8 @@ class LinphoneEngine:
                 self.cmd("status register")
             n += 1
             time.sleep(0.35)
-        return bool(self.registered)
+        with self._lock:
+            return bool(self.registered)
 
     def reset_call_state(self) -> None:
         with self._lock:
@@ -884,6 +930,7 @@ class LinphoneEngine:
         proc = self.proc
         fd = self._pty
         self.registered = False
+        self._rc_key = ""
         if proc is not None and proc.poll() is None:
             try:
                 payload = b"quit\r\n"
@@ -1255,7 +1302,7 @@ def _install_voip_bg() -> None:
 
 
 def doctor() -> str:
-    """Fast SIP check. If linphonecsh is missing, start install in the background."""
+    """Start linphonec if needed and report whether Zadarma REGISTER succeeded."""
     env = _sip_env()
     user = (env.get("SIP_USER") or "").strip() or "?"
     server = (env.get("SIP_SERVER") or "").strip() or "?"
@@ -1286,16 +1333,26 @@ def doctor() -> str:
         lines.append("--- log ---")
         lines.append(recent_log(8))
         return "\n".join(lines)
-    if csh:
-        _DISC["csh"] = (csh, time.time())
     if lp:
         _DISC["linphonec"] = (lp, time.time())
+    if csh:
+        _DISC["csh"] = (csh, time.time())
+
+    hint = ensure()
     eng = _engine()
     lines.append(f"proc: {'up' if eng.alive() else 'down'}")
     lines.append(f"cli-registered: {eng.registered}")
-    result = "NOT REGISTERED"
-    if csh:
-        st = _csh_cmd("status", "register", timeout=2.0)
+    if hint:
+        lines.append(hint)
+    if _last_error and _last_error not in lines:
+        lines.append(f"last: {_last_error}")
+
+    # linphonec is the real engine. Do not ask linphonecsh — that daemon
+    # fights for UDP/5060 and reports "not running" even when we are registered.
+    if lp:
+        result = "REGISTERED" if eng.alive() and eng.registered else "NOT REGISTERED"
+    else:
+        st = _csh_cmd("status", "register", timeout=3.0)
         compact = (st or "").replace("\n", " ").strip()
         if re.search(r"(?i)linphonecsh not found", compact):
             threading.Thread(
@@ -1303,31 +1360,16 @@ def doctor() -> str:
             ).start()
             result = "INSTALLING VOIP"
             lines.append("wrapper could not find real linphonecsh")
-        elif re.search(r"(?i)no running|not running|failed to connect", compact):
-            lines.append("daemon: not running (Save SIP to register)")
-            result = "NOT REGISTERED"
         elif compact:
             lines.append(f"register: {compact[:140]}")
-            ok = bool(
-                re.search(
-                    r"(?i)identity=|registered to|RegistrationOk|successful",
-                    compact,
-                )
-            )
-            if "registered=-1" in compact and "identity" not in compact.lower():
-                ok = False
-            if eng.registered:
-                ok = True
-            result = "REGISTERED" if ok else "NOT REGISTERED"
+            ok = _text_registered(compact)
+            result = "REGISTERED" if ok is True else "NOT REGISTERED"
         else:
-            result = "REGISTERED" if eng.registered else "NOT REGISTERED"
-    elif eng.registered:
-        result = "REGISTERED"
-    if _last_error:
-        lines.append(f"last: {_last_error}")
+            result = "NOT REGISTERED"
+
     lines.insert(0, f"RESULT: {result}")
     lines.append("--- log ---")
-    lines.append(recent_log(8))
+    lines.append(recent_log(10))
     return "\n".join(lines)
 
 
