@@ -58,6 +58,28 @@ def find_git_repo() -> Optional[Path]:
     return None
 
 
+def _installed_rev() -> str:
+    """Best-effort short SHA of the installed Digivice build in /opt."""
+    candidates = (
+        Path("/etc/esp-handset/last_update"),
+        Path.home() / ".esp-handset" / "last_update",
+        Path.home() / ".esp-handset" / "last_gui_update",
+    )
+    for path in candidates:
+        try:
+            if not path.is_file():
+                continue
+            text = path.read_text(encoding="utf-8", errors="replace").strip()
+        except OSError:
+            continue
+        for token in text.replace("\n", " ").split():
+            if token.startswith("rev="):
+                rev = token.split("=", 1)[-1].strip()
+                if rev and rev != "?":
+                    return rev[:7]
+    return ""
+
+
 def check_for_updates(*, timeout_s: float = 6.0) -> UpdateCheck:
     if os.environ.get("ESP_HANDSET_SKIP_BOOT_UPDATE", "").strip() in (
         "1",
@@ -100,14 +122,32 @@ def check_for_updates(*, timeout_s: float = 6.0) -> UpdateCheck:
         rem = (remote.stdout or "").strip()
         if not loc or not rem:
             return UpdateCheck("error", "Empty rev")
+        loc7 = loc[:7]
+        rem7 = rem[:7]
+        inst7 = _installed_rev()
+
+        # Normal case: local repo itself is behind GitHub.
+        if loc != rem:
+            if inst7 and inst7 != loc7:
+                detail = f"installed {inst7} · repo {loc7} · remote {rem7}"
+            else:
+                detail = f"{loc7} → {rem7}"
+            return UpdateCheck("available", detail, loc7, rem7)
+
+        # Repo is current, but the installed /opt copy is still stale.
+        if inst7 and inst7 != loc7:
+            return UpdateCheck(
+                "available",
+                f"installed {inst7} → repo {loc7}",
+                inst7,
+                loc7,
+            )
+
         if loc == rem:
-            return UpdateCheck("up_to_date", "You're current", loc[:7], rem[:7])
-        return UpdateCheck(
-            "available",
-            f"{loc[:7]} → {rem[:7]}",
-            loc[:7],
-            rem[:7],
-        )
+            detail = "You're current"
+            if inst7:
+                detail = f"installed {inst7} · repo {loc7}"
+            return UpdateCheck("up_to_date", detail, loc7, rem7)
     except subprocess.TimeoutExpired:
         return UpdateCheck("offline", "Network slow")
     except Exception as e:
