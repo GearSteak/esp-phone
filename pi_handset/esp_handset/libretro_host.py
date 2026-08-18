@@ -226,6 +226,11 @@ def find_cores(so_names: Sequence[str]) -> List[Path]:
             except OSError:
                 key = str(p) if p.is_file() else ""
             if key and key not in seen:
+                try:
+                    if p.stat().st_size < 80000:
+                        continue
+                except OSError:
+                    continue
                 seen.add(key)
                 found.append(p)
         try:
@@ -237,6 +242,8 @@ def find_cores(so_names: Sequence[str]) -> List[Path]:
                     stem = name.lower().replace("_libretro.so", "")
                     if stem and stem in low:
                         try:
+                            if p.stat().st_size < 80000:
+                                break
                             key = str(p.resolve())
                         except OSError:
                             key = str(p)

@@ -325,6 +325,7 @@ $USER_NAME ALL=(root) NOPASSWD: /bin/systemctl stop cardkb-inputd.service
 $USER_NAME ALL=(root) NOPASSWD: /bin/systemctl start cardkb-inputd
 $USER_NAME ALL=(root) NOPASSWD: /bin/systemctl start cardkb-inputd.service
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-ensure-linphone
+$USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-libretro-cores
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-ensure-gb
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-stop-gb
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-modem-uart

@@ -392,8 +392,8 @@ if [[ -f "$PREFIX/session/ensure-libretro-cores.sh" ]]; then
   install -m 755 "$PREFIX/session/ensure-libretro-cores.sh" /usr/local/bin/digivice-libretro-cores
   log "Ensuring libretro cores (NES/GB/SMS/Genesis/GBA)…"
   SUDO_USER="$USER_NAME" DIGI_GUI_USER="$USER_NAME" \
-    bash /usr/local/bin/digivice-libretro-cores >>"$LOG" 2>&1 \
-    || log "WARN: digivice-libretro-cores failed — check $LOG"
+    timeout 240 bash /usr/local/bin/digivice-libretro-cores >>"$LOG" 2>&1 \
+    || log "WARN: digivice-libretro-cores failed/timed out — check $LOG"
 fi
 
 # Sealed-case CM108: keep wake helper + boot unit after GUI apply

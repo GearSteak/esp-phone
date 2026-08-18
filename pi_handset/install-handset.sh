@@ -138,6 +138,7 @@ $USER_NAME ALL=(root) NOPASSWD: $PREFIX/session/gui-update.sh
 $USER_NAME ALL=(root) NOPASSWD: $PREFIX/session/power.sh
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-ensure-buttons
 $USER_NAME ALL=(root) NOPASSWD: $PREFIX/session/ensure-buttons.sh
+$USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-libretro-cores
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-ensure-cardkb
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-cardkb-ctl
 $USER_NAME ALL=(root) NOPASSWD: /usr/bin/systemctl stop cardkb-inputd

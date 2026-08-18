@@ -338,7 +338,7 @@ if [[ -f "$ROOT/session/ensure-libretro-cores.sh" ]]; then
   install -m 755 "$ROOT/session/ensure-libretro-cores.sh" "$PREFIX/session/ensure-libretro-cores.sh"
   install -m 755 "$ROOT/session/ensure-libretro-cores.sh" /usr/local/bin/digivice-libretro-cores
   log "libretro cores (in-UI NES/SMS/Genesis/GBA/GB)…"
-  bash "$ROOT/session/ensure-libretro-cores.sh" 2>&1 | tee -a "$LOG" | tail -n 30 || true
+  timeout 240 bash "$ROOT/session/ensure-libretro-cores.sh" 2>&1 | tee -a "$LOG" | tail -n 30 || true
 fi
 # Kill switch: external GB emu blanked SPI — keep off until in-UI emu
 touch "$USER_HOME/.esp-handset/gb-disabled" 2>/dev/null || true
@@ -529,6 +529,7 @@ $USER_NAME ALL=(root) NOPASSWD: /bin/systemctl stop cardkb-inputd.service
 $USER_NAME ALL=(root) NOPASSWD: /bin/systemctl start cardkb-inputd
 $USER_NAME ALL=(root) NOPASSWD: /bin/systemctl start cardkb-inputd.service
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-ensure-linphone
+$USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-libretro-cores
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-ensure-gb
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-stop-gb
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-modem-uart

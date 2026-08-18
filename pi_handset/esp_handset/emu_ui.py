@@ -6,6 +6,8 @@ Digivice keeps the SPI panel; frames are blitted into Qt like the original GB vi
 from __future__ import annotations
 
 import os
+import subprocess
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -253,7 +255,45 @@ def backend_status(sys: EmuSystem) -> Tuple[bool, str]:
             return True, f"{msg} (fallback)"
         return False, "Need gambatte core or: sudo pip3 install --break-system-packages pyboy"
     names = ", ".join(sys.cores[:2]) or "libretro"
-    return False, f"Need core ({names}). Run sudo digivice-full-update"
+    return False, f"Need core ({names}). Downloading…"
+
+
+_CORE_KICK = 0.0
+
+
+def _kick_libretro_cores() -> None:
+    """Fetch nestopia/fceumm/… in the background. Never blocks the UI."""
+    global _CORE_KICK
+    now = time.time()
+    if now - _CORE_KICK < 180.0:
+        return
+    _CORE_KICK = now
+
+    def work() -> None:
+        cmds = (
+            ["sudo", "-n", "digivice-libretro-cores"],
+            ["sudo", "-n", "/usr/local/bin/digivice-libretro-cores"],
+            ["sudo", "-n", "/opt/esp-handset/session/ensure-libretro-cores.sh"],
+        )
+        for cmd in cmds:
+            try:
+                r = subprocess.run(
+                    cmd,
+                    capture_output=True,
+                    timeout=300,
+                    check=False,
+                )
+            except FileNotFoundError:
+                continue
+            except Exception as e:
+                _emu_log(f"core install {e}")
+                continue
+            _emu_log(f"core install {' '.join(cmd)} rc={r.returncode}")
+            if r.returncode == 0:
+                return
+        _emu_log("core install: no sudo wrapper")
+
+    threading.Thread(target=work, name="libretro-cores", daemon=True).start()
 
 
 def _set_nonblock(fd: int) -> None:
@@ -956,6 +996,8 @@ def make_emu_page(
         play.setEnabled(bool(roms))
         folder = ensure_rom_dir(system)
         status.setText(f"{msg}\n{len(roms)} ROM(s) · {folder.name}/")
+        if not ok and not system.builtin:
+            _kick_libretro_cores()
         if not roms:
             empty = QListWidgetItem("No ROMs yet\n→ Receive ROMs (Wi‑Fi)")
             empty.setFlags(Qt.NoItemFlags)
@@ -982,7 +1024,11 @@ def make_emu_page(
         _emu_log(f"launch {system.key} {rom.name} core_ok={ok}")
         show_play()
         if not ok:
-            play_view.screen.setText(msg + "\nBack = list")
+            _kick_libretro_cores()
+            play_view.screen.setText(
+                msg + "\nCores download in background.\n"
+                "Back, wait ~1 min, Play again."
+            )
             return
         play_view.start_rom(rom)
 

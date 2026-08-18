@@ -316,7 +316,8 @@ def _is_csh_wrapper(path: str) -> bool:
 def _cached(kind: str, fn) -> Optional[str]:
     now = time.time()
     prev, ts = _DISC.get(kind, (None, 0.0))
-    if ts and (now - ts) < _DISC_TTL:
+    ttl = _DISC_TTL if prev else 8.0
+    if ts and (now - ts) < ttl:
         return prev
     hit = fn()
     _DISC[kind] = (hit, now)
@@ -389,14 +390,33 @@ def _discover_csh() -> Optional[str]:
     return _cached("csh", _discover_csh_uncached)
 
 
+_INSTALL_STARTED = 0.0
+
+
+def _kick_voip_install() -> None:
+    """Start linphone-cli install once; do not block the UI."""
+    global _INSTALL_STARTED
+    now = time.time()
+    if now - _INSTALL_STARTED < 120.0:
+        return
+    _INSTALL_STARTED = now
+    threading.Thread(
+        target=_install_voip_bg, name="voip-apt", daemon=True
+    ).start()
+
+
 def available() -> bool:
-    return _discover_linphonec() is not None or _discover_csh() is not None
+    if _discover_linphonec() is not None or _discover_csh() is not None:
+        return True
+    _kick_voip_install()
+    return False
 
 
 def missing_hint() -> str:
-    if available():
+    if _discover_linphonec() is not None or _discover_csh() is not None:
         return ""
-    return "VoIP tool missing — Update Digivice"
+    _kick_voip_install()
+    return "Installing VoIP… try the call again in about a minute"
 
 
 def _kill_stray_linphone() -> None:
