@@ -617,8 +617,10 @@ class PhoneShell(QMainWindow):
             board = getattr(page, "gb_board", None)
         if (
             board is not None
-            and board.isVisible()
-            and getattr(board, "playing", False)
+            and (
+                getattr(board, "capturing_pad", False)
+                or getattr(board, "playing", False)
+            )
         ):
             return board
         return None
@@ -925,8 +927,10 @@ class PhoneShell(QMainWindow):
                 board = getattr(page, "gb_board", None)
             if (
                 board is not None
-                and board.isVisible()
-                and getattr(board, "playing", False)
+                and (
+                    getattr(board, "capturing_pad", False)
+                    or getattr(board, "playing", False)
+                )
             ):
                 board.keyReleaseEvent(event)
                 event.accept()

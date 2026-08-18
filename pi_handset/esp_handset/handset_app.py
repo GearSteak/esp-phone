@@ -160,11 +160,9 @@ class _KioskKeyFilter(QObject):
             if page is None:
                 return None
             board = getattr(page, "emu_board", None) or getattr(page, "gb_board", None)
-            if (
-                board is not None
-                and board.isVisible()
-                and getattr(board, "playing", False)
-            ):
+            if board is None:
+                return None
+            if getattr(board, "capturing_pad", False) or getattr(board, "playing", False):
                 return board
         except Exception:
             return None
@@ -172,8 +170,10 @@ class _KioskKeyFilter(QObject):
 
     def eventFilter(self, obj, event):  # noqa: N802
         et = event.type()
-        if et == QEvent.KeyRelease:
+        board = None
+        if et in (QEvent.KeyPress, QEvent.KeyRelease):
             board = self._emu_board()
+        if et == QEvent.KeyRelease:
             if board is not None:
                 board.keyReleaseEvent(event)
                 return True
@@ -195,6 +195,11 @@ class _KioskKeyFilter(QObject):
             self._shell.keyPressEvent(event)
             return True
 
+        # In-UI emulator owns the Digivice pad (Confirm=A, Back=B, Home=Start).
+        if board is not None:
+            board.keyPressEvent(event)
+            return True
+
         w = QApplication.focusWidget()
 
         # Already typing into a field (Confirm on QLineEdit) — keep keys there
@@ -209,11 +214,8 @@ class _KioskKeyFilter(QObject):
             # Left/Right/Backspace/letters must go to the field, not the host
             return self._deliver_to_field(w, event)
 
-        # In-UI Game Boy / arcade: let the board keep focus for pad keys
-        if w is not None and (
-            getattr(w, "digi_gamepad", False)
-            or (w.__class__.__module__ or "").endswith("games_ui")
-        ):
+        # In-UI arcade: let the board keep focus for pad keys
+        if w is not None and (w.__class__.__module__ or "").endswith("games_ui"):
             if key in (Qt.Key_Escape, Qt.Key_Home):
                 self._shell.keyPressEvent(event)
                 return True
@@ -226,35 +228,6 @@ class _KioskKeyFilter(QObject):
                 return self._deliver_to_field(target, event)
             return False
 
-        pad = {
-            Qt.Key_Left,
-            Qt.Key_Right,
-            Qt.Key_Up,
-            Qt.Key_Down,
-            Qt.Key_Return,
-            Qt.Key_Enter,
-            Qt.Key_Escape,
-            Qt.Key_Home,
-            Qt.Key_Tab,
-            Qt.Key_X,
-            Qt.Key_Z,
-            Qt.Key_S,
-            Qt.Key_Space,
-            Qt.Key_1,
-            Qt.Key_2,
-        }
-        # When an emulator page is playing, always route pad-ish keys via shell → board
-        try:
-            board = self._emu_board()
-            if board is not None and key in pad:
-                if key == Qt.Key_Escape:
-                    self._shell.keyPressEvent(event)
-                    return True
-                self._shell.keyPressEvent(event)
-                return True
-        except Exception:
-            pass
-
         if key not in {
             Qt.Key_Left,
             Qt.Key_Right,
@@ -265,9 +238,6 @@ class _KioskKeyFilter(QObject):
             Qt.Key_Escape,
             Qt.Key_Home,
         }:
-            return False
-        # Games keep their own handlers via focused game widget
-        if w is not None and (w.__class__.__module__ or "").endswith("games_ui"):
             return False
         self._shell.keyPressEvent(event)
         return True

@@ -37,6 +37,7 @@ RETRO_DEVICE_ID_JOYPAD_A = 8
 RETRO_DEVICE_ID_JOYPAD_X = 9
 RETRO_DEVICE_ID_JOYPAD_L = 10
 RETRO_DEVICE_ID_JOYPAD_R = 11
+RETRO_DEVICE_ID_JOYPAD_MASK = 256
 
 RETRO_MEMORY_SAVE_RAM = 0
 
@@ -330,10 +331,11 @@ class LibretroCore:
         )
 
     def set_held(self, held: Set[str]) -> None:
-        self._held = held
+        self._held = set(held)
 
     def load(self) -> None:
-        mode = getattr(ctypes, "RTLD_GLOBAL", 0) | getattr(ctypes, "RTLD_NOW", 2)
+        # LOCAL avoids symbol clashes (gambatte + fceumm in one process).
+        mode = getattr(ctypes, "RTLD_LOCAL", 0) | getattr(ctypes, "RTLD_NOW", 2)
         try:
             self._lib = ctypes.CDLL(str(self.so_path), mode=mode)
         except OSError:
@@ -362,6 +364,11 @@ class LibretroCore:
         lib.retro_load_game.restype = c_bool
         lib.retro_unload_game.restype = None
         lib.retro_run.restype = None
+        try:
+            lib.retro_set_controller_port_device.argtypes = [c_uint, c_uint]
+            lib.retro_set_controller_port_device.restype = None
+        except Exception:
+            pass
 
         lib.retro_set_environment(self._env_cb)
         lib.retro_set_video_refresh(self._video_cb)
@@ -513,9 +520,7 @@ class LibretroCore:
             RETRO_ENVIRONMENT_GET_INPUT_BITMASKS,
             RETRO_ENVIRONMENT_GET_FASTFORWARDING,
         ):
-            # some cmds use data=NULL as a query
-            if cmd in (RETRO_ENVIRONMENT_GET_INPUT_BITMASKS,):
-                return False
+            return False
         try:
             return self._env_inner(cmd, data)
         except Exception:
@@ -614,8 +619,9 @@ class LibretroCore:
             RETRO_ENVIRONMENT_SET_SUPPORT_NO_GAME,
         ):
             return True
+        if cmd == RETRO_ENVIRONMENT_GET_INPUT_BITMASKS:
+            return True
         if cmd in (
-            RETRO_ENVIRONMENT_GET_INPUT_BITMASKS,
             RETRO_ENVIRONMENT_GET_LOG_INTERFACE,
             RETRO_ENVIRONMENT_SET_KEYBOARD_CALLBACK,
             RETRO_ENVIRONMENT_SET_CORE_OPTIONS,
@@ -658,25 +664,39 @@ class LibretroCore:
                 break
 
     def _video(self, data, width: int, height: int, pitch: int) -> None:
-        if not data or width <= 0 or height <= 0:
+        try:
+            if not data or width <= 0 or height <= 0:
+                return
+            w, h, p = int(width), int(height), int(pitch)
+            if w > 1024 or h > 1024 or p <= 0 or p > 8192:
+                return
+            nbytes = p * h
+            if nbytes <= 0 or nbytes > 8_000_000:
+                return
+            self.width = w
+            self.height = h
+            self._pitch = p
+            self._raw = string_at(data, nbytes)
+            self._got_frame = True
+        except Exception:
             return
-        self.width = int(width)
-        self.height = int(height)
-        self._pitch = int(pitch)
-        nbytes = int(pitch) * int(height)
-        self._raw = string_at(data, nbytes)
-        self._got_frame = True
 
     def _audio_sample(self, left: int, right: int) -> None:
-        self._audio += int(left).to_bytes(2, "little", signed=True)
-        self._audio += int(right).to_bytes(2, "little", signed=True)
+        try:
+            self._audio += int(left).to_bytes(2, "little", signed=True)
+            self._audio += int(right).to_bytes(2, "little", signed=True)
+        except Exception:
+            return
 
     def _audio_batch(self, data, frames: int) -> int:
-        n = int(frames)
-        if n <= 0 or not data:
+        try:
+            n = int(frames)
+            if n <= 0 or not data or n > 8192:
+                return 0
+            self._audio += string_at(data, n * 4)
+            return n
+        except Exception:
             return 0
-        self._audio += string_at(data, n * 4)
-        return n
 
     def _poll(self) -> None:
         return
@@ -684,8 +704,15 @@ class LibretroCore:
     def _input(self, port: int, device: int, index: int, ident: int) -> int:
         if port != 0 or device != RETRO_DEVICE_JOYPAD:
             return 0
+        held = self._held
+        if ident == RETRO_DEVICE_ID_JOYPAD_MASK:
+            mask = 0
+            for name, bid in BTN_IDS.items():
+                if name in held:
+                    mask |= 1 << bid
+            return mask
         for name, bid in BTN_IDS.items():
-            if bid == ident and name in self._held:
+            if bid == ident and name in held:
                 return 1
         return 0
 

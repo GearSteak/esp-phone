@@ -104,7 +104,7 @@ SYSTEMS: Dict[str, EmuSystem] = {
         "◆",
         "nes",
         (".nes", ".fds", ".unf", ".unif", ".nsf"),
-        ("fceumm_libretro.so",),
+        ("fceumm_libretro.so", "nestopia_libretro.so"),
         (256, 240),
     ),
     "smsgg": EmuSystem(
@@ -277,6 +277,7 @@ def _install_cores_bg() -> None:
             (
                 "gambatte_libretro.so",
                 "fceumm_libretro.so",
+                "nestopia_libretro.so",
                 "genesis_plus_gx_libretro.so",
             )
         ):
@@ -370,8 +371,8 @@ def _qimage_from_rgb(arr) -> Optional[QImage]:
 
 
 def _qimage_from_raw(raw: bytes, w: int, h: int, pitch: int, pix_fmt: int) -> Optional[QImage]:
-    """Qt-native blit — works when numpy is missing."""
-    if not raw or w <= 0 or h <= 0:
+    """Qt-native blit — works when numpy is missing. Never wrap an undersized buffer."""
+    if not raw or w <= 0 or h <= 0 or w > 1024 or h > 1024:
         return None
     try:
         from esp_handset.libretro_host import (
@@ -380,17 +381,20 @@ def _qimage_from_raw(raw: bytes, w: int, h: int, pitch: int, pix_fmt: int) -> Op
         )
 
         if pix_fmt == RETRO_PIXEL_FORMAT_XRGB8888:
-            row = max(pitch, w * 4)
-            img = QImage(raw, w, h, row, QImage.Format_RGB32)
+            row = max(int(pitch), w * 4)
+            qfmt = QImage.Format_RGB32
         elif pix_fmt == RETRO_PIXEL_FORMAT_RGB565:
-            row = max(pitch, w * 2)
-            img = QImage(raw, w, h, row, QImage.Format_RGB16)
+            row = max(int(pitch), w * 2)
+            qfmt = QImage.Format_RGB16
         else:
-            row = max(pitch, w * 2)
-            img = QImage(raw, w, h, row, QImage.Format_RGB555)
+            row = max(int(pitch), w * 2)
+            qfmt = QImage.Format_RGB555
+        if row <= 0 or len(raw) < row * h:
+            return None
+        img = QImage(raw, w, h, row, qfmt)
         if img.isNull():
             return None
-        return img.convertToFormat(QImage.Format_RGB888)
+        return img.copy().convertToFormat(QImage.Format_RGB888)
     except Exception:
         return None
 
@@ -418,30 +422,35 @@ class EmuWorker(QThread):
         self._held: Set[str] = set()
         self._pending_press: Set[str] = set()
         self._pending_release: Set[str] = set()
+        self._pad_lock = threading.Lock()
 
     def request_stop(self) -> None:
         self._stop = True
 
     def button_down(self, name: str) -> None:
-        self._pending_press.add(name)
-        self._pending_release.discard(name)
+        with self._pad_lock:
+            self._pending_press.add(name)
+            self._pending_release.discard(name)
 
     def button_up(self, name: str) -> None:
-        self._pending_release.add(name)
-        self._pending_press.discard(name)
+        with self._pad_lock:
+            self._pending_release.add(name)
+            self._pending_press.discard(name)
 
     def button_tap(self, name: str) -> None:
-        self._pending_press.add(name)
-        self._pending_release.add(name)
+        with self._pad_lock:
+            self._pending_press.add(name)
+            self._pending_release.add(name)
 
     def _sync_held(self) -> Set[str]:
-        for name in list(self._pending_press):
-            self._pending_press.discard(name)
-            self._held.add(name)
-        for name in list(self._pending_release):
-            self._pending_release.discard(name)
-            self._held.discard(name)
-        return self._held
+        with self._pad_lock:
+            for name in list(self._pending_press):
+                self._pending_press.discard(name)
+                self._held.add(name)
+            for name in list(self._pending_release):
+                self._pending_release.discard(name)
+                self._held.discard(name)
+            return set(self._held)
 
     def run(self) -> None:
         try:
@@ -554,7 +563,7 @@ class EmuWorker(QThread):
                 f"need={self._rom.name}"
             )
             # Warm up — some NES cores need a few frames before first video cb.
-            for _ in range(45):
+            for _ in range(12):
                 core.set_held(set())
                 core.run_frame()
             want = self._want_sound()
@@ -568,7 +577,11 @@ class EmuWorker(QThread):
             no_picture = 0
             while not self._stop:
                 core.set_held(self._sync_held())
-                raw, w, h, fmt, pitch = core.run_frame()
+                try:
+                    raw, w, h, fmt, pitch = core.run_frame()
+                except Exception as e:
+                    self.failed.emit(f"{core_path.name} crashed\n{str(e)[:80]}")
+                    return True
                 if want and pcm is not None:
                     pcm = _write_pcm(pcm, core.take_audio())
                 now = time.perf_counter()
@@ -780,6 +793,7 @@ class EmuPlayView(QWidget):
         self._worker: Optional[EmuWorker] = None
         self._held_qt: Dict[int, str] = {}
         self._last_frame: Optional[QImage] = None
+        self._surface = False
         self._exit_since: Optional[float] = None
         self._exit_armed = True
         self._exit_timer = QTimer(self)
@@ -815,8 +829,14 @@ class EmuPlayView(QWidget):
     def playing(self) -> bool:
         return self._worker is not None and self._worker.isRunning()
 
+    @property
+    def capturing_pad(self) -> bool:
+        """True while the play surface is up — including load / error screens."""
+        return bool(self._surface)
+
     def start_rom(self, rom: Path) -> None:
         self.stop()
+        self._surface = True
         self._last_frame = None
         self._exit_since = None
         self._exit_armed = True
@@ -837,6 +857,7 @@ class EmuPlayView(QWidget):
         self._exit_timer.stop()
         self._boot_timer.stop()
         self._exit_since = None
+        self._surface = False
         w = self._worker
         self._worker = None
         self._held_qt.clear()
@@ -851,9 +872,9 @@ class EmuPlayView(QWidget):
             except Exception:
                 pass
             w.request_stop()
-            if not w.wait(2000):
-                w.terminate()
-                w.wait(400)
+            # Never QThread.terminate() a libretro worker — that SIGSEGVs the next ROM.
+            if not w.wait(5000):
+                _emu_log("worker still stopping after 5s")
         self.screen.setPixmap(QPixmap())
         self.screen.setText("")
 
@@ -960,13 +981,6 @@ class EmuPlayView(QWidget):
 
     def keyPressEvent(self, e: QKeyEvent) -> None:  # noqa: N802
         if e.isAutoRepeat():
-            return
-        if e.key() == Qt.Key_S:
-            self._tap("start")
-            e.accept()
-            return
-        if e.key() == Qt.Key_2:
-            self._tap("select")
             e.accept()
             return
         name = _BTN_MAP.get(e.key())
@@ -976,10 +990,11 @@ class EmuPlayView(QWidget):
             self._poll_exit_combo()
             e.accept()
             return
-        super().keyPressEvent(e)
+        e.accept()
 
     def keyReleaseEvent(self, e: QKeyEvent) -> None:  # noqa: N802
         if e.isAutoRepeat():
+            e.accept()
             return
         name = self._held_qt.pop(e.key(), None) or _BTN_MAP.get(e.key())
         if name and self._worker is not None:
@@ -987,7 +1002,7 @@ class EmuPlayView(QWidget):
             self._poll_exit_combo()
             e.accept()
             return
-        super().keyReleaseEvent(e)
+        e.accept()
 
     def hideEvent(self, e) -> None:  # noqa: N802
         # Do not stop() here — stacked/layout hide/show would kill the core
@@ -1071,6 +1086,7 @@ def make_emu_page(
 
     def show_play() -> None:
         state["playing"] = True
+        play_view._surface = True
         stack.setCurrentWidget(play_view)
         play_view.setFocus(Qt.OtherFocusReason)
 
