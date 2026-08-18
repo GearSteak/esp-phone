@@ -58,6 +58,19 @@ def find_git_repo() -> Optional[Path]:
     return None
 
 
+def _network_reachable(timeout: float = 0.6) -> bool:
+    """Fast probe — avoid hanging git fetch when there is no route."""
+    import socket
+
+    for host, port in (("1.1.1.1", 53), ("8.8.8.8", 53), ("1.1.1.1", 443)):
+        try:
+            with socket.create_connection((host, port), timeout=timeout):
+                return True
+        except OSError:
+            continue
+    return False
+
+
 def _installed_rev() -> str:
     """Best-effort short SHA of the installed Digivice build in /opt."""
     candidates = (
@@ -91,6 +104,12 @@ def check_for_updates(*, timeout_s: float = 6.0) -> UpdateCheck:
     repo = find_git_repo()
     if repo is None:
         return UpdateCheck("skip", "No git repo")
+
+    if not _network_reachable(min(0.8, timeout_s * 0.15)):
+        inst7 = _installed_rev()
+        if inst7:
+            return UpdateCheck("offline", "no Wi‑Fi · update later")
+        return UpdateCheck("offline", "no Wi‑Fi · booting")
 
     def _run(args: list, t: float) -> subprocess.CompletedProcess:
         return subprocess.run(
@@ -245,7 +264,7 @@ class BootSplash(QWidget):
         elif result.status == "up_to_date":
             self.set_line("all set ·", "up to date")
         elif result.status == "offline":
-            self.set_line("no signal ·", result.detail or "skipping update check")
+            self.set_line("offline ·", result.detail or "booting without Wi‑Fi")
         elif result.status == "skip":
             self.set_line("ready ·", result.detail or "")
         else:
@@ -472,18 +491,18 @@ def run_boot_splash(app: QApplication) -> tuple:
     box: dict = {"result": None}
 
     def _check() -> None:
-        box["result"] = check_for_updates(timeout_s=6.0)
+        box["result"] = check_for_updates(timeout_s=4.0)
 
     th = threading.Thread(target=_check, daemon=True)
     th.start()
 
     t0 = time.time()
-    while th.is_alive() and (time.time() - t0) < 8.0:
-        if time.time() - t0 > 2.5:
+    while th.is_alive() and (time.time() - t0) < 5.0:
+        if time.time() - t0 > 1.5:
             _broadcast_line("looking around ·", "wifi · git")
         app.processEvents()
         time.sleep(0.04)
-    th.join(timeout=0.5)
+    th.join(timeout=0.3)
 
     result = box["result"] or UpdateCheck("error", "check stalled")
     for w in overlays:
@@ -507,19 +526,29 @@ def run_boot_splash(app: QApplication) -> tuple:
             continue
         w.set_finish_callback(_fin)
 
-    if result.status == "available":
+    online = _network_reachable(0.5)
+    if result.status == "available" and online:
         _broadcast_line("update ready ·", "Confirm = update  ·  Back = later")
         # Wait for Confirm / Back (buttons → keys)
         wait_s = 12.0
+    elif result.status == "available":
+        # Cached git refs can look "available" offline — never block boot for that.
+        _broadcast_line("offline ·", "update when online")
+        wait_s = 0.35
+        QTimer.singleShot(
+            int(wait_s * 1000),
+            lambda: splash.request_finish(want_update=False),
+        )
     else:
-        wait_s = 1.4
+        wait_s = 0.35 if result.status == "offline" else 0.9
         QTimer.singleShot(
             int(wait_s * 1000),
             lambda: splash.request_finish(want_update=False),
         )
 
     t1 = time.time()
-    while not done["ok"] and (time.time() - t1) < max(wait_s + 2.0, 14.0):
+    cap = 14.0 if (result.status == "available" and online) else max(wait_s + 0.8, 2.5)
+    while not done["ok"] and (time.time() - t1) < cap:
         app.processEvents()
         time.sleep(0.03)
 

@@ -2800,7 +2800,7 @@ def make_update_page(on_back: Callable[[], None]) -> QWidget:
             action_btn.setText("Check again")
         elif st == "offline":
             phase["mode"] = "check"
-            splash.set_line("no signal ·", detail or "offline")
+            splash.set_line("offline ·", detail or "booting without Wi‑Fi")
             action_btn.setText("Check again")
         else:
             phase["mode"] = "check"

@@ -314,6 +314,7 @@ DATA = Path.home() / ".esp-handset"
 class BridgeSignals(QObject):
     line = pyqtSignal(str)
     sms = pyqtSignal(str, str)
+    modem_ready = pyqtSignal(object)
 
 
 def build_app(bridge: Optional[EspBridge], modem: Optional[Sim7600]) -> PhoneShell:
@@ -334,6 +335,25 @@ def build_app(bridge: Optional[EspBridge], modem: Optional[Sim7600]) -> PhoneShe
                 m.on_sms(lambda n, t: signals.sms.emit(n, t))
             except Exception:
                 pass
+        _apply_modem_signal_provider()
+
+    def _apply_modem_signal_provider() -> None:
+        if modem_box.get("m") is None:
+            shell.set_modem_signal_provider(lambda: None)
+            return
+
+        def _csq_line():
+            cur = modem_box.get("m")
+            if cur is None:
+                return None
+            try:
+                return cur.signal()
+            except Exception:
+                return None
+
+        shell.set_modem_signal_provider(_csq_line)
+
+    signals.modem_ready.connect(set_modem)
 
     def status(msg: str) -> None:
         shell.set_status_right(msg)
@@ -710,18 +730,10 @@ def build_app(bridge: Optional[EspBridge], modem: Optional[Sim7600]) -> PhoneShe
         assert m0 is not None
         m0.on_sms(lambda n, t: signals.sms.emit(n, t))
 
-        def _csq_line():
-            m = get_modem()
-            if m is None:
-                return None
-            try:
-                return m.signal()
-            except Exception:
-                return None
+    _apply_modem_signal_provider()
 
-        shell.set_modem_signal_provider(_csq_line)
-    else:
-        shell.set_modem_signal_provider(lambda: None)
+    shell._modem_wake_signal = signals.modem_ready  # type: ignore[attr-defined]
+    shell.get_modem = get_modem  # type: ignore[attr-defined]
 
     from PyQt5.QtCore import QTimer
 
@@ -778,7 +790,6 @@ def main() -> int:
         pass
     store.ensure()
     bridge: Optional[EspBridge] = None
-    modem: Optional[Sim7600] = None
     want_update = False
 
     # Cute splash + update check ONLY (no modem/SPI here — that froze the panel)
@@ -807,16 +818,8 @@ def main() -> int:
     except Exception as e:
         print(f"[handset] LoRa ESP offline ({e})", flush=True)
         bridge = None
-    try:
-        modem = Sim7600()
-        # Modem USB often enumerates 10–25s after boot — wait & probe AT
-        modem.open(retries=12, retry_s=2.5)
-        print(f"[handset] SIM7600 on {modem.port}", flush=True)
-    except Exception as e:
-        print(f"[handset] SIM7600 offline ({e})", flush=True)
-        modem = None
 
-    win = build_app(bridge, modem)
+    win = build_app(bridge, None)
     app.installEventFilter(_KioskKeyFilter(win))
     # SIP daemon in a background thread — never block / freeze Digivice UI
     try:
@@ -853,8 +856,9 @@ def main() -> int:
             print("[handset] PIN cancelled — exit", flush=True)
             if bridge:
                 bridge.close()
-            if modem:
-                modem.close()
+            m = getattr(win, "get_modem", lambda: None)()
+            if m:
+                m.close()
             return 1
     print("[handset] showing UI…", flush=True)
     kiosk = os.environ.get("ESP_HANDSET_KIOSK", "").strip() in ("1", "true", "yes")
@@ -892,6 +896,25 @@ def main() -> int:
             )
         except Exception:
             pass
+    # Modem can take 10–25s after USB power — never block the UI for it.
+    try:
+        import threading
+
+        wake_sig = getattr(win, "_modem_wake_signal", None)
+
+        def _modem_bg() -> None:
+            try:
+                m = Sim7600()
+                m.open(retries=12, retry_s=2.5)
+                print(f"[handset] SIM7600 on {m.port}", flush=True)
+                if wake_sig is not None:
+                    wake_sig.emit(m)
+            except Exception as e:
+                print(f"[handset] SIM7600 offline ({e})", flush=True)
+
+        threading.Thread(target=_modem_bg, name="modem-wake", daemon=True).start()
+    except Exception as e:
+        print(f"[handset] modem wake thread failed ({e})", flush=True)
     print("[handset] event loop starting", flush=True)
     code = app.exec_()
     if hasattr(win, "_spi_mirror") and win._spi_mirror:
@@ -910,8 +933,9 @@ def main() -> int:
         pass
     if bridge:
         bridge.close()
-    if modem:
-        modem.close()
+    m = getattr(win, "get_modem", lambda: None)()
+    if m:
+        m.close()
     return code
 
 
