@@ -3489,25 +3489,24 @@ def make_debug_page(on_back: Callable[[], None]) -> QWidget:
         if busy["on"]:
             return
         _clear_ask()
-        _set_status("Piezo alert…")
+        _set_status("Piezo pin 15…")
         try:
-            from esp_handset.buzzer import beep_async, available
+            from esp_handset.buzzer import alert, available, status as bstatus
             from esp_handset.hw_pins import BUZZER_BCM
 
             if BUZZER_BCM is None:
-                _set_status("Piezo disabled")
+                _set_status("Piezo disabled in config")
                 return
             if not available():
-                from esp_handset.buzzer import status as bstatus
-
                 _set_status(bstatus()[:48])
                 return
-            beep_async("alert")
-            from esp_handset.buzzer import status as bstatus
-
-            _set_status(bstatus())
+            ok = alert(force=True)
+            if ok:
+                _set_status("Piezo beeped · " + bstatus())
+            else:
+                _set_status("No tone · " + bstatus())
         except Exception as e:
-            _set_status(str(e)[:40])
+            _set_status(str(e)[:48])
 
     sound_btn.clicked.connect(cycle_sound)
     wake_btn.clicked.connect(do_wake)
