@@ -24,6 +24,11 @@ except ImportError:
     fcntl = None  # type: ignore
     pty = None  # type: ignore
 
+try:
+    import termios
+except ImportError:
+    termios = None  # type: ignore
+
 _log_lock = threading.Lock()
 _eng_lock = threading.Lock()
 _run_lock = threading.Lock()
@@ -55,6 +60,7 @@ def _set_error(msg: str) -> str:
 
 
 def _log(msg: str) -> None:
+    msg = _redact(msg)
     line = f"{time.strftime('%Y-%m-%d %H:%M:%S')} {msg}"
     print(f"[sip_call] {msg}", flush=True)
     try:
@@ -83,6 +89,12 @@ def _redact(text: str) -> str:
     s = text or ""
     s = re.sub(r"(?im)^(\s*(?:SIP_PASS|passwd|password)\s*=\s*).+$", r"\1***", s)
     s = re.sub(r"(?i)(register sip:\S+\s+\S+\s+)\S+", r"\1***", s)
+    try:
+        pw = (_sip_env().get("SIP_PASS") or "").strip()
+        if len(pw) >= 4:
+            s = s.replace(pw, "***")
+    except Exception:
+        pass
     return s
 
 
@@ -960,6 +972,7 @@ class LinphoneEngine:
         self._password = ""
         self._rc_key = ""
         self._auth_prompt = False
+        self._pass_sent_at = 0.0
 
     def alive(self) -> bool:
         return self.proc is not None and self.proc.poll() is None
@@ -967,7 +980,13 @@ class LinphoneEngine:
     def _send_sip_password(self) -> None:
         if not self._password or not self.alive():
             return
-        _log("linphonec password prompt — sending SIP_PASS")
+        now = time.time()
+        with self._lock:
+            if now - self._pass_sent_at < 8.0:
+                return
+            self._pass_sent_at = now
+            self._auth_prompt = True
+        _log("linphonec password prompt — sending SIP_PASS once")
         try:
             payload = (self._password + "\r\n").encode("utf-8")
             if self._pty is not None:
@@ -984,14 +1003,16 @@ class LinphoneEngine:
         line = _clean_cli(line)
         if not line:
             return
+        if self._password and line.strip() == self._password:
+            return
         low = line.lower()
         if "password for" in low:
-            with self._lock:
-                self._auth_prompt = True
             self._send_sip_password()
-            with self._lock:
-                self._auth_prompt = False
             return
+        if "linphonec>" in low:
+            with self._lock:
+                if self._pass_sent_at and (time.time() - self._pass_sent_at) > 0.4:
+                    self._auth_prompt = False
         # PTY echo of our own commands — not linphonec status
         if low in ("status register", "status", "proxy list", "register") or low.startswith(
             "register sip:"
@@ -1003,6 +1024,7 @@ class LinphoneEngine:
             flag = _line_registered(line)
             if flag is True:
                 self.registered = True
+                self._auth_prompt = False
             elif flag is False:
                 self.registered = False
             self.phase = _phase_from_line(line, self.phase)
@@ -1027,9 +1049,10 @@ class LinphoneEngine:
                     while "\n" in buf:
                         line, buf = buf.split("\n", 1)
                         self._handle_line(line)
-                    if re.search(r"(?i)password for ", buf):
-                        self._handle_line(buf)
-                        buf = ""
+                    m = re.search(r"(?i)password for [^\n]*", buf)
+                    if m:
+                        self._handle_line(buf[: m.end()])
+                        buf = buf[m.end() :]
                     elif "linphonec>" in buf:
                         self._handle_line(buf)
                         buf = ""
@@ -1048,6 +1071,18 @@ class LinphoneEngine:
         if pty is not None:
             try:
                 master, slave = pty.openpty()
+                if termios is not None:
+                    try:
+                        attrs = termios.tcgetattr(slave)
+                        attrs[3] &= ~(
+                            termios.ECHO
+                            | termios.ECHOE
+                            | termios.ECHOK
+                            | getattr(termios, "ECHONL", 0)
+                        )
+                        termios.tcsetattr(slave, termios.TCSANOW, attrs)
+                    except Exception:
+                        pass
                 self.proc = subprocess.Popen(
                     args,
                     stdin=slave,
@@ -1179,6 +1214,7 @@ class LinphoneEngine:
         self.phase = "idle"
         self.registered = False
         self._auth_prompt = False
+        self._pass_sent_at = 0.0
         self._rc_key = rc_key
         self._reader = threading.Thread(
             target=self._read_loop, name="linphonec-out", daemon=True
@@ -1217,10 +1253,13 @@ class LinphoneEngine:
 
     def ensure_registered(self, timeout_s: float, *, send_register: bool) -> bool:
         if send_register and self._user and self._server:
-            self.cmd(
-                f"register sip:{self._user}@{self._server} "
-                f"sip:{self._server} {self._password}"
-            )
+            with self._lock:
+                prompting = self._auth_prompt
+            if not prompting:
+                self.cmd(
+                    f"register sip:{self._user}@{self._server} "
+                    f"sip:{self._server} {self._password}"
+                )
         deadline = time.time() + max(1.0, timeout_s)
         n = 0
         while time.time() < deadline:
@@ -1237,6 +1276,12 @@ class LinphoneEngine:
                 return True
             if not self.alive():
                 return False
+            with self._lock:
+                waiting_auth = self._auth_prompt
+            if waiting_auth:
+                n += 1
+                time.sleep(0.35)
+                continue
             if n and n % 5 == 0:
                 self.cmd("status register")
             if n == 6:
