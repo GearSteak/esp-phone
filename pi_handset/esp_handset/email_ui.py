@@ -196,18 +196,86 @@ def _auth_hint(err: str, user: str) -> str:
     return err or "Unknown error"
 
 
-def _cache_get() -> List[dict]:
-    return list(store.load("email_cache.json", {"messages": []}).get("messages") or [])
+_PANELS = (
+    ("inbox", "Inbox"),
+    ("sent", "Sent"),
+    ("drafts", "Drafts"),
+    ("spam", "Spam"),
+    ("trash", "Trash"),
+)
+_PANEL_ALIASES = {
+    "inbox": ("INBOX",),
+    "sent": ("[Gmail]/Sent Mail", "Sent Mail", "Sent Items", "Sent"),
+    "drafts": ("[Gmail]/Drafts", "Drafts"),
+    "spam": ("[Gmail]/Spam", "Junk E-mail", "Junk", "Spam"),
+    "trash": ("[Gmail]/Trash", "[Gmail]/Bin", "Deleted Items", "Trash", "Bin"),
+}
 
 
-def _cache_set(messages: List[dict]) -> None:
+def _cache_get(panel: str = "inbox") -> List[dict]:
+    raw = store.load("email_cache.json", {"messages": []})
+    if not isinstance(raw, dict):
+        return []
+    folders = raw.get("folders")
+    if isinstance(folders, dict):
+        return list(folders.get(panel) or [])
+    if panel == "inbox":
+        return list(raw.get("messages") or [])
+    return []
+
+
+def _cache_set(messages: List[dict], panel: str = "inbox") -> None:
+    raw = store.load("email_cache.json", {})
+    if not isinstance(raw, dict):
+        raw = {}
+    folders = dict(raw.get("folders") or {})
+    if raw.get("messages") and "inbox" not in folders:
+        folders["inbox"] = list(raw.get("messages") or [])
+    folders[panel] = messages[:40]
     store.save(
         "email_cache.json",
         {
-            "messages": messages[:40],
+            "folders": folders,
             "at": datetime.now().isoformat(timespec="seconds"),
         },
     )
+
+
+def _imap_list_names(M) -> List[str]:
+    typ, data = M.list()
+    names: List[str] = []
+    if typ != "OK" or not data:
+        return names
+    for line in data:
+        if not line:
+            continue
+        s = line.decode("utf-8", "replace") if isinstance(line, (bytes, bytearray)) else str(line)
+        quoted = re.findall(r'"((?:\\.|[^"\\])*)"', s)
+        if quoted:
+            names.append(quoted[-1].replace(r"\"", '"'))
+            continue
+        parts = s.split()
+        if parts:
+            names.append(parts[-1].strip())
+    return names
+
+
+def _pick_mailbox(names: List[str], panel: str) -> str:
+    aliases = _PANEL_ALIASES.get(panel) or ("INBOX",)
+    by_l = {n.lower(): n for n in names}
+    for a in aliases:
+        hit = by_l.get(a.lower())
+        if hit:
+            return hit
+    for a in aliases:
+        al = a.lower()
+        for n in names:
+            nl = n.lower()
+            if "all mail" in nl:
+                continue
+            if al in nl:
+                return n
+    return "INBOX" if panel == "inbox" else aliases[0]
 
 
 def _collapse_ws(text: str) -> str:
@@ -340,28 +408,29 @@ def _bytes_to_snippet(raw: bytes, limit: int = 90) -> str:
 
 
 class Avatar(QWidget):
-    def __init__(self, letter: str, color: str, parent=None):
+    def __init__(self, letter: str, color: str, parent=None, size: int = 32):
         super().__init__(parent)
         self.letter = (letter or "?")[:1]
         self.color = QColor(color)
-        self.setFixedSize(32, 32)
+        self._sz = size
+        self.setFixedSize(size, size)
 
     def paintEvent(self, _e):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing, True)
         p.setBrush(self.color)
         p.setPen(Qt.NoPen)
-        p.drawEllipse(0, 0, 32, 32)
+        p.drawEllipse(0, 0, self._sz, self._sz)
         p.setPen(QColor("#ffffff"))
         f = QFont("DejaVu Sans")
-        f.setPixelSize(14)
+        f.setPixelSize(max(9, self._sz // 2))
         f.setBold(True)
         p.setFont(f)
         p.drawText(self.rect(), Qt.AlignCenter, self.letter)
 
 
 class MailRow(QFrame):
-    """One Gmail-style thread row."""
+    """Narrow list row for the left pane (from + time)."""
 
     def __init__(self, msg: dict, parent=None):
         super().__init__(parent)
@@ -372,41 +441,26 @@ class MailRow(QFrame):
             f" border-bottom: 1px solid {_CHIP}; }}"
         )
         lay = QHBoxLayout(self)
-        lay.setContentsMargins(6, 8, 6, 8)
-        lay.setSpacing(8)
+        lay.setContentsMargins(4, 4, 4, 4)
+        lay.setSpacing(4)
         name = msg.get("from_name") or "Unknown"
-        lay.addWidget(Avatar(_initial(name), _avatar_color(name)), 0, Qt.AlignTop)
+        lay.addWidget(Avatar(_initial(name), _avatar_color(name), size=22), 0, Qt.AlignTop)
         col = QVBoxLayout()
-        col.setSpacing(1)
-        top = QHBoxLayout()
+        col.setSpacing(0)
         frm = QLabel(name)
-        weight = "700" if unread else "600"
         frm.setStyleSheet(
-            f"font-size:12px; font-weight:{weight}; color:{_TEXT}; border:none;"
-        )
-        frm.setMaximumWidth(140)
-        when = QLabel(str(msg.get("when") or ""))
-        when.setStyleSheet(
-            f"font-size:9px; color:{_BLUE if unread else _MUTED}; border:none;"
-            + (" font-weight:700;" if unread else "")
-        )
-        when.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        top.addWidget(frm, 1)
-        top.addWidget(when, 0)
-        col.addLayout(top)
-        sub = QLabel(str(msg.get("subject") or "(no subject)"))
-        sub.setStyleSheet(
-            f"font-size:11px; font-weight:{'700' if unread else '500'};"
+            f"font-size:10px; font-weight:{'700' if unread else '600'};"
             f" color:{_TEXT}; border:none;"
         )
-        sub.setWordWrap(False)
-        col.addWidget(sub)
-        snip = QLabel(str(msg.get("snippet") or ""))
-        snip.setStyleSheet(f"font-size:10px; color:{_MUTED}; border:none;")
-        snip.setWordWrap(False)
-        col.addWidget(snip)
+        frm.setWordWrap(False)
+        when = QLabel(str(msg.get("when") or ""))
+        when.setStyleSheet(
+            f"font-size:8px; color:{_BLUE if unread else _MUTED}; border:none;"
+        )
+        col.addWidget(frm)
+        col.addWidget(when)
         lay.addLayout(col, 1)
-        self.setMinimumHeight(58)
+        self.setMinimumHeight(36)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
 
 
@@ -431,50 +485,90 @@ def make_email_page(on_back: Callable[[], None]) -> QWidget:
     head.setSpacing(4)
     title = QLabel("Inbox")
     title.setStyleSheet(
-        f"font-size:18px; font-weight:700; color:{_TEXT}; letter-spacing:0.2px;"
+        f"font-size:14px; font-weight:700; color:{_TEXT}; letter-spacing:0.2px;"
     )
     acct = QLabel("")
-    acct.setStyleSheet(f"font-size:9px; color:{_MUTED};")
+    acct.setStyleSheet(f"font-size:8px; color:{_MUTED};")
     acct.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
     head.addWidget(title, 1)
     head.addWidget(acct, 0)
     il.addLayout(head)
 
-    tabs = QHBoxLayout()
-    tabs.setSpacing(4)
-    primary_chip = QLabel("● Primary")
-    primary_chip.setStyleSheet(
-        f"font-size:10px; font-weight:700; color:{_RED};"
-        f" background:{_SURFACE}; padding:4px 10px; border-radius:12px;"
-    )
+    chips_row = QHBoxLayout()
+    chips_row.setSpacing(2)
+    chip_btns: dict = {}
+    for key, lab in _PANELS:
+        b = QPushButton(lab)
+        b.setFocusPolicy(Qt.StrongFocus)
+        b.setCursor(Qt.PointingHandCursor)
+        b.setMinimumHeight(22)
+        b.setProperty("panel", key)
+        chips_row.addWidget(b, 1)
+        chip_btns[key] = b
+    il.addLayout(chips_row)
+
     status = QLabel("")
-    status.setStyleSheet(f"font-size:9px; color:{_MUTED};")
-    tabs.addWidget(primary_chip)
-    tabs.addStretch(1)
-    tabs.addWidget(status)
-    il.addLayout(tabs)
+    status.setStyleSheet(f"font-size:8px; color:{_MUTED};")
+    il.addWidget(status)
+
+    split = QHBoxLayout()
+    split.setSpacing(4)
 
     lst = QListWidget()
     lst.setFocusPolicy(Qt.StrongFocus)
     lst.setSpacing(0)
+    lst.setFixedWidth(108)
     lst.setStyleSheet(
-        f"QListWidget {{ background:{_SURFACE}; border:none; border-radius:12px;"
+        f"QListWidget {{ background:{_SURFACE}; border:none; border-radius:10px;"
         f" outline:none; }}"
         "QListWidget::item { background: transparent; padding:0; margin:0; }"
         f"QListWidget::item:selected {{ background:{_CHIP}; }}"
-        'QListWidget[digiFocus="1"] { border:2px solid #FFE600; border-radius:12px; }'
+        'QListWidget[digiFocus="1"] { border:2px solid #FFE600; border-radius:10px; }'
     )
-    il.addWidget(lst, 1)
-
-    empty = QLabel("Your Primary inbox is empty.\n\nPull to refresh —\nor set Accounts → Email.")
+    empty = QLabel("Empty folder.\nRefresh or set\nAccounts → Email.")
     empty.setAlignment(Qt.AlignCenter)
     empty.setWordWrap(True)
     empty.setStyleSheet(
-        f"color:{_MUTED}; font-size:12px; padding:20px;"
-        f" background:{_SURFACE}; border-radius:12px;"
+        f"color:{_MUTED}; font-size:10px; padding:8px;"
+        f" background:{_SURFACE}; border-radius:10px;"
     )
+    empty.setFixedWidth(108)
     empty.hide()
-    il.addWidget(empty, 1)
+    left = QVBoxLayout()
+    left.setSpacing(0)
+    left.setContentsMargins(0, 0, 0, 0)
+    left.addWidget(lst, 1)
+    left.addWidget(empty, 1)
+    split.addLayout(left, 0)
+
+    preview = QWidget()
+    preview.setStyleSheet(
+        f"background:{_SURFACE}; border-radius:10px;"
+        'QWidget[digiFocus="1"] { border:2px solid #FFE600; }'
+    )
+    pl = QVBoxLayout(preview)
+    pl.setContentsMargins(6, 6, 6, 6)
+    pl.setSpacing(2)
+    p_from = QLabel("Select a message")
+    p_from.setWordWrap(True)
+    p_from.setStyleSheet(f"font-size:10px; font-weight:700; color:{_TEXT};")
+    p_subj = QLabel("")
+    p_subj.setWordWrap(True)
+    p_subj.setStyleSheet(f"font-size:11px; font-weight:600; color:{_BLUE};")
+    p_scroll = QScrollArea()
+    p_scroll.setWidgetResizable(True)
+    p_scroll.setFrameShape(QFrame.NoFrame)
+    p_scroll.setStyleSheet("QScrollArea { background: transparent; border: none; }")
+    p_body = QLabel("")
+    p_body.setWordWrap(True)
+    p_body.setAlignment(Qt.AlignTop | Qt.AlignLeft)
+    p_body.setStyleSheet(f"font-size:10px; color:{_TEXT}; background:transparent;")
+    p_scroll.setWidget(p_body)
+    pl.addWidget(p_from)
+    pl.addWidget(p_subj)
+    pl.addWidget(p_scroll, 1)
+    split.addWidget(preview, 1)
+    il.addLayout(split, 1)
 
     bar = QHBoxLayout()
     bar.setSpacing(6)
@@ -571,7 +665,33 @@ def make_email_page(on_back: Callable[[], None]) -> QWidget:
     stack.addWidget(reader)
     stack.addWidget(compose)
 
-    state = {"messages": [], "busy": False}
+    state = {"messages": [], "busy": False, "panel": "inbox", "mailbox": "INBOX"}
+
+    def _chip_style(key: str) -> None:
+        active = state["panel"]
+        for k, b in chip_btns.items():
+            on = k == active
+            b.setStyleSheet(
+                f"QPushButton {{ font-size:9px; font-weight:{'700' if on else '600'};"
+                f" padding:2px 2px; border:none; border-radius:10px;"
+                f" color:{'#fff' if on else _TEXT};"
+                f" background:{_RED if on else _CHIP}; }}"
+                'QPushButton[digiFocus="1"] { border:2px solid #FFE600; }'
+            )
+
+    def _clear_preview(hint: str = "Select a message") -> None:
+        p_from.setText(hint)
+        p_subj.setText("")
+        p_body.setText("")
+
+    def _show_preview(msg: dict) -> None:
+        name = msg.get("from_name") or "Unknown"
+        addr = msg.get("from_email") or ""
+        p_from.setText(f"{name}" + (f"\n{addr}" if addr else ""))
+        p_subj.setText(str(msg.get("subject") or "(no subject)"))
+        p_body.setText(_reader_preview(msg))
+        if not str(msg.get("body") or "").strip() and msg.get("uid"):
+            QTimer.singleShot(50, lambda m=msg: _fetch_body(m, for_preview=True))
 
     def _set_acct() -> None:
         em = _creds()
@@ -589,6 +709,7 @@ def make_email_page(on_back: Callable[[], None]) -> QWidget:
             lst.hide()
             empty.show()
             status.setText("")
+            _clear_preview("This folder is empty")
             return
         empty.hide()
         lst.show()
@@ -600,6 +721,8 @@ def make_email_page(on_back: Callable[[], None]) -> QWidget:
             item.setSizeHint(row.sizeHint())
             lst.addItem(item)
             lst.setItemWidget(item, row)
+        lst.setCurrentRow(0)
+        _show_preview(messages[0])
 
     def _show_inbox() -> None:
         stack.setCurrentWidget(inbox)
@@ -626,7 +749,7 @@ def make_email_page(on_back: Callable[[], None]) -> QWidget:
                 w = r_avatar_lay.takeAt(0).widget()
                 if w:
                     w.deleteLater()
-            r_avatar_lay.addWidget(Avatar(_initial(name), _avatar_color(name)))
+            r_avatar_lay.addWidget(Avatar(_initial(name), _avatar_color(name), size=28))
             r_subj.setText(str(msg.get("subject") or "(no subject)"))
             addr = msg.get("from_email") or ""
             r_from.setText(f"{name}\n{addr}" if addr else name)
@@ -644,7 +767,7 @@ def make_email_page(on_back: Callable[[], None]) -> QWidget:
             except Exception:
                 pass
 
-    def _fetch_body(msg: dict) -> None:
+    def _fetch_body(msg: dict, for_preview: bool = False) -> None:
         em = _creds()
         user = em.get("user") or ""
         password = em.get("pass") or ""
@@ -658,7 +781,7 @@ def make_email_page(on_back: Callable[[], None]) -> QWidget:
             uid_b = uid.encode("utf-8")
             M = imaplib.IMAP4_SSL(host, 993)
             M.login(user, password)
-            M.select("INBOX")
+            M.select(state.get("mailbox") or "INBOX")
             text = ""
             # Prefer part 1 (usually text/plain) — avoids downloading attachments.
             for spec in ("(BODY.PEEK[1])", "(BODY.PEEK[TEXT])"):
@@ -698,6 +821,8 @@ def make_email_page(on_back: Callable[[], None]) -> QWidget:
                         "Try ↻ Refresh, then open again.\n\n"
                         f"{msg.get('snippet') or ''}"
                     )
+                elif for_preview:
+                    p_body.setText(str(msg.get("snippet") or "(no preview)"))
                 return
             msg["body"] = text[:4000]
             snip = _snippet_text(text)
@@ -709,9 +834,14 @@ def make_email_page(on_back: Callable[[], None]) -> QWidget:
                     if snip:
                         m["snippet"] = snip
                     m["unread"] = False
-            _cache_set(state["messages"])
+            _cache_set(state["messages"], state["panel"])
             if stack.currentWidget() is reader:
                 r_body.setText(msg["body"] or "(empty message)")
+            if for_preview or lst.currentRow() >= 0:
+                cur = lst.currentRow()
+                if 0 <= cur < len(state["messages"]):
+                    if _uid_str(state["messages"][cur].get("uid") or "") == uid:
+                        p_body.setText(msg["body"] or "(empty message)")
         except Exception as e:
             if stack.currentWidget() is reader:
                 snip = str(msg.get("snippet") or "")
@@ -757,7 +887,12 @@ def make_email_page(on_back: Callable[[], None]) -> QWidget:
             try:
                 M = imaplib.IMAP4_SSL(host, 993)
                 M.login(user, password)
-                M.select("INBOX")
+                names = _imap_list_names(M)
+                mailbox = _pick_mailbox(names, state["panel"])
+                state["mailbox"] = mailbox
+                typ, _sel = M.select(mailbox)
+                if typ != "OK":
+                    raise RuntimeError(f"Cannot open {mailbox}")
                 # Stable UIDs — sequence numbers break on a later connection
                 typ, data = M.uid("search", None, "ALL")
                 if typ != "OK" or not data or data[0] is None:
@@ -837,18 +972,49 @@ def make_email_page(on_back: Callable[[], None]) -> QWidget:
                 lst.hide()
                 empty.show()
             return
-        _cache_set(messages)
+        _cache_set(messages, state["panel"])
         _fill_list(messages)
-        store.push_notif("Email", f"{len(messages)} in Inbox", "email", toast=False)
+        store.push_notif(
+            "Email",
+            f"{len(messages)} in {title.text()}",
+            "email",
+            toast=False,
+        )
         status.setText("Updated just now")
 
     def on_item(item: Optional[QListWidgetItem] = None) -> None:
-        # Digi Confirm emits itemActivated; touch emits itemClicked
+        # Confirm / activate → full reader; arrows already drive the right pane
         row = lst.row(item) if item is not None else lst.currentRow()
         if row < 0:
             row = lst.currentRow()
         if 0 <= row < len(state["messages"]):
             _open_reader(state["messages"][row])
+
+    def on_select() -> None:
+        row = lst.currentRow()
+        if 0 <= row < len(state["messages"]):
+            _show_preview(state["messages"][row])
+        elif not state["messages"]:
+            _clear_preview("This folder is empty")
+
+    def set_panel(key: str) -> None:
+        if state["busy"]:
+            return
+        state["panel"] = key
+        state["mailbox"] = _PANEL_ALIASES.get(key, ("INBOX",))[0]
+        label = dict(_PANELS).get(key, "Mail")
+        title.setText(label)
+        r_back.setText(f"← {label}")
+        _chip_style(key)
+        cached = _cache_get(key)
+        if cached:
+            _fill_list(cached)
+            status.setText("Cached · Refresh to sync")
+        else:
+            _fill_list([])
+            empty.show()
+            lst.hide()
+        QTimer.singleShot(50, do_fetch)
 
     def open_compose(to: str = "") -> None:
         c_to.setText(to or "")
@@ -893,13 +1059,16 @@ def make_email_page(on_back: Callable[[], None]) -> QWidget:
     refresh.clicked.connect(do_fetch)
     compose_btn.clicked.connect(lambda: open_compose())
     lst.itemActivated.connect(on_item)
-    lst.itemClicked.connect(on_item)
+    lst.currentRowChanged.connect(lambda _i: on_select())
+    for key, b in chip_btns.items():
+        b.clicked.connect(lambda _=False, k=key: set_panel(k))
     r_back.clicked.connect(_show_inbox)
     c_back.clicked.connect(_show_inbox)
     c_send.clicked.connect(do_send)
 
+    _chip_style("inbox")
     _set_acct()
-    cached = _cache_get()
+    cached = _cache_get("inbox")
     if cached:
         _fill_list(cached)
         status.setText("Cached · Refresh to sync")
