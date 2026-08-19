@@ -1,18 +1,16 @@
-"""Shadowdark companion — B/W, pad-first, four tabs. Personal use of core tables."""
+"""Shadowdark companion — one list per section, pad-first. Personal use of core tables."""
 from __future__ import annotations
 
 import random
 import time
+from pathlib import Path
 from typing import Callable, List, Optional
 
 from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtWidgets import (
-    QGridLayout,
-    QHBoxLayout,
     QLabel,
-    QLineEdit,
     QListWidget,
-    QPushButton,
+    QListWidgetItem,
     QStackedWidget,
     QTextEdit,
     QVBoxLayout,
@@ -52,24 +50,25 @@ _SET = "shadowdark_settings.json"
 _HOUR = 3600.0
 _MAX = 5
 
-_BW = (
-    "background:#000; color:#fff;"
-)
-_BTN = (
-    "QPushButton { background:#000; color:#fff; border:1px solid #888; "
-    "font-size:11px; font-weight:700; padding:4px; }"
-    'QPushButton[digiFocus="1"] { border:2px solid #fff; background:#fff; color:#000; }'
-)
+_BW = "background:#000; color:#fff;"
 _LIST = (
-    "QListWidget { background:#000; color:#fff; border:1px solid #444; font-size:12px; }"
+    "QListWidget { background:#000; color:#fff; border:none; font-size:13px; outline:none; }"
+    "QListWidget::item { padding:6px 4px; }"
     "QListWidget::item:selected { background:#fff; color:#000; }"
-    'QListWidget[digiFocus="1"] { border:2px solid #fff; }'
 )
-_TAB_OFF = (
-    "QPushButton { background:#000; color:#aaa; border:1px solid #555; font-size:9px; }"
-)
-_TAB_ON = (
-    "QPushButton { background:#fff; color:#000; border:1px solid #fff; font-size:9px; font-weight:700; }"
+_READ = "QTextEdit { background:#000; color:#fff; border:none; font-size:12px; }"
+_TABS = ("CHARS", "REF", "TOOLS", "SET")
+
+_DICE = (
+    ("d4", 4, None),
+    ("d6", 6, None),
+    ("d8", 8, None),
+    ("d10", 10, None),
+    ("d12", 12, None),
+    ("d20", 20, None),
+    ("d100", 100, None),
+    ("Adv", 20, "adv"),
+    ("Dis", 20, "dis"),
 )
 
 
@@ -131,6 +130,12 @@ def _mod(score: int) -> int:
     return (int(score) - 10) // 2
 
 
+def _add(lst: QListWidget, label: str, kind: str, payload=None) -> None:
+    it = QListWidgetItem(label)
+    it.setData(Qt.UserRole, (kind, payload))
+    lst.addItem(it)
+
+
 def make_shadowdark_page(on_back: Callable[[], None]) -> QWidget:
     body = QWidget()
     body.setStyleSheet(_BW)
@@ -138,254 +143,226 @@ def make_shadowdark_page(on_back: Callable[[], None]) -> QWidget:
     outer.setContentsMargins(2, 2, 2, 2)
     outer.setSpacing(2)
 
-    status = QLabel("Characters")
-    status.setStyleSheet("font-size:10px; color:#ccc;")
-    outer.addWidget(status)
+    tabs_lab = QLabel("")
+    tabs_lab.setStyleSheet("font-size:11px; font-weight:700;")
+    banner = QLabel("")
+    banner.setStyleSheet("font-size:11px; color:#ccc;")
+    banner.setWordWrap(True)
+    outer.addWidget(tabs_lab)
+    outer.addWidget(banner)
 
     stack = QStackedWidget()
     outer.addWidget(stack, 1)
 
-    # ── Characters ────────────────────────────────────────────────────────
-    ch_page = QWidget()
-    chl = QVBoxLayout(ch_page)
-    chl.setContentsMargins(0, 0, 0, 0)
-    ch_list = QListWidget()
-    ch_list.setStyleSheet(_LIST)
-    ch_list.setFocusPolicy(Qt.StrongFocus)
-    ch_btns = QHBoxLayout()
-    b_new = QPushButton("New")
-    b_open = QPushButton("Open")
-    b_del = QPushButton("Del")
-    for b in (b_new, b_open, b_del):
-        b.setFocusPolicy(Qt.StrongFocus)
-        b.setStyleSheet(_BTN)
-        b.setMinimumHeight(26)
-        ch_btns.addWidget(b)
-    chl.addWidget(ch_list, 1)
-    chl.addLayout(ch_btns)
+    menu = QListWidget()
+    menu.setStyleSheet(_LIST)
+    menu.setFocusPolicy(Qt.StrongFocus)
+    menu.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
 
-    # ── Character sheet ───────────────────────────────────────────────────
-    sh_page = QWidget()
-    shl = QVBoxLayout(sh_page)
+    sheet_page = QWidget()
+    shl = QVBoxLayout(sheet_page)
     shl.setContentsMargins(0, 0, 0, 0)
-    name_ed = QLineEdit()
-    name_ed.setStyleSheet("background:#000; color:#fff; border:1px solid #666; font-size:13px;")
-    meta = QLabel("")
-    meta.setWordWrap(True)
-    meta.setStyleSheet("font-size:10px; color:#ddd;")
-    hp_row = QHBoxLayout()
-    hp_lab = QLabel("HP")
-    hp_lab.setStyleSheet("font-size:11px;")
-    hp_minus = QPushButton("-")
-    hp_plus = QPushButton("+")
-    xp_minus = QPushButton("XP-")
-    xp_plus = QPushButton("XP+")
-    for b in (hp_minus, hp_plus, xp_minus, xp_plus):
-        b.setFocusPolicy(Qt.StrongFocus)
-        b.setStyleSheet(_BTN)
-        b.setFixedHeight(26)
-    hp_row.addWidget(hp_lab)
-    hp_row.addWidget(hp_minus)
-    hp_row.addWidget(hp_plus)
-    hp_row.addWidget(xp_minus)
-    hp_row.addWidget(xp_plus)
-    sheet_txt = QTextEdit()
-    sheet_txt.setReadOnly(True)
-    sheet_txt.setStyleSheet("QTextEdit { background:#000; color:#fff; border:none; font-size:11px; }")
-    sh_nav = QHBoxLayout()
-    b_edit = QPushButton("Edit")
-    b_back_ch = QPushButton("List")
-    for b in (b_edit, b_back_ch):
-        b.setFocusPolicy(Qt.StrongFocus)
-        b.setStyleSheet(_BTN)
-        b.setMinimumHeight(26)
-        sh_nav.addWidget(b)
-    shl.addWidget(name_ed)
-    shl.addWidget(meta)
-    shl.addLayout(hp_row)
-    shl.addWidget(sheet_txt, 1)
-    shl.addLayout(sh_nav)
+    shl.setSpacing(2)
+    sheet_meta = QLabel("")
+    sheet_meta.setWordWrap(True)
+    sheet_meta.setStyleSheet("font-size:11px; color:#ddd;")
+    sheet_list = QListWidget()
+    sheet_list.setStyleSheet(_LIST)
+    sheet_list.setFocusPolicy(Qt.StrongFocus)
+    sheet_list.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+    shl.addWidget(sheet_meta)
+    shl.addWidget(sheet_list, 1)
 
-    # ── Reference ─────────────────────────────────────────────────────────
-    ref_page = QWidget()
-    rfl = QVBoxLayout(ref_page)
-    rfl.setContentsMargins(0, 0, 0, 0)
-    ref_list = QListWidget()
-    ref_list.setStyleSheet(_LIST)
-    ref_list.setFocusPolicy(Qt.StrongFocus)
-    for title in ("Rules", "Spells", "Armor", "Weapons", "Gear", "Names"):
-        ref_list.addItem(title)
-    ref_body = QTextEdit()
-    ref_body.setReadOnly(True)
-    ref_body.setStyleSheet("QTextEdit { background:#000; color:#fff; border:1px solid #333; font-size:11px; }")
-    rfl.addWidget(ref_list, 0)
-    ref_list.setMaximumHeight(88)
-    rfl.addWidget(ref_body, 1)
+    read = QTextEdit()
+    read.setReadOnly(True)
+    read.setStyleSheet(_READ)
+    read.setFocusPolicy(Qt.StrongFocus)
 
-    # ── Tools ─────────────────────────────────────────────────────────────
-    tools = QWidget()
-    tl = QVBoxLayout(tools)
-    tl.setContentsMargins(0, 0, 0, 0)
-    dice_out = QLabel("—")
-    dice_out.setAlignment(Qt.AlignCenter)
-    dice_out.setStyleSheet("font-size:36px; font-weight:800;")
-    dice_det = QLabel("Dice")
-    dice_det.setAlignment(Qt.AlignCenter)
-    dice_det.setStyleSheet("font-size:10px; color:#bbb;")
-    grid = QGridLayout()
-    dice_defs = (
-        ("d4", 4, None),
-        ("d6", 6, None),
-        ("d8", 8, None),
-        ("d10", 10, None),
-        ("d12", 12, None),
-        ("d20", 20, None),
-        ("d100", 100, None),
-        ("Adv", 20, "adv"),
-        ("Dis", 20, "dis"),
-    )
-    dice_btns = []
-    for i, (lab, _s, _m) in enumerate(dice_defs):
-        b = QPushButton(lab)
-        b.setFocusPolicy(Qt.StrongFocus)
-        b.setStyleSheet(_BTN)
-        b.setMinimumHeight(26)
-        dice_btns.append(b)
-        grid.addWidget(b, i // 3, i % 3)
-    torch_lab = QLabel("Torch out")
-    torch_lab.setAlignment(Qt.AlignCenter)
-    torch_lab.setStyleSheet("font-size:14px;")
-    trow = QHBoxLayout()
-    light = QPushButton("Light 1h")
-    snuff = QPushButton("Out")
-    for b in (light, snuff):
-        b.setFocusPolicy(Qt.StrongFocus)
-        b.setStyleSheet(_BTN)
-        b.setMinimumHeight(26)
-        trow.addWidget(b)
-    turn_lab = QLabel("Round 1")
-    turn_lab.setAlignment(Qt.AlignCenter)
-    tnav = QHBoxLayout()
-    t_prev = QPushButton("Rnd-")
-    t_next = QPushButton("Rnd+")
-    t_reset = QPushButton("Reset")
-    for b in (t_prev, t_next, t_reset):
-        b.setFocusPolicy(Qt.StrongFocus)
-        b.setStyleSheet(_BTN)
-        b.setMinimumHeight(26)
-        tnav.addWidget(b)
-    gen_row = QHBoxLayout()
-    g_enc = QPushButton("Encounter")
-    g_loot = QPushButton("Loot 0-3")
-    g_npc = QPushButton("NPC")
-    g_adv = QPushButton("Hook")
-    for b in (g_enc, g_loot, g_npc, g_adv):
-        b.setFocusPolicy(Qt.StrongFocus)
-        b.setStyleSheet(_BTN)
-        b.setMinimumHeight(26)
-        gen_row.addWidget(b)
-    gen_out = QTextEdit()
-    gen_out.setReadOnly(True)
-    gen_out.setStyleSheet("QTextEdit { background:#000; color:#fff; border:1px solid #333; font-size:11px; }")
-    tl.addWidget(dice_out)
-    tl.addWidget(dice_det)
-    tl.addLayout(grid)
-    tl.addWidget(torch_lab)
-    tl.addLayout(trow)
-    tl.addWidget(turn_lab)
-    tl.addLayout(tnav)
-    tl.addLayout(gen_row)
-    tl.addWidget(gen_out, 1)
+    stack.addWidget(menu)
+    stack.addWidget(sheet_page)
+    stack.addWidget(read)
 
-    # ── Settings ──────────────────────────────────────────────────────────
-    set_page = QWidget()
-    sl = QVBoxLayout(set_page)
-    sl.setContentsMargins(2, 2, 2, 2)
-    set_info = QLabel("")
-    set_info.setWordWrap(True)
-    set_info.setStyleSheet("font-size:11px;")
-    b_book = QPushButton("Open core book")
-    b_book.setFocusPolicy(Qt.StrongFocus)
-    b_book.setStyleSheet(_BTN)
-    b_book.setMinimumHeight(30)
-    sl.addWidget(set_info)
-    sl.addWidget(b_book)
-    sl.addStretch(1)
-
-    stack.addWidget(ch_page)
-    stack.addWidget(sh_page)
-    stack.addWidget(ref_page)
-    stack.addWidget(tools)
-    stack.addWidget(set_page)
-
-    tabs = QHBoxLayout()
-    tab_btns = []
-    for lab in ("Chars", "Ref", "Tools", "Set"):
-        b = QPushButton(lab)
-        b.setFocusPolicy(Qt.StrongFocus)
-        b.setFixedHeight(24)
-        tab_btns.append(b)
-        tabs.addWidget(b)
-    outer.addLayout(tabs)
-
-    state = {"tab": 0, "idx": 0, "round": 1, "spells": load_spells()}
+    state = {
+        "tab": 0,
+        "idx": 0,
+        "round": 1,
+        "dice": "",
+        "spells": load_spells(),
+        "view": "menu",  # menu | sheet | read
+        "ref": "root",  # root | rules | spells | armor | weapons | gear
+        "after_read": "menu",
+    }
 
     def paint_tabs() -> None:
-        names = ("Characters", "Reference", "Tools", "Settings")
-        status.setText(names[state["tab"]])
-        for i, b in enumerate(tab_btns):
-            b.setStyleSheet(_TAB_ON if i == state["tab"] else _TAB_OFF)
+        bits = []
+        for i, name in enumerate(_TABS):
+            bits.append(f"[{name}]" if i == state["tab"] else name)
+        tabs_lab.setText("  ".join(bits))
 
-    def goto_tab(i: int) -> None:
-        state["tab"] = i
-        paint_tabs()
-        stack.setCurrentWidget((ch_page, ref_page, tools, set_page)[i])
-        if i == 0:
-            refresh_chars()
-        elif i == 1:
-            show_ref()
-        elif i == 2:
-            paint_torch()
+    def torch_line() -> str:
+        st = _torch_state()
+        left = int(st["end"] - time.time()) if st["end"] > 0 else 0
+        if left <= 0:
+            t = "torch out"
         else:
-            paint_settings()
+            mm, ss = divmod(left, 60)
+            hh, mm = divmod(mm, 60)
+            t = f"torch {hh}:{mm:02d}:{ss:02d}" if hh else f"torch {mm}:{ss:02d}"
+        return t
 
-    def refresh_chars() -> None:
-        ch_list.clear()
-        rows = _chars()
-        if not rows:
-            ch_list.addItem("(empty — New)")
-            return
-        for c in rows:
-            ch_list.addItem(
-                f"{c.get('name','?')}  {c.get('ancestry','')} {c.get('klass','')} "
-                f"Lv{c.get('level',1)}  HP {c.get('hp')}/{c.get('hp_max')}"
-            )
-        ch_list.setCurrentRow(min(state["idx"], len(rows) - 1))
+    def paint_banner() -> None:
+        dice = state["dice"] or "—"
+        banner.setText(f"{dice}  ·  {torch_line()}  ·  round {state['round']}")
+
+    def focus_menu() -> None:
+        stack.setCurrentWidget(menu)
+        state["view"] = "menu"
+        menu.setFocus(Qt.OtherFocusReason)
+
+    def show_read(text: str, *, back: str = "menu") -> None:
+        state["view"] = "read"
+        state["after_read"] = back
+        read.setPlainText(text)
+        stack.setCurrentWidget(read)
+        read.setFocus(Qt.OtherFocusReason)
 
     def sheet_text(c: dict) -> str:
-        mods = "  ".join(f"{s} {c.get(s,10)}({_mod(int(c.get(s,10))):+d})" for s in STATS)
+        mods = "  ".join(f"{s} {c.get(s, 10)}({_mod(int(c.get(s, 10))):+d})" for s in STATS)
+        nxt = XP_NEXT.get(int(c.get("level") or 1), 10 * (int(c.get("level") or 1) + 1))
         gear = ", ".join(c.get("gear") or []) or "—"
         spells = ", ".join(c.get("spells") or []) or "—"
-        nxt = XP_NEXT.get(int(c.get("level") or 1), 10 * (int(c.get("level") or 1) + 1))
         return (
+            f"{c.get('name')}  {c.get('ancestry')} {c.get('klass')}  "
+            f"Lv {c.get('level')} {c.get('align')}\n"
             f"{mods}\n"
             f"AC {c.get('ac')}  HP {c.get('hp')}/{c.get('hp_max')}  "
-            f"XP {c.get('xp')}/{nxt}  {c.get('align')}\n"
-            f"Gear: {gear}\nSpells: {spells}\n{c.get('notes') or ''}"
+            f"XP {c.get('xp')}/{nxt}\n"
+            f"Gear: {gear}\nSpells: {spells}"
         )
+
+    def fill_chars() -> None:
+        menu.clear()
+        rows = _chars()
+        _add(menu, "New character", "new")
+        if not rows:
+            _add(menu, "(none yet)", "noop")
+        else:
+            for i, c in enumerate(rows):
+                _add(
+                    menu,
+                    f"{c.get('name', '?')}  {c.get('klass', '')} "
+                    f"Lv{c.get('level', 1)}  HP {c.get('hp')}/{c.get('hp_max')}",
+                    "char",
+                    i,
+                )
+        menu.setCurrentRow(0)
+
+    def fill_ref_root() -> None:
+        menu.clear()
+        state["ref"] = "root"
+        for lab, kind in (
+            ("Rules", "cat_rules"),
+            ("Spells", "cat_spells"),
+            ("Armor", "cat_armor"),
+            ("Weapons", "cat_weapons"),
+            ("Gear", "cat_gear"),
+            ("Names", "names"),
+        ):
+            _add(menu, lab, kind)
+        menu.setCurrentRow(0)
+
+    def fill_ref_rules() -> None:
+        menu.clear()
+        state["ref"] = "rules"
+        for i, (title, _body) in enumerate(RULES):
+            _add(menu, title, "rule", i)
+        menu.setCurrentRow(0)
+
+    def fill_ref_spells() -> None:
+        menu.clear()
+        state["ref"] = "spells"
+        spells = state["spells"]
+        if not spells:
+            _add(menu, "(missing spells.json)", "noop")
+        else:
+            for i, sp in enumerate(spells):
+                _add(
+                    menu,
+                    f"{sp.get('name')}  T{sp.get('tier')} {sp.get('class')}",
+                    "spell",
+                    i,
+                )
+        menu.setCurrentRow(0)
+
+    def fill_named(ref: str, item_kind: str, rows: list, key: str) -> None:
+        menu.clear()
+        state["ref"] = ref
+        for i, row in enumerate(rows):
+            _add(menu, str(row.get(key, "?")), item_kind, i)
+        menu.setCurrentRow(0)
+
+    def fill_tools() -> None:
+        menu.clear()
+        for i, (lab, _s, _m) in enumerate(_DICE):
+            _add(menu, f"Roll {lab}", "dice", i)
+        _add(menu, "Light torch (1h)", "torch_on")
+        _add(menu, "Snuff torch", "torch_off")
+        _add(menu, "Round −", "rnd", -1)
+        _add(menu, "Round +", "rnd", 1)
+        _add(menu, "Reset round", "rnd", 0)
+        _add(menu, "Encounter", "enc")
+        _add(menu, "Loot 0–3", "loot")
+        _add(menu, "NPC", "npc")
+        _add(menu, "Hook", "hook")
+        menu.setCurrentRow(0)
+
+    def fill_set() -> None:
+        menu.clear()
+        _add(menu, "Open core book", "book")
+        _add(menu, "About", "about")
+        menu.setCurrentRow(0)
+
+    def fill_menu() -> None:
+        paint_tabs()
+        paint_banner()
+        t = state["tab"]
+        if t == 0:
+            fill_chars()
+        elif t == 1:
+            fill_ref_root()
+        elif t == 2:
+            fill_tools()
+        else:
+            fill_set()
+        focus_menu()
+
+    def goto_tab(i: int) -> None:
+        state["tab"] = i % 4
+        state["ref"] = "root"
+        fill_menu()
 
     def show_sheet(i: int) -> None:
         rows = _chars()
         if i < 0 or i >= len(rows):
             return
         state["idx"] = i
+        state["view"] = "sheet"
         c = rows[i]
-        name_ed.setText(str(c.get("name") or ""))
-        meta.setText(f"{c.get('ancestry')} {c.get('klass')}  Lv {c.get('level')}")
-        hp_lab.setText(f"HP {c.get('hp')}/{c.get('hp_max')}")
-        sheet_txt.setPlainText(sheet_text(c))
-        stack.setCurrentWidget(sh_page)
-        name_ed.setFocus(Qt.OtherFocusReason)
+        sheet_meta.setText(sheet_text(c))
+        sheet_list.clear()
+        for lab, kind, payload in (
+            ("Hurt −1 HP", "hp", -1),
+            ("Heal +1 HP", "hp", 1),
+            ("−1 XP", "xp", -1),
+            ("+1 XP", "xp", 1),
+            ("Rename (random)", "rename", None),
+            ("Delete", "delete", None),
+            ("Back to list", "back", None),
+        ):
+            _add(sheet_list, lab, kind, payload)
+        sheet_list.setCurrentRow(0)
+        stack.setCurrentWidget(sheet_page)
+        sheet_list.setFocus(Qt.OtherFocusReason)
 
     def bump_hp(delta: int) -> None:
         rows = _chars()
@@ -430,97 +407,59 @@ def make_shadowdark_page(on_back: Callable[[], None]) -> QWidget:
         c["ac"] = 10 + _mod(int(c["DEX"]))
         rows.append(c)
         _save_chars(rows)
-        refresh_chars()
         show_sheet(len(rows) - 1)
 
-    def do_del() -> None:
-        rows = _chars()
-        i = ch_list.currentRow()
-        if i < 0 or i >= len(rows):
-            return
-        rows.pop(i)
-        _save_chars(rows)
-        refresh_chars()
-
-    def do_open() -> None:
-        rows = _chars()
-        i = ch_list.currentRow()
-        if 0 <= i < len(rows):
-            show_sheet(i)
-
-    def save_name() -> None:
+    def do_rename() -> None:
         rows = _chars()
         i = state["idx"]
         if i >= len(rows):
             return
-        rows[i]["name"] = name_ed.text().strip() or rows[i].get("name")
+        anc = str(rows[i].get("ancestry") or "Human")
+        rows[i]["name"] = random.choice(NAMES.get(anc, NAMES["Human"]))
         _save_chars(rows)
+        show_sheet(i)
 
-    def show_ref() -> None:
-        title = ref_list.currentItem().text() if ref_list.currentItem() else "Rules"
-        if title == "Rules":
-            ref_body.setPlainText("\n\n".join(f"{t}\n{b}" for t, b in RULES))
-        elif title == "Spells":
-            lines = []
-            for sp in state["spells"]:
-                lines.append(
-                    f"{sp.get('name')}  T{sp.get('tier')} {sp.get('class')}\n"
-                    f"{sp.get('duration')} · {sp.get('range')}\n{sp.get('text')}\n"
-                )
-            ref_body.setPlainText("\n".join(lines) or "Missing data/shadowdark/spells.json")
-        elif title == "Armor":
-            ref_body.setPlainText(
-                "\n".join(f"{a['name']}  {a['cost']}  AC {a['ac']}  {a['notes']}" for a in ARMOR)
-            )
-        elif title == "Weapons":
-            ref_body.setPlainText(
-                "\n".join(f"{w['name']}  {w['cost']}  {w['dmg']}  {w['notes']}" for w in WEAPONS)
-            )
-        elif title == "Gear":
-            ref_body.setPlainText("\n".join(f"{g['name']}  {g['cost']}  slot {g['slots']}" for g in GEAR))
-        elif title == "Names":
-            bits = [f"{k}: {', '.join(v[:8])}…" for k, v in NAMES.items()]
-            ref_body.setPlainText("\n".join(bits))
+    def do_delete() -> None:
+        rows = _chars()
+        i = state["idx"]
+        if i < 0 or i >= len(rows):
+            return
+        rows.pop(i)
+        _save_chars(rows)
+        goto_tab(0)
 
     def roll(idx: int) -> None:
-        lab, sides, mode = dice_defs[idx]
+        lab, sides, mode = _DICE[idx]
         if mode == "adv":
             a, b = random.randint(1, 20), random.randint(1, 20)
             keep = max(a, b)
-            dice_out.setText(str(keep))
-            dice_det.setText(f"Adv {a}/{b}")
-            return
-        if mode == "dis":
+            state["dice"] = f"Adv {keep}  ({a}/{b})"
+        elif mode == "dis":
             a, b = random.randint(1, 20), random.randint(1, 20)
             keep = min(a, b)
-            dice_out.setText(str(keep))
-            dice_det.setText(f"Dis {a}/{b}")
-            return
-        n = random.randint(1, sides)
-        extra = ""
-        if sides == 20 and n == 20:
-            extra = " crit"
-        elif sides == 20 and n == 1:
-            extra = " fail"
-        dice_out.setText(str(n))
-        dice_det.setText(f"{lab}{extra}")
+            state["dice"] = f"Dis {keep}  ({a}/{b})"
+        else:
+            n = random.randint(1, sides)
+            extra = ""
+            if sides == 20 and n == 20:
+                extra = " crit"
+            elif sides == 20 and n == 1:
+                extra = " fail"
+            state["dice"] = f"{lab} {n}{extra}"
+        paint_banner()
 
-    def paint_torch() -> None:
-        st = _torch_state()
-        left = int(st["end"] - time.time()) if st["end"] > 0 else 0
-        if left <= 0:
-            torch_lab.setText("Torch out")
-            return
-        mm, ss = divmod(left, 60)
-        hh, mm = divmod(mm, 60)
-        torch_lab.setText(f"Torch {hh}:{mm:02d}:{ss:02d}" if hh else f"Torch {mm}:{ss:02d}")
+    def names_text() -> str:
+        return "\n".join(f"{k}: {', '.join(v)}" for k, v in NAMES.items())
 
-    def paint_settings() -> None:
+    def about_text() -> str:
         books = book_candidates()
         lines = [
-            "Shadowdark companion · personal use",
-            "Put the core PDF in ~/Books (name containing shadowdark).",
-            "Open book uses the in-app reader — no Linux file dialog.",
+            "Shadowdark companion · personal use, not for resale.",
+            "← → switch Chars / Ref / Tools / Set",
+            "↑ ↓ move in the list   Confirm open   Back close",
+            "Dice stay on the Tools list; result is the line under the tabs.",
+            "",
+            "Put the core PDF in ~/Books (filename containing shadowdark).",
             "",
         ]
         if books:
@@ -528,26 +467,19 @@ def make_shadowdark_page(on_back: Callable[[], None]) -> QWidget:
             lines.extend(str(p) for p in books[:4])
         else:
             lines.append("No book found yet.")
-        set_info.setText("\n".join(lines))
+        return "\n".join(lines)
 
     def open_book() -> None:
         books = book_candidates()
         cfg = store.load(_SET, {}) or {}
         path = cfg.get("book") if isinstance(cfg, dict) else None
-        from pathlib import Path
-
         p = Path(path) if path else (books[0] if books else None)
         if p is None or not Path(p).is_file():
-            if books:
-                p = books[0]
-            else:
-                gen_out.setPlainText("No PDF in ~/Books")
-                goto_tab(2)
-                return
+            p = books[0] if books else None
+        if p is None:
+            show_read("No PDF in ~/Books with “shadowdark” in the name.")
+            return
         store.save(_SET, {"book": str(p)})
-        page = body.window()
-        opener = getattr(page, "open_files_path", None)
-        # Prefer in-app Files page if the shell registered it
         try:
             from PyQt5.QtWidgets import QApplication
 
@@ -563,80 +495,222 @@ def make_shadowdark_page(on_back: Callable[[], None]) -> QWidget:
                     return
         except Exception:
             pass
-        del opener
-        # Fallback: show first PDF page in tools output
         from esp_handset.files_ui import _pdf_page
 
         n, txt = _pdf_page(Path(p), 1)
-        gen_out.setPlainText(f"{p}\n1/{n}\n\n{txt}")
-        goto_tab(2)
+        show_read(f"{p}\n1/{n}\n\n{txt}")
 
-    def gen_npc() -> None:
+    def gen_npc() -> str:
         anc = random.choice(ANCESTRY)
         name = random.choice(NAMES.get(anc, NAMES["Human"]))
-        gen_out.setPlainText(
+        return (
             f"{name}  {anc} {random.choice(ALIGN)}\n"
             f"{random.choice(NPC_LOOK)}, {random.choice(NPC_JOB)}\n"
             f"{random.choice(NPC_DOES)}\nSecret: {random.choice(NPC_SECRET)}"
         )
 
-    def gen_enc() -> None:
-        gen_out.setPlainText(f"Cave d20: {random.choice(CAVE_ENC)}")
-
-    def gen_loot() -> None:
+    def gen_loot() -> str:
         n = random.randint(1, 100)
         item = LOOT_0_3[-1][1]
         for mx, it in LOOT_0_3:
             if n <= mx:
                 item = it
                 break
-        gen_out.setPlainText(f"Treasure 0-3  d100={n}\n{item}")
+        return f"Treasure 0–3  d100={n}\n{item}"
 
-    def gen_hook() -> None:
+    def gen_hook() -> str:
         a = random.choice(ADVENTURE_1)
         b = random.choice(ADVENTURE_2)
         c = random.choice(ADVENTURE_3)
-        gen_out.setPlainText(f"{a} the {b} {c}\nSite: {random.choice(SITE)}")
+        return f"{a} the {b} {c}\nSite: {random.choice(SITE)}"
 
-    b_new.clicked.connect(do_new)
-    b_open.clicked.connect(do_open)
-    b_del.clicked.connect(do_del)
-    ch_list.itemActivated.connect(lambda _=None: do_open())
-    name_ed.editingFinished.connect(save_name)
-    hp_minus.clicked.connect(lambda: bump_hp(-1))
-    hp_plus.clicked.connect(lambda: bump_hp(1))
-    xp_minus.clicked.connect(lambda: bump_xp(-1))
-    xp_plus.clicked.connect(lambda: bump_xp(1))
-    b_back_ch.clicked.connect(lambda: goto_tab(0))
-    ref_list.currentRowChanged.connect(lambda _i: show_ref())
-    for i, b in enumerate(dice_btns):
-        b.clicked.connect(lambda _=False, k=i: roll(k))
-    light.clicked.connect(lambda: (_save_torch(time.time() + _HOUR, False), paint_torch()))
-    snuff.clicked.connect(lambda: (_save_torch(0.0, True), paint_torch()))
-    t_prev.clicked.connect(lambda: (state.__setitem__("round", max(1, state["round"] - 1)), turn_lab.setText(f"Round {state['round']}")))
-    t_next.clicked.connect(lambda: (state.__setitem__("round", state["round"] + 1), turn_lab.setText(f"Round {state['round']}")))
-    t_reset.clicked.connect(lambda: (state.__setitem__("round", 1), turn_lab.setText("Round 1")))
-    g_enc.clicked.connect(gen_enc)
-    g_loot.clicked.connect(gen_loot)
-    g_npc.clicked.connect(gen_npc)
-    g_adv.clicked.connect(gen_hook)
-    b_book.clicked.connect(open_book)
-    for i, b in enumerate(tab_btns):
-        b.clicked.connect(lambda _=False, k=i: goto_tab(k))
+    def on_menu(_item=None) -> None:
+        it = menu.currentItem()
+        if it is None:
+            return
+        kind, payload = it.data(Qt.UserRole)
+        if kind == "noop":
+            return
+        if kind == "new":
+            do_new()
+            return
+        if kind == "char":
+            show_sheet(int(payload))
+            return
+        if kind == "cat_rules":
+            fill_ref_rules()
+            focus_menu()
+            return
+        if kind == "cat_spells":
+            fill_ref_spells()
+            focus_menu()
+            return
+        if kind == "cat_armor":
+            fill_named("armor", "armor_item", ARMOR, "name")
+            focus_menu()
+            return
+        if kind == "cat_weapons":
+            fill_named("weapons", "weapon_item", WEAPONS, "name")
+            focus_menu()
+            return
+        if kind == "cat_gear":
+            fill_named("gear", "gear_item", GEAR, "name")
+            focus_menu()
+            return
+        if kind == "names":
+            show_read(names_text())
+            return
+        if kind == "rule":
+            title, body_txt = RULES[int(payload)]
+            show_read(f"{title}\n\n{body_txt}", back="ref_sub")
+            return
+        if kind == "spell":
+            sp = state["spells"][int(payload)]
+            show_read(
+                f"{sp.get('name')}  T{sp.get('tier')} {sp.get('class')}\n"
+                f"{sp.get('duration')} · {sp.get('range')}\n\n{sp.get('text')}",
+                back="ref_sub",
+            )
+            return
+        if kind == "armor_item":
+            a = ARMOR[int(payload)]
+            show_read(
+                f"{a['name']}\n{a['cost']}  AC {a['ac']}\n{a['notes']}",
+                back="ref_sub",
+            )
+            return
+        if kind == "weapon_item":
+            w = WEAPONS[int(payload)]
+            show_read(
+                f"{w['name']}\n{w['cost']}  {w['dmg']}\n{w['notes']}",
+                back="ref_sub",
+            )
+            return
+        if kind == "gear_item":
+            g = GEAR[int(payload)]
+            show_read(
+                f"{g['name']}\n{g['cost']}  slot {g['slots']}",
+                back="ref_sub",
+            )
+            return
+        if kind == "dice":
+            roll(int(payload))
+            return
+        if kind == "torch_on":
+            _save_torch(time.time() + _HOUR, False)
+            paint_banner()
+            return
+        if kind == "torch_off":
+            _save_torch(0.0, True)
+            paint_banner()
+            return
+        if kind == "rnd":
+            d = int(payload)
+            if d == 0:
+                state["round"] = 1
+            else:
+                state["round"] = max(1, state["round"] + d)
+            paint_banner()
+            return
+        if kind == "enc":
+            show_read(f"Cave d20:\n{random.choice(CAVE_ENC)}")
+            return
+        if kind == "loot":
+            show_read(gen_loot())
+            return
+        if kind == "npc":
+            show_read(gen_npc())
+            return
+        if kind == "hook":
+            show_read(gen_hook())
+            return
+        if kind == "book":
+            open_book()
+            return
+        if kind == "about":
+            show_read(about_text())
+
+    def on_sheet(_item=None) -> None:
+        it = sheet_list.currentItem()
+        if it is None:
+            return
+        kind, payload = it.data(Qt.UserRole)
+        if kind == "hp":
+            bump_hp(int(payload))
+        elif kind == "xp":
+            bump_xp(int(payload))
+        elif kind == "rename":
+            do_rename()
+        elif kind == "delete":
+            do_delete()
+        elif kind == "back":
+            goto_tab(0)
+
+    def leave_read() -> bool:
+        if state["view"] != "read":
+            return False
+        if state["after_read"] == "ref_sub":
+            # stay in the current ref sublist
+            state["view"] = "menu"
+            focus_menu()
+            return True
+        fill_menu()
+        return True
+
+    def leave_sheet() -> bool:
+        if state["view"] != "sheet":
+            return False
+        goto_tab(0)
+        return True
+
+    def leave_ref_sub() -> bool:
+        if state["view"] != "menu" or state["tab"] != 1 or state["ref"] == "root":
+            return False
+        fill_ref_root()
+        focus_menu()
+        return True
+
+    menu.itemActivated.connect(on_menu)
+    sheet_list.itemActivated.connect(on_sheet)
 
     tick = QTimer(body)
     tick.setInterval(500)
-    tick.timeout.connect(paint_torch)
+    tick.timeout.connect(paint_banner)
     tick.start()
     goto_tab(0)
 
     chrome = page_chrome("Shadowdark", body, on_back, scroll=False)
 
     def on_hardware_back() -> bool:
-        if stack.currentWidget() is sh_page:
-            goto_tab(0)
+        if leave_read():
+            return True
+        if leave_sheet():
+            return True
+        if leave_ref_sub():
             return True
         return False
 
+    def digi_move_h(delta: int) -> bool:
+        # Swallow left/right so they never hunt buttons. Change tabs only on the menu.
+        if state["view"] != "menu":
+            return True
+        if state["tab"] == 1 and state["ref"] != "root":
+            return True
+        goto_tab(state["tab"] + (1 if delta > 0 else -1))
+        return True
+
+    def digi_move_v(delta: int) -> bool:
+        if state["view"] == "read":
+            bar = read.verticalScrollBar()
+            bar.setValue(bar.value() + int(delta) * 28)
+            return True
+        return False
+
+    def digi_pad_active() -> bool:
+        return True
+
     chrome.on_hardware_back = on_hardware_back  # type: ignore[attr-defined]
+    chrome.digi_move_h = digi_move_h  # type: ignore[attr-defined]
+    chrome.digi_move_v = digi_move_v  # type: ignore[attr-defined]
+    chrome.digi_pad_active = digi_pad_active  # type: ignore[attr-defined]
     return chrome
