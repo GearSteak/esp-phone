@@ -21,10 +21,15 @@ import fcntl
 import subprocess
 import sys
 import time
+from pathlib import Path
 from typing import Any, Optional
 
 ADDR = 0x5F
 I2C_TIMEOUT = 0x0702  # linux/i2c-dev.h — units of 10 ms
+# Digivice writes this so we release I2C 0x5F. Do NOT stop this process —
+# destroying the uinput keyboard after labwc has started means Wayland
+# never types CardKB on the Linux desktop.
+PAUSE = Path("/tmp/digivice-cardkb.pause")
 
 ARROW = {
     0xB4: "LEFT",
@@ -72,6 +77,40 @@ NEEDS_SHIFT = set(':!@#$%^&*()<>?"_+{}|~')
 
 def log(msg: str) -> None:
     print(msg, flush=True)
+
+
+def _attach_uinput_to_seat(name: str) -> None:
+    """Make labwc/libinput notice the keyboard (udev name match + add event)."""
+    time.sleep(0.15)
+    for ev in sorted(Path("/sys/class/input").glob("event*")):
+        try:
+            got = (ev / "device" / "name").read_text(encoding="utf-8").strip()
+        except OSError:
+            continue
+        if got != name:
+            continue
+        log(f"uinput {ev.name} name={name} — udev add for seat")
+        subprocess.run(
+            ["udevadm", "trigger", "--action=add", str(ev)],
+            check=False,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        subprocess.run(
+            ["udevadm", "settle", "-t", "3"],
+            check=False,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        return
+    log(f"WARN: no sysfs event node for {name} yet")
+
+
+def _paused() -> bool:
+    try:
+        return PAUSE.is_file()
+    except OSError:
+        return False
 
 
 def _open_bus(smbus_mod: Any, bus_id: int) -> Any:
@@ -164,17 +203,17 @@ def main() -> int:
         uinput.KEY_RIGHTBRACE,
         uinput.KEY_BACKSLASH,
     ]
-    # USB bustype so labwc/libinput treat this as a real keyboard on Wayland
+    # BUS_VIRTUAL (0x06): labwc/libinput on Pi OS Trixie ignores some BUS_USB
+    # uinput gadgets. Create this device at boot and never tear it down.
     try:
         device = uinput.Device(
             events,
             name="Digivice-CardKB",
-            bustype=0x03,
-            vendor=0x1D50,
-            product=0x6014,
+            bustype=0x06,
         )
     except TypeError:
         device = uinput.Device(events, name="Digivice-CardKB")
+    _attach_uinput_to_seat("Digivice-CardKB")
 
     bus: Optional[Any] = None
 
@@ -295,8 +334,26 @@ def main() -> int:
     seen = False
     fail_streak = 0
     last_probe_log = 0.0
+    pause_logged = False
 
     while True:
+        if _paused():
+            if not pause_logged:
+                log("I2C paused — Digivice owns CardKB (uinput keyboard stays)")
+                pause_logged = True
+            if bus is not None:
+                try:
+                    bus.close()
+                except Exception:
+                    pass
+                bus = None
+            seen = False
+            time.sleep(0.4)
+            continue
+        if pause_logged:
+            log("I2C resume — CardKB → Linux desktop")
+            pause_logged = False
+
         if bus is None:
             if not reopen():
                 continue

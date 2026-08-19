@@ -1,11 +1,14 @@
 """In-process CardKB (I2C 0x5F) → Digivice keys / field typing.
 
-Bypasses cardkb-inputd + xdotool so typing is instant on the kiosk canvas.
-Stop systemd cardkb-inputd while Digivice runs to avoid two readers fighting.
+Bypasses xdotool. cardkb-inputd stays running (uinput for Linux desktop)
+but pauses I2C while /tmp/digivice-cardkb.pause exists.
 """
 from __future__ import annotations
 
+import atexit
 import os
+import time
+from pathlib import Path
 from typing import Any, Optional
 
 from PyQt5.QtCore import QObject, QTimer, Qt, QEvent
@@ -13,6 +16,7 @@ from PyQt5.QtGui import QKeyEvent
 from PyQt5.QtWidgets import QApplication, QLineEdit, QTextEdit, QPlainTextEdit
 
 ADDR = 0x5F
+_PAUSE = Path("/tmp/digivice-cardkb.pause")
 _TEXT_TYPES = (QLineEdit, QTextEdit, QPlainTextEdit)
 
 # CardKB arrow scancodes (M5 Stack CardKB)
@@ -22,6 +26,20 @@ _ARROW = {
     0xB6: Qt.Key_Down,
     0xB7: Qt.Key_Right,
 }
+
+
+def _pause_desktop_reader() -> None:
+    try:
+        _PAUSE.write_text("1\n", encoding="utf-8")
+    except OSError:
+        pass
+
+
+def _unpause_desktop_reader() -> None:
+    try:
+        _PAUSE.unlink()
+    except OSError:
+        pass
 
 
 def _open_bus(bus_id: int = 1) -> Any:
@@ -69,6 +87,7 @@ class CardKbPoller(QObject):
         except Exception:
             pass
         self._bus = None
+        _unpause_desktop_reader()
 
     def _ensure_bus(self) -> bool:
         if self._bus is not None:
@@ -227,6 +246,8 @@ def start_cardkb(shell) -> Optional[CardKbPoller]:
     ):
         return None
     bus = int(os.environ.get("ESP_HANDSET_CARDKB_BUS", "1") or "1")
+    _pause_desktop_reader()
+    time.sleep(0.5)
     poller = CardKbPoller(shell, bus_id=bus)
     # Probe once — if we cannot open I2C, don't claim the bus
     if not poller._ensure_bus():
@@ -235,7 +256,9 @@ def start_cardkb(shell) -> Optional[CardKbPoller]:
             "sudo usermod -aG i2c $USER && reboot",
             flush=True,
         )
+        _unpause_desktop_reader()
         return None
+    atexit.register(_unpause_desktop_reader)
     poller.start()
     print("[cardkb] in-process poller started", flush=True)
     return poller

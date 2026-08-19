@@ -42,6 +42,14 @@ doctor() {
   systemctl is-enabled cardkb-inputd 2>&1 || true
   systemctl is-active cardkb-inputd 2>&1 || true
   systemctl cat cardkb-inputd 2>&1 | head -n 25 || true
+  echo "--- linux keyboard ---"
+  grep -A3 -i 'Digivice-CardKB' /proc/bus/input/devices 2>/dev/null \
+    || echo "(no Digivice-CardKB in /proc yet — start the service)"
+  if [[ -f /tmp/digivice-cardkb.pause ]]; then
+    echo "PAUSE FILE present — I2C is for Digivice, not Linux"
+  else
+    echo "no pause file — daemon should type into Linux"
+  fi
   echo "--- journal (last 30) ---"
   journalctl -u cardkb-inputd -n 30 --no-pager 2>&1 || true
   echo "=== wiring reminder ==="
@@ -72,12 +80,18 @@ cat >/etc/udev/rules.d/99-digivice-cardkb.rules <<'EOF'
 # CardKB virtual keyboard — labwc/libinput must see it as a seat keyboard
 KERNEL=="uinput", GROUP="input", MODE="0660", OPTIONS+="static_node=uinput"
 SUBSYSTEM=="input", KERNEL=="event*", ATTRS{name}=="Digivice-CardKB", \
-  MODE="0666", GROUP="input", \
+  MODE="0660", GROUP="input", \
   ENV{ID_INPUT}="1", ENV{ID_INPUT_KEYBOARD}="1", \
   ENV{ID_INPUT_KEY}="1", TAG+="uaccess", TAG+="seat"
 EOF
+cat >/etc/udev/hwdb.d/61-digivice-cardkb.hwdb <<'EOF'
+evdev:name:Digivice-CardKB:*
+ ID_INPUT_KEYBOARD=1
+ ID_INPUT_KEY=1
+EOF
+udevadm hwdb --update 2>/dev/null || systemd-hwdb update 2>/dev/null || true
 udevadm control --reload-rules 2>/dev/null || true
-udevadm trigger 2>/dev/null || true
+udevadm trigger --subsystem-match=input 2>/dev/null || true
 
 # Enable I2C if raspi-config available
 if command -v raspi-config >/dev/null 2>&1; then
@@ -121,7 +135,11 @@ EOF
 
 systemctl daemon-reload
 systemctl enable cardkb-inputd.service
-systemctl restart cardkb-inputd.service
+if systemctl is-active --quiet cardkb-inputd.service; then
+  echo "[ensure-cardkb] cardkb-inputd already running (keep uinput)"
+else
+  systemctl start cardkb-inputd.service
+fi
 sleep 1
 
 if systemctl is-active --quiet cardkb-inputd.service; then

@@ -15,7 +15,8 @@ mkdir -p "$(dirname "$MODE_FILE")" "$LOG_DIR"
 
 log() { echo "[$(date '+%H:%M:%S')] $*" | tee -a "$LOG" >&2; }
 
-# Never fall back to bare systemctl — that pops polkit "Authentication is required"
+# Pause I2C (stop) or give it back to Linux (start). Never systemctl stop —
+# that destroys the uinput keyboard and labwc will not type CardKB.
 cardkb_ctl() {
   local op="${1:-}"
   case "$op" in
@@ -23,16 +24,26 @@ cardkb_ctl() {
     *) return 1 ;;
   esac
   if [[ "$(id -u)" -eq 0 ]]; then
-    systemctl "$op" cardkb-inputd.service >/dev/null 2>&1 || true
-    return 0
+    if command -v digivice-cardkb-ctl >/dev/null 2>&1; then
+      digivice-cardkb-ctl "$op" >/dev/null 2>&1 && return 0
+    fi
+  else
+    if command -v digivice-cardkb-ctl >/dev/null 2>&1; then
+      sudo -n digivice-cardkb-ctl "$op" >/dev/null 2>&1 && return 0
+    fi
   fi
-  if command -v digivice-cardkb-ctl >/dev/null 2>&1; then
-    sudo -n digivice-cardkb-ctl "$op" >/dev/null 2>&1 && return 0
+  if [[ "$op" == "stop" ]]; then
+    echo 1 >/tmp/digivice-cardkb.pause 2>/dev/null || true
+    chmod 666 /tmp/digivice-cardkb.pause 2>/dev/null || true
+  else
+    rm -f /tmp/digivice-cardkb.pause 2>/dev/null || true
   fi
-  sudo -n /usr/bin/systemctl "$op" cardkb-inputd >/dev/null 2>&1 && return 0
-  sudo -n /bin/systemctl "$op" cardkb-inputd >/dev/null 2>&1 && return 0
-  log "WARN: cannot $op cardkb-inputd (no passwordless sudo) — skipped"
-  return 1
+  if [[ "$(id -u)" -eq 0 ]]; then
+    systemctl start cardkb-inputd.service >/dev/null 2>&1 || true
+  else
+    sudo -n /usr/bin/systemctl start cardkb-inputd >/dev/null 2>&1 || true
+  fi
+  return 0
 }
 
 mode_get() {
@@ -410,14 +421,8 @@ ensure_buttons_daemon() {
 }
 
 ensure_cardkb_daemon() {
-  # Digivice reads CardKB in-process (cardkb_qt). Stop systemd injector so two
-  # clients do not fight over I2C 0x5F (stolen/missing keys).
-  if systemctl is-active --quiet cardkb-inputd 2>/dev/null \
-    || systemctl is-active --quiet cardkb-inputd.service 2>/dev/null; then
-    log "stopping cardkb-inputd for in-process Digivice CardKB"
-    cardkb_ctl stop
-  fi
-  # Keep unit installed/healthy for Linux desktop when Digivice exits
+  # Keep cardkb-inputd running (uinput keyboard must exist before labwc).
+  # Only pause I2C so Digivice's in-process reader owns 0x5F.
   local e
   for e in \
     /usr/local/bin/digivice-ensure-cardkb \
@@ -433,9 +438,8 @@ ensure_cardkb_daemon() {
       break
     fi
   done
-  # ensure-cardkb starts the unit — stop again while Digivice owns the bus
   cardkb_ctl stop
-  log "CardKB: Digivice in-process (daemon stopped)"
+  log "CardKB: Digivice in-process (daemon I2C paused, uinput kept)"
 }
 
 launch_phone() {
