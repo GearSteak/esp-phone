@@ -26,7 +26,7 @@ sudo usermod -aG i2c "$USER"   # needed for Digivice in-process reader
 # then reboot once if group was just added, or after the first CardKB unit change
 ```
 
-Doctor checks: `i2cdetect` for **`5f`**, `Digivice-CardKB` in `/proc/bus/input/devices`, pause file **absent** on the Linux desktop.
+Doctor checks: `i2cdetect` for **`5f`**, `type socket OK`, pause file **absent** on the Linux desktop.
 
 ```bash
 sudo raspi-config nonint do_i2c 0
@@ -37,13 +37,15 @@ sudo i2cdetect -y 1          # must show 5f
 
 ## How keys reach Digivice vs Linux desktop
 
-`cardkb-inputd` is a **systemd uinput keyboard** (`Digivice-CardKB`). It must stay running from boot, **before labwc**. Do not `systemctl stop` it — Wayland ignores a keyboard created after login.
+`cardkb-inputd` reads I2C. **Digivice** uses the in-process reader (`cardkb_qt.py`) and writes `/run/digivice/cardkb.pause` so the daemon releases I2C.
 
-**While Digivice is running**, CardKB is read **in-process** over I2C (`cardkb_qt.py`). Digivice writes `/run/digivice/cardkb.pause` so the daemon **releases I2C** but keeps the uinput node.
-
-**Settings → Linux** (or `handset-desktop`) removes the pause file so the daemon types into the Pi OS desktop again.
+**Settings → Linux** removes the pause file. The daemon then types by sending keys through **Digivice-Buttons** (`/run/digivice/type.sock`) — the pad keyboard labwc already has from boot. It does **not** create a second virtual keyboard (that used to steal Bluetooth / USB keyboards).
 
 Confirm on a Digivice text field (yellow ring + “Typing · Back exits”), then type. **Back** leaves the field.
+
+After this update: `full-update` then **reboot once** so Digivice-Buttons is created with letter keys. Bluetooth keyboards should keep working.
+
+Doctor should show `type socket OK` and **no** `Digivice-CardKB` fallback device.
 
 ## “LED blinks once, then dead”
 

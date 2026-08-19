@@ -638,8 +638,9 @@ chmod 0777 /run/digivice
 
 cat >/etc/systemd/system/cardkb-inputd.service <<EOF
 [Unit]
-Description=Digivice CardKB I2C → Linux desktop keyboard (uinput)
-After=local-fs.target systemd-modules-load.service
+Description=Digivice CardKB I2C → Linux desktop (via Digivice-Buttons)
+After=local-fs.target systemd-modules-load.service digi-buttons-inputd.service
+Wants=digi-buttons-inputd.service
 Before=graphical.target display-manager.service lightdm.service greetd.service
 
 [Service]

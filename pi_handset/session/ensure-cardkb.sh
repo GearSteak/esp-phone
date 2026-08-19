@@ -43,15 +43,16 @@ doctor() {
   systemctl is-active cardkb-inputd 2>&1 || true
   systemctl cat cardkb-inputd 2>&1 | head -n 25 || true
   echo "--- linux keyboard ---"
-  grep -A6 -i 'Digivice-CardKB' /proc/bus/input/devices 2>/dev/null \
-    || echo "(no Digivice-CardKB in /proc yet — start the service)"
-  evdev="$(awk -v RS= '/Name=.*Digivice-CardKB/{print}' /proc/bus/input/devices 2>/dev/null \
-    | grep -o 'event[0-9]*' | head -n1 || true)"
-  if [[ -n "$evdev" && -e "/dev/input/$evdev" ]]; then
-    echo "--- udev $evdev ---"
-    udevadm info -q property "/dev/input/$evdev" 2>/dev/null \
-      | grep -E 'ID_INPUT|ID_BUS|TAGS|NAME' || true
+  grep -A6 -i 'Digivice-Buttons' /proc/bus/input/devices 2>/dev/null \
+    || echo "(no Digivice-Buttons — pad daemon down; CardKB types through it)"
+  if [[ -S /run/digivice/type.sock ]]; then
+    echo "type socket OK /run/digivice/type.sock"
+  else
+    echo "NO type socket — start digi-buttons-inputd (CardKB has nothing to type through)"
   fi
+  grep -A6 -i 'Digivice-CardKB' /proc/bus/input/devices 2>/dev/null \
+    && echo "(fallback Digivice-CardKB present — Bluetooth may glitch; reboot after update)" \
+    || echo "(no Digivice-CardKB fallback device — good)"
   echo "--- pause ---"
   paused=0
   for pf in /run/digivice/cardkb.pause /tmp/digivice-cardkb.pause; do
@@ -80,6 +81,14 @@ doctor() {
 
 if [[ "${1:-}" == "--doctor" ]]; then
   doctor
+  exit 0
+fi
+
+if [[ "${1:-}" == "--if-needed" ]]; then
+  mkdir -p /run/digivice
+  chmod 0777 /run/digivice || true
+  systemctl start cardkb-inputd.service 2>/dev/null || true
+  echo "[ensure-cardkb] if-needed: $(systemctl is-active cardkb-inputd 2>/dev/null || echo down)"
   exit 0
 fi
 
@@ -114,7 +123,8 @@ evdev:name:Digivice-CardKB:*
 EOF
 udevadm hwdb --update 2>/dev/null || systemd-hwdb update 2>/dev/null || true
 udevadm control --reload-rules 2>/dev/null || true
-udevadm trigger --subsystem-match=input 2>/dev/null || true
+# Do NOT `udevadm trigger --subsystem-match=input` — that re-enumerates
+# Bluetooth HID keyboards and they drop off the seat.
 
 # Enable I2C if raspi-config available
 if command -v raspi-config >/dev/null 2>&1; then
@@ -138,10 +148,11 @@ usermod -aG i2c,input "$GUI_USER" 2>/dev/null || true
 
 cat >"$UNIT" <<EOF
 [Unit]
-Description=Digivice CardKB I2C → Linux desktop keyboard (uinput)
+Description=Digivice CardKB I2C → Linux desktop (via Digivice-Buttons)
 # Start with the OS, before labwc. After=multi-user.target is an ordering
 # cycle with WantedBy=multi-user.target — systemd then drops the boot job.
-After=local-fs.target systemd-modules-load.service
+After=local-fs.target systemd-modules-load.service digi-buttons-inputd.service
+Wants=digi-buttons-inputd.service
 Before=graphical.target display-manager.service lightdm.service greetd.service
 
 [Service]
@@ -161,13 +172,10 @@ EOF
 
 systemctl daemon-reload
 systemctl enable cardkb-inputd.service
+# Restart CardKB daemon only (no extra HID). Do not udev-trigger all keyboards.
 if systemctl is-active --quiet cardkb-inputd.service; then
-  if grep -A10 'Digivice-CardKB' /proc/bus/input/devices 2>/dev/null | grep -q 'Bus=0006'; then
-    echo "[ensure-cardkb] CardKB was BUS_VIRTUAL — recreate as USB (labwc)"
-    systemctl restart cardkb-inputd.service
-  else
-    echo "[ensure-cardkb] cardkb-inputd already running (keep uinput)"
-  fi
+  systemctl restart cardkb-inputd.service
+  echo "[ensure-cardkb] restarted cardkb-inputd (I2C → Digivice-Buttons)"
 else
   systemctl start cardkb-inputd.service
 fi

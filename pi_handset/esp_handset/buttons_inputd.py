@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import glob
 import os
+import socket
 import subprocess
 import sys
 import threading
@@ -80,10 +81,57 @@ MODE_PATHS = [
 MOUSE_STEP_PATHS = [
     Path("/etc/esp-handset/mouse_step"),
 ]
+TYPE_SOCK = Path("/run/digivice/type.sock")
 
 
 def log(msg: str) -> None:
     print(f"[digi-buttons] {msg}", flush=True)
+
+
+def open_type_sock():
+    """CardKB (and friends) type through THIS uinput device — labwc already has it."""
+    try:
+        TYPE_SOCK.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            TYPE_SOCK.unlink()
+        except FileNotFoundError:
+            pass
+        sock = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
+        sock.bind(str(TYPE_SOCK))
+        os.chmod(TYPE_SOCK, 0o666)
+        sock.setblocking(False)
+        log(f"type socket {TYPE_SOCK}")
+        return sock
+    except OSError as e:
+        log(f"type socket: {e}")
+        return None
+
+
+def drain_type_sock(sock, device, uinput_mod) -> None:
+    if sock is None:
+        return
+    for _ in range(48):
+        try:
+            data = sock.recv(80)
+        except BlockingIOError:
+            return
+        except OSError:
+            return
+        try:
+            parts = data.decode("ascii", "replace").split()
+            if len(parts) != 2:
+                continue
+            op, n = parts[0], int(parts[1])
+            ev = (1, n)  # EV_KEY
+            if op == "S":
+                device.emit(uinput_mod.KEY_LEFTSHIFT, 1)
+            device.emit(ev, 1)
+            time.sleep(0.008)
+            device.emit(ev, 0)
+            if op == "S":
+                device.emit(uinput_mod.KEY_LEFTSHIFT, 0)
+        except Exception as e:
+            log(f"type sock: {e}")
 
 
 def pin_map() -> Dict[str, int]:
@@ -672,10 +720,28 @@ def main() -> int:
         "START": uinput.KEY_ENTER,
         "SELECT": uinput.KEY_RIGHTSHIFT,
     }
+    extra = [getattr(uinput, f"KEY_{c}") for c in "ABCDEFGHIJKLMNOPQRSTUVWXYZ"]
+    extra += [getattr(uinput, f"KEY_{d}") for d in "0123456789"]
+    extra += [
+        uinput.KEY_LEFTSHIFT,
+        uinput.KEY_SPACE,
+        uinput.KEY_BACKSPACE,
+        uinput.KEY_DOT,
+        uinput.KEY_COMMA,
+        uinput.KEY_SLASH,
+        uinput.KEY_SEMICOLON,
+        uinput.KEY_APOSTROPHE,
+        uinput.KEY_MINUS,
+        uinput.KEY_EQUAL,
+        uinput.KEY_LEFTBRACE,
+        uinput.KEY_RIGHTBRACE,
+        uinput.KEY_BACKSLASH,
+    ]
     events = list(
         dict.fromkeys(
             list(phone_map.values())
             + list(gb_map.values())
+            + extra
             + [
                 uinput.BTN_LEFT,
                 uinput.BTN_RIGHT,
@@ -698,6 +764,7 @@ def main() -> int:
     except TypeError:
         device = uinput.Device(events, name="Digivice-Buttons")
 
+    type_sock = open_type_sock()
     xinj = XInject()
     mode = read_mode()
     mouse_step = read_mouse_step()
@@ -747,6 +814,7 @@ def main() -> int:
 
     try:
         while True:
+            drain_type_sock(type_sock, device, uinput)
             now = time.monotonic()
             if now - last_mode_check > 0.4:
                 mode = read_mode()

@@ -11,8 +11,10 @@ Poll /dev/i2c-1 @ 0x5F. Inject via uinput so keys work on Wayland
 (labwc / Pi OS Trixie) as well as X11. Do not use xdotool here —
 Xwayland "succeeds" then types into nothing native.
 
-Keep this process alive from boot (before labwc). Digivice only pauses
-I2C via /run/digivice/cardkb.pause — never systemctl stop this unit.
+Keep this process alive from boot. Digivice only pauses
+I2C via /run/digivice/cardkb.pause. Linux desktop typing is injected
+through Digivice-Buttons (already on the labwc seat) so we do not
+create a second virtual keyboard that steals Bluetooth HID.
 """
 
 from __future__ import annotations
@@ -20,6 +22,7 @@ from __future__ import annotations
 import argparse
 import fcntl
 import os
+import socket
 import subprocess
 import sys
 import time
@@ -35,6 +38,7 @@ I2C_TIMEOUT = 0x0702  # linux/i2c-dev.h — units of 10 ms
 # pause file root created.
 PAUSE = Path("/run/digivice/cardkb.pause")
 PAUSE_LEGACY = Path("/tmp/digivice-cardkb.pause")
+TYPE_SOCK = Path("/run/digivice/type.sock")
 
 ARROW = {
     0xB4: "LEFT",
@@ -84,39 +88,92 @@ def log(msg: str) -> None:
     print(msg, flush=True)
 
 
-def _attach_uinput_to_seat(name: str) -> None:
-    """Make labwc/libinput notice the keyboard (udev name match + add event)."""
-    time.sleep(0.15)
-    for ev in sorted(Path("/sys/class/input").glob("event*")):
+def _ev_code(event) -> int:
+    if isinstance(event, tuple) and len(event) >= 2:
+        return int(event[1])
+    return int(event)
+
+
+class TypeSink:
+    """Prefer Digivice-Buttons (already on the labwc seat). Own uinput is last resort."""
+
+    def __init__(self, uinput_mod: Any):
+        self._u = uinput_mod
+        self._sock = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
+        self._dev: Any = None
+        self._logged_path = ""
+
+    def tap(self, event, *, shift: bool = False) -> None:
+        code = _ev_code(event)
+        msg = f"{'S' if shift else 'T'} {code}".encode("ascii")
         try:
-            got = (ev / "device" / "name").read_text(encoding="utf-8").strip()
+            self._sock.sendto(msg, str(TYPE_SOCK))
+            if self._logged_path != "buttons":
+                log("CardKB typing via Digivice-Buttons (Bluetooth keyboards stay independent)")
+                self._logged_path = "buttons"
+            return
         except OSError:
-            continue
-        if got != name:
-            continue
-        node = Path("/dev/input") / ev.name
-        log(f"uinput {ev.name} name={name} — udev add for seat")
-        subprocess.run(
-            ["udevadm", "trigger", "--action=add", str(ev)],
-            check=False,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-        subprocess.run(
-            ["udevadm", "settle", "-t", "3"],
-            check=False,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-        if node.is_char_device():
-            subprocess.run(
-                ["loginctl", "attach", "seat0", str(node)],
-                check=False,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
+            pass
+        self._ensure_fallback()
+        if self._dev is None:
+            return
+        try:
+            if shift:
+                self._dev.emit(self._u.KEY_LEFTSHIFT, 1)
+            self._dev.emit(event, 1)
+            time.sleep(0.01)
+            self._dev.emit(event, 0)
+            if shift:
+                self._dev.emit(self._u.KEY_LEFTSHIFT, 0)
+        except Exception as e:
+            log(f"uinput fallback: {e}")
+
+    def _ensure_fallback(self) -> None:
+        if self._dev is not None:
+            return
+        uinput = self._u
+        events = [getattr(uinput, f"KEY_{c}") for c in "ABCDEFGHIJKLMNOPQRSTUVWXYZ"]
+        events += [getattr(uinput, f"KEY_{d}") for d in "0123456789"]
+        events += [
+            uinput.KEY_ENTER,
+            uinput.KEY_BACKSPACE,
+            uinput.KEY_SPACE,
+            uinput.KEY_ESC,
+            uinput.KEY_HOME,
+            uinput.KEY_TAB,
+            uinput.KEY_LEFTSHIFT,
+            uinput.KEY_UP,
+            uinput.KEY_DOWN,
+            uinput.KEY_LEFT,
+            uinput.KEY_RIGHT,
+            uinput.KEY_DOT,
+            uinput.KEY_COMMA,
+            uinput.KEY_SLASH,
+            uinput.KEY_SEMICOLON,
+            uinput.KEY_APOSTROPHE,
+            uinput.KEY_MINUS,
+            uinput.KEY_EQUAL,
+            uinput.KEY_LEFTBRACE,
+            uinput.KEY_RIGHTBRACE,
+            uinput.KEY_BACKSLASH,
+            # Same class as Digivice-Buttons so labwc will hotplug it.
+            uinput.BTN_LEFT,
+            uinput.REL_X,
+            uinput.REL_Y,
+        ]
+        try:
+            self._dev = uinput.Device(
+                events,
+                name="Digivice-CardKB",
+                bustype=0x03,
+                vendor=0x1209,
+                product=0x5F01,
+                version=1,
             )
-        return
-    log(f"WARN: no sysfs event node for {name} yet")
+        except TypeError:
+            self._dev = uinput.Device(events, name="Digivice-CardKB")
+        log("WARN: type socket missing — CardKB fallback uinput (reboot if Linux ignores it)")
+        self._logged_path = "uinput"
 
 
 def _ensure_pause_dir() -> None:
@@ -203,48 +260,8 @@ def main() -> int:
     except Exception:
         pass
 
-    # Must list every KEY_* we emit. KEY_A+i is 30..55 — that misses QWERTY
-    # (KEY_Q=16 … KEY_P=25). Unregistered keys are dropped by the kernel.
-    events = [getattr(uinput, f"KEY_{c}") for c in "ABCDEFGHIJKLMNOPQRSTUVWXYZ"]
-    events += [getattr(uinput, f"KEY_{d}") for d in "0123456789"]
-    events += [
-        uinput.KEY_ENTER,
-        uinput.KEY_BACKSPACE,
-        uinput.KEY_SPACE,
-        uinput.KEY_ESC,
-        uinput.KEY_HOME,
-        uinput.KEY_TAB,
-        uinput.KEY_LEFTSHIFT,
-        uinput.KEY_UP,
-        uinput.KEY_DOWN,
-        uinput.KEY_LEFT,
-        uinput.KEY_RIGHT,
-        uinput.KEY_DOT,
-        uinput.KEY_COMMA,
-        uinput.KEY_SLASH,
-        uinput.KEY_SEMICOLON,
-        uinput.KEY_APOSTROPHE,
-        uinput.KEY_MINUS,
-        uinput.KEY_EQUAL,
-        uinput.KEY_LEFTBRACE,
-        uinput.KEY_RIGHTBRACE,
-        uinput.KEY_BACKSLASH,
-    ]
-    # Same USB bustype as Digivice-Buttons (that pad already types on labwc).
-    # BUS_VIRTUAL (0x06) is often ignored by libinput on Pi OS Trixie.
-    try:
-        device = uinput.Device(
-            events,
-            name="Digivice-CardKB",
-            bustype=0x03,
-            vendor=0x1D6B,
-            product=0x0105,
-            version=1,
-        )
-    except TypeError:
-        device = uinput.Device(events, name="Digivice-CardKB")
+    sink = TypeSink(uinput)
     _ensure_pause_dir()
-    _attach_uinput_to_seat("Digivice-CardKB")
 
     bus: Optional[Any] = None
 
@@ -267,19 +284,14 @@ def main() -> int:
 
     log(
         f"cardkb-inputd ready bus={args.bus} addr=0x{ADDR:02X} "
-        f"(uinput keyboard for Linux desktop)"
+        f"(types through Digivice-Buttons; no extra keyboard device)"
     )
 
-    def tap_uinput(code: int) -> None:
-        device.emit(code, 1)
-        time.sleep(0.012)
-        device.emit(code, 0)
-
-    def emit_special(logical: str, u_code: int) -> None:
+    def emit_special(logical: str, u_code) -> None:
         try:
-            tap_uinput(u_code)
+            sink.tap(u_code)
         except Exception as e:
-            log(f"uinput {logical}: {e}")
+            log(f"type {logical}: {e}")
 
     def emit_char(ch: str) -> None:
         if ch in ("`", "~"):
@@ -300,23 +312,10 @@ def main() -> int:
                 code = getattr(uinput, f"KEY_{base}")
             else:
                 return
-            shift_down = False
-            try:
-                if need_shift:
-                    device.emit(uinput.KEY_LEFTSHIFT, 1)
-                    shift_down = True
-                device.emit(code, 1)
-                time.sleep(0.01)
-                device.emit(code, 0)
-            finally:
-                if shift_down:
-                    try:
-                        device.emit(uinput.KEY_LEFTSHIFT, 0)
-                    except Exception:
-                        pass
+            sink.tap(code, shift=need_shift)
         except Exception as e:
             if args.verbose:
-                log(f"uinput char {ch!r}: {e}")
+                log(f"type char {ch!r}: {e}")
 
     def handle(raw: int) -> None:
         if raw in ARROW:
@@ -370,7 +369,7 @@ def main() -> int:
     while True:
         if _paused():
             if not pause_logged:
-                log("I2C paused — Digivice owns CardKB (uinput keyboard stays)")
+                log("I2C paused — Digivice owns CardKB")
                 pause_logged = True
             if bus is not None:
                 try:
@@ -432,10 +431,6 @@ def main() -> int:
             handle(raw)
         except Exception as e:
             log(f"CardKB emit error 0x{raw:02X}: {e!r}")
-            try:
-                device.emit(uinput.KEY_LEFTSHIFT, 0)
-            except Exception:
-                pass
 
         try:
             drain()

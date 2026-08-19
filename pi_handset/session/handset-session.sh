@@ -423,8 +423,8 @@ ensure_buttons_daemon() {
 }
 
 ensure_cardkb_daemon() {
-  # Keep cardkb-inputd running (uinput keyboard must exist before labwc).
-  # Only pause I2C so Digivice's in-process reader owns 0x5F.
+  # Start cardkb-inputd if needed. Do not run the full installer (udev trigger
+  # of every input device knocks Bluetooth keyboards off the seat).
   local e
   for e in \
     /usr/local/bin/digivice-ensure-cardkb \
@@ -433,15 +433,15 @@ ensure_cardkb_daemon() {
   do
     if [[ -f "$e" ]]; then
       if [[ "$(id -u)" -eq 0 ]]; then
-        bash "$e" >>"$LOG" 2>&1 || true
+        bash "$e" --if-needed >>"$LOG" 2>&1 || true
       else
-        sudo -n bash "$e" >>"$LOG" 2>&1 || true
+        sudo -n bash "$e" --if-needed >>"$LOG" 2>&1 || true
       fi
       break
     fi
   done
   cardkb_ctl stop
-  log "CardKB: Digivice in-process (daemon I2C paused, uinput kept)"
+  log "CardKB: Digivice in-process (daemon I2C paused)"
 }
 
 launch_phone() {
