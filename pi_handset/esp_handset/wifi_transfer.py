@@ -122,6 +122,8 @@ MODEM_REPORT = DATA / "modem-doctor.txt"
 MODEM_REPORT_TMP = Path("/tmp/digivice-modem-doctor.txt")
 AUDIO_REPORT = DATA / "audio-doctor.txt"
 AUDIO_REPORT_TMP = Path("/tmp/digivice-audio-doctor.txt")
+SIP_REPORT = DATA / "sip-doctor.txt"
+SIP_REPORT_TMP = Path("/tmp/digivice-sip-doctor.txt")
 
 
 def _modem_report_path() -> Optional[Path]:
@@ -203,6 +205,36 @@ def _refresh_audio_report() -> Tuple[bool, str]:
     if p is not None:
         return True, f"Using existing {p.name}"
     return False, last
+
+
+def _sip_report_path() -> Optional[Path]:
+    for p in (
+        SIP_REPORT,
+        SIP_REPORT_TMP,
+        DATA / "inbox" / "sip-doctor.txt",
+        Path.home() / "esp-phone" / "sip-doctor-LATEST.txt",
+    ):
+        try:
+            if p.is_file() and p.stat().st_size > 0:
+                return p
+        except OSError:
+            continue
+    return None
+
+
+def _refresh_sip_report() -> Tuple[bool, str]:
+    try:
+        from esp_handset import sip_call
+
+        path = sip_call.write_sip_report(run_doctor=True)
+        if path.is_file() and path.stat().st_size > 0:
+            return True, f"Report ready ({path.name})"
+        return False, "sip report empty"
+    except Exception as e:
+        p = _sip_report_path()
+        if p is not None:
+            return True, f"Using existing {p.name}"
+        return False, str(e)[:80]
 
 
 def _lan_ip() -> str:
@@ -403,6 +435,9 @@ def _make_handler(get_dest: Callable[[], str], signals: _UploadSignals):
             if path in ("/diag/audio", "/diag/audio.txt", "/audio-doctor.txt"):
                 self._serve_audio_report(download=path.endswith(".txt"))
                 return
+            if path in ("/diag/sip", "/diag/sip.txt", "/sip-doctor.txt"):
+                self._serve_sip_report(download=path.endswith(".txt"))
+                return
             if path in ("/diag/beep", "/diag/beep.txt", "/last-beep.txt"):
                 beep = Path.home() / ".esp-handset" / "last-beep.txt"
                 if not beep.is_file():
@@ -478,6 +513,13 @@ def _make_handler(get_dest: Callable[[], str], signals: _UploadSignals):
 <nav><a href="/">Home</a></nav>
 <h1>Digivice · Transfer</h1>
 <p class="muted">Same Wi‑Fi. Send files to Digivice, or download photos/files to this computer.</p>
+
+<div class="box">
+<h2>SIP / call report</h2>
+<p class="muted">Paste sip-doctor.txt into Cursor. Passwords are stripped.</p>
+<a class="btn" style="display:block;" href="/diag/sip.txt">Download sip-doctor.txt</a>
+<a style="display:block;margin-top:8px;" href="/diag/sip">View in browser</a>
+</div>
 
 <div class="box">
 <h2>Modem doctor</h2>
@@ -658,6 +700,46 @@ def _make_handler(get_dest: Callable[[], str], signals: _UploadSignals):
             self.end_headers()
             self.wfile.write(data)
 
+        def _serve_sip_report(self, *, download: bool) -> None:
+            path = _sip_report_path()
+            if path is None:
+                try:
+                    from esp_handset import sip_call
+
+                    sip_call.write_sip_report(run_doctor=False)
+                except Exception:
+                    pass
+                path = _sip_report_path()
+            if path is None:
+                body = (
+                    "No sip-doctor.txt yet.\n\n"
+                    "On Digivice: Tools → Transfer → Prep SIP report\n"
+                    "(or Test SIP / place a call, then try this link again).\n"
+                ).encode("utf-8")
+                self.send_response(404)
+                self.send_header("Content-Type", "text/plain; charset=utf-8")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                signals.activity.emit("No SIP report yet")
+                return
+            try:
+                data = path.read_bytes()
+            except OSError:
+                self.send_error(500)
+                return
+            signals.activity.emit("Sent sip-doctor.txt")
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain; charset=utf-8")
+            self.send_header("Content-Length", str(len(data)))
+            if download:
+                self.send_header(
+                    "Content-Disposition",
+                    'attachment; filename="sip-doctor.txt"',
+                )
+            self.end_headers()
+            self.wfile.write(data)
+
         def do_POST(self) -> None:  # noqa: N802
             if self.path not in ("/upload", "/upload/"):
                 self.send_error(404)
@@ -782,6 +864,9 @@ def make_wifi_transfer_page(
     start_btn = QPushButton("Start")
     start_btn.setFixedHeight(28)
     start_btn.setStyleSheet("font-weight:800;")
+    prep_sip_btn = QPushButton("Prep SIP report")
+    prep_sip_btn.setFixedHeight(26)
+    prep_sip_btn.setStyleSheet("font-size:11px; font-weight:800;")
     prep_btn = QPushButton("Prep modem report")
     prep_btn.setFixedHeight(26)
     prep_btn.setStyleSheet("font-size:11px;")
@@ -797,6 +882,7 @@ def make_wifi_transfer_page(
     lay.addWidget(url_lab)
     lay.addWidget(status, 1)
     lay.addWidget(start_btn)
+    lay.addWidget(prep_sip_btn)
     lay.addWidget(prep_btn)
     lay.addWidget(prep_audio_btn)
     lay.addWidget(stop_btn)
@@ -853,13 +939,18 @@ def make_wifi_transfer_page(
                 if key == state["dest"]:
                     status.setText(f"Folder error: {e}")
                     return
-        label, _folder, _ = DESTINATIONS[state["dest"]]
         ip = _lan_ip()
         url_lab.setText(f"http://{ip}:{UPLOAD_PORT}")
         status.setText(
-            f"Open link · Get {label} / modem report\n"
-            f"Modem: http://{ip}:{UPLOAD_PORT}/diag/modem.txt"
+            f"SIP report on PC:\n"
+            f"http://{ip}:{UPLOAD_PORT}/diag/sip.txt"
         )
+        try:
+            from esp_handset import sip_call
+
+            sip_call.write_sip_report(run_doctor=False)
+        except Exception:
+            pass
 
         handler = _make_handler(lambda: state["dest"], signals)
         try:
@@ -881,10 +972,24 @@ def make_wifi_transfer_page(
         for b in dest_btns.values():
             b.setEnabled(False)
 
+    def _prep_busy(on: bool) -> None:
+        prep_sip_btn.setEnabled(not on)
+        prep_btn.setEnabled(not on)
+        prep_audio_btn.setEnabled(not on)
+
+    def prep_sip() -> None:
+        status.setText("Building SIP report…")
+        _prep_busy(True)
+
+        def work() -> None:
+            ok, msg = _refresh_sip_report()
+            signals.prep_done.emit(ok, f"sip:{msg}")
+
+        threading.Thread(target=work, daemon=True).start()
+
     def prep_modem() -> None:
         status.setText("Running modem doctor…")
-        prep_btn.setEnabled(False)
-        prep_audio_btn.setEnabled(False)
+        _prep_busy(True)
 
         def work() -> None:
             ok, msg = _refresh_modem_report()
@@ -894,8 +999,7 @@ def make_wifi_transfer_page(
 
     def prep_audio() -> None:
         status.setText("Running audio doctor…")
-        prep_btn.setEnabled(False)
-        prep_audio_btn.setEnabled(False)
+        _prep_busy(True)
 
         def work() -> None:
             ok, msg = _refresh_audio_report()
@@ -904,8 +1008,7 @@ def make_wifi_transfer_page(
         threading.Thread(target=work, daemon=True).start()
 
     def on_prep_done(ok: bool, msg: str) -> None:
-        prep_btn.setEnabled(True)
-        prep_audio_btn.setEnabled(True)
+        _prep_busy(False)
         if server_holder.get("httpd") is None:
             start_server()
         ip = _lan_ip()
@@ -915,9 +1018,14 @@ def make_wifi_transfer_page(
         if msg.startswith("audio:"):
             kind = "audio"
             show = msg[6:]
-        path_ok = (
-            _audio_report_path() if kind == "audio" else _modem_report_path()
-        )
+        elif msg.startswith("sip:"):
+            kind = "sip"
+            show = msg[4:]
+        path_ok = {
+            "audio": _audio_report_path,
+            "sip": _sip_report_path,
+            "modem": _modem_report_path,
+        }[kind]()
         if ok and path_ok is not None:
             status.setText(
                 f"{kind} report ready · on PC open:\n"
@@ -943,6 +1051,7 @@ def make_wifi_transfer_page(
     for key, b in dest_btns.items():
         b.clicked.connect(lambda _=False, k=key: set_dest(k))
     start_btn.clicked.connect(start_server)
+    prep_sip_btn.clicked.connect(prep_sip)
     prep_btn.clicked.connect(prep_modem)
     prep_audio_btn.clicked.connect(prep_audio)
     stop_btn.clicked.connect(

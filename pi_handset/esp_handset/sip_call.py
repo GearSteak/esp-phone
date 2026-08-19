@@ -11,6 +11,7 @@ import shutil
 import subprocess
 import threading
 import time
+import traceback
 from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
@@ -36,6 +37,7 @@ _DISC_TTL = 90.0
 _last_error = ""
 _last_register_raw = ""
 _LOG = Path.home() / ".esp-handset" / "sip-last.log"
+_REPORT = Path.home() / ".esp-handset" / "sip-doctor.txt"
 
 
 def last_error() -> str:
@@ -75,6 +77,157 @@ def recent_log(n: int = 14) -> str:
         return "\n".join(lines[-n:]) or "(empty log)"
     except OSError as e:
         return f"(log read error: {e})"
+
+
+def _redact(text: str) -> str:
+    s = text or ""
+    s = re.sub(r"(?im)^(\s*(?:SIP_PASS|passwd|password)\s*=\s*).+$", r"\1***", s)
+    s = re.sub(r"(?i)(register sip:\S+\s+\S+\s+)\S+", r"\1***", s)
+    return s
+
+
+def _cmd_out(cmd: List[str], timeout: float = 5.0, cap: int = 2500) -> str:
+    try:
+        r = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
+        )
+        out = ((r.stdout or "") + (r.stderr or "")).strip()
+        return out[:cap] if out else f"(exit {r.returncode}, empty)"
+    except Exception as e:
+        return f"(err {e})"
+
+
+def write_sip_report(*, extra: str = "", run_doctor: bool = False) -> Path:
+    """Redacted SIP dump for Transfer → sip-doctor.txt (safe to paste)."""
+    chunks: List[str] = [
+        f"=== digivice-sip-doctor {time.strftime('%Y-%m-%d %H:%M:%S')} ===",
+        f"host={_hostname()} user={os.environ.get('USER', '')}",
+        "",
+    ]
+    if extra:
+        chunks.append("--- extra ---")
+        chunks.append(_redact(extra).rstrip())
+        chunks.append("")
+    if run_doctor:
+        try:
+            chunks.append("--- doctor() ---")
+            chunks.append(_redact(doctor(save_report=False)).rstrip())
+            chunks.append("")
+        except Exception:
+            chunks.append(traceback.format_exc())
+            chunks.append("")
+    env = _sip_env()
+    chunks.append("--- sip.env (redacted) ---")
+    if not env:
+        chunks.append("(no sip.env / unreadable)")
+    else:
+        for k in (
+            "SIP_SERVER",
+            "SIP_USER",
+            "SIP_DISPLAY",
+            "SIP_DID",
+            "SIP_CC",
+            "SIP_PASS",
+        ):
+            if k not in env:
+                continue
+            v = "***" if k == "SIP_PASS" else env.get(k, "")
+            chunks.append(f"{k}={v}")
+    chunks.append("")
+    chunks.append("--- binaries ---")
+    chunks.append(f"linphonec: {_discover_linphonec_uncached() or 'MISSING'}")
+    chunks.append(f"linphonecsh: {_discover_csh_uncached() or 'MISSING'}")
+    lp = _discover_linphonec_uncached()
+    if lp:
+        chunks.append(_cmd_out([lp, "-v"], timeout=3.0, cap=800))
+        chunks.append(_cmd_out([lp, "--help"], timeout=3.0, cap=1200))
+    chunks.append("")
+    chunks.append("--- git / update ---")
+    for folder in (
+        Path.home() / "esp-phone",
+        Path("/opt/esp-handset"),
+        Path("/opt/esp-phone"),
+    ):
+        if (folder / ".git").exists() or (folder / "pi_handset").is_dir():
+            chunks.append(
+                f"{folder}: "
+                + _cmd_out(
+                    ["git", "-C", str(folder), "rev-parse", "--short", "HEAD"],
+                    timeout=3.0,
+                    cap=80,
+                )
+            )
+    for p in (
+        Path.home() / ".esp-handset" / "last_update",
+        Path("/etc/esp-handset/last_update"),
+    ):
+        try:
+            if p.is_file():
+                chunks.append(
+                    f"{p}: {p.read_text(encoding='utf-8', errors='replace').strip()[:200]}"
+                )
+        except OSError:
+            pass
+    chunks.append("")
+    chunks.append("--- aplay -l ---")
+    chunks.append(_cmd_out(["aplay", "-l"], timeout=4.0, cap=1500))
+    chunks.append("")
+    chunks.append("--- linphone processes ---")
+    chunks.append(_cmd_out(["pgrep", "-a", "linphone"], timeout=3.0, cap=800))
+    chunks.append("")
+    chunks.append("--- udp 5060 ---")
+    chunks.append(_cmd_out(["ss", "-ulnp"], timeout=3.0, cap=1500))
+    chunks.append("")
+    for label, path in (
+        ("linphonerc", _linphonerc_path()),
+        ("~/.linphonerc", Path.home() / ".linphonerc"),
+        ("sip-last.log", _LOG),
+        (
+            "linphone-ensure.log",
+            Path.home() / ".esp-handset" / "linphone-ensure.log",
+        ),
+        ("linphone.status", Path("/etc/esp-handset/linphone.status")),
+        ("linphonec.bin", Path("/etc/esp-handset/linphonec.bin")),
+    ):
+        chunks.append(f"--- {label} ({path}) ---")
+        try:
+            if path.is_file():
+                chunks.append(
+                    _redact(path.read_text(encoding="utf-8", errors="replace"))[-4000:]
+                )
+            else:
+                chunks.append("(missing)")
+        except OSError as e:
+            chunks.append(f"(read error: {e})")
+        chunks.append("")
+    if _last_error:
+        chunks.append(f"last_error={_last_error}")
+    body = "\n".join(chunks) + "\n"
+    for dest in (
+        _REPORT,
+        Path("/tmp/digivice-sip-doctor.txt"),
+        Path.home() / ".esp-handset" / "inbox" / "sip-doctor.txt",
+    ):
+        try:
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_text(body, encoding="utf-8")
+        except OSError as e:
+            _log(f"sip report write {dest}: {e}")
+    _log(f"sip report → {_REPORT}")
+    return _REPORT
+
+
+def _hostname() -> str:
+    try:
+        import socket as _socket
+
+        return _socket.gethostname()
+    except Exception:
+        return "?"
 
 
 def _exists(path: str) -> bool:
@@ -416,7 +569,13 @@ def _find_via_find(name: str) -> Optional[str]:
         return None
     for line in (r.stdout or "").splitlines():
         line = line.strip()
-        if line and _exists(line) and not _is_csh_wrapper(line):
+        if not line or not _exists(line):
+            continue
+        if name == "linphonec":
+            if _is_linphonec_cli(line):
+                return line
+            continue
+        if not _is_csh_wrapper(line):
             return line
     return None
 
@@ -800,6 +959,34 @@ class LinphoneEngine:
             env=env,
         )
 
+    def _drain(self, limit: int = 2000) -> str:
+        buf = b""
+        fd = self._pty
+        if fd is not None:
+            end = time.time() + 0.4
+            while time.time() < end:
+                try:
+                    chunk = os.read(fd, 1024)
+                except BlockingIOError:
+                    time.sleep(0.04)
+                    continue
+                except OSError:
+                    break
+                if not chunk:
+                    break
+                buf += chunk
+            return buf.decode("utf-8", "replace")[-limit:]
+        proc = self.proc
+        if proc is not None and proc.stdout is not None:
+            try:
+                raw = proc.stdout.read()
+            except Exception:
+                raw = ""
+            if isinstance(raw, bytes):
+                return raw.decode("utf-8", "replace")[-limit:]
+            return str(raw or "")[-limit:]
+        return ""
+
     def start(self) -> str:
         with _run_lock:
             return self._start_inner()
@@ -833,21 +1020,41 @@ class LinphoneEngine:
         if not self.bin:
             return _set_error("linphonec not found")
         _kill_stray_linphone()
-        args = [self.bin, "-c", str(rc)]
+        attempts = (
+            [self.bin, "-c", str(rc)],
+            [self.bin, f"--config={rc}"],
+            [self.bin, "--config", str(rc)],
+        )
         last_err = ""
-        _log(f"start {' '.join(args)} sound={_alsa_usb_label()}")
-        try:
-            self._spawn(args)
-        except Exception as e:
-            last_err = str(e)
-            self.proc = None
-        time.sleep(0.5)
-        if self.proc is None or self.proc.poll() is not None:
-            leftover = last_err
-            _log(f"linphonec died immediately: {leftover!r}")
-            self.proc = None
-            self._pty = None
-            return _set_error(f"linphonec failed to start ({(leftover or 'exit')[:80]})")
+        started = False
+        for args in attempts:
+            _log(f"start {' '.join(args)} sound={_alsa_usb_label()}")
+            try:
+                self._spawn(args)
+            except Exception as e:
+                last_err = str(e)
+                self.proc = None
+                self._pty = None
+                _log(f"spawn failed: {e}")
+                continue
+            time.sleep(0.55)
+            if self.proc is not None and self.proc.poll() is None:
+                started = True
+                break
+            leftover = self._drain(800) or last_err
+            code = self.proc.poll() if self.proc is not None else "?"
+            _log(f"linphonec died immediately rc={code} {leftover[:240]!r}")
+            last_err = leftover or last_err or f"exit {code}"
+            self.stop()
+            time.sleep(0.2)
+        if not started:
+            try:
+                write_sip_report(extra=f"linphonec failed to start: {last_err[:400]}")
+            except Exception:
+                pass
+            return _set_error(
+                f"linphonec failed to start ({(last_err or 'exit')[:80]})"
+            )
         self.phase = "idle"
         self.registered = False
         self._rc_key = rc_key
@@ -859,8 +1066,14 @@ class LinphoneEngine:
         if not self.ensure_registered(10.0, send_register=False):
             if not self.ensure_registered(14.0, send_register=True):
                 if not self.alive():
-                    return _set_error("linphonec exited during register")
-                return _set_error("SIP not registered — check Wi‑Fi / Accounts")
+                    err = _set_error("linphonec exited during register")
+                else:
+                    err = _set_error("SIP not registered — check Wi‑Fi / Accounts")
+                try:
+                    write_sip_report(extra=err + "\n" + recent_log(20))
+                except Exception:
+                    pass
+                return err
         with self._lock:
             self.phase = "idle"
         _set_error("")
@@ -1142,6 +1355,10 @@ def dial_ex(number: str) -> Tuple[bool, str]:
         return _dial_ex_inner(number)
     except Exception as e:
         _log(f"dial_ex crashed: {e}")
+        try:
+            write_sip_report(extra=f"dial_ex crashed:\n{traceback.format_exc()}")
+        except Exception:
+            pass
         return False, _set_error(f"Dial failed: {e}")
 
 
@@ -1170,6 +1387,10 @@ def _dial_ex_inner(number: str) -> Tuple[bool, str]:
     if _discover_linphonec():
         hint = _engine().start()
         if hint:
+            try:
+                write_sip_report(extra=f"dial aborted: {hint}")
+            except Exception:
+                pass
             return False, hint
         eng = _engine()
         if not eng.alive() or not eng.registered:
@@ -1301,7 +1522,7 @@ def _install_voip_bg() -> None:
         _bust_voip_cache()
 
 
-def doctor() -> str:
+def doctor(*, save_report: bool = True) -> str:
     """Start linphonec if needed and report whether Zadarma REGISTER succeeded."""
     env = _sip_env()
     user = (env.get("SIP_USER") or "").strip() or "?"
@@ -1370,7 +1591,13 @@ def doctor() -> str:
     lines.insert(0, f"RESULT: {result}")
     lines.append("--- log ---")
     lines.append(recent_log(10))
-    return "\n".join(lines)
+    text = "\n".join(lines)
+    if save_report:
+        try:
+            write_sip_report(extra=text)
+        except Exception:
+            pass
+    return text
 
 
 def remote_number(remote: str) -> str:

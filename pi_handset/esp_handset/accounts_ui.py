@@ -245,14 +245,23 @@ def make_sip_account_page(on_back: Callable[[], None]) -> QWidget:
             pass
 
         def work() -> None:
+            import traceback as _tb
+
             try:
                 from esp_handset import sip_call
 
                 bridge.progress.emit("Installing VoIP if needed…")
                 sip_call.prepare_voip(180.0)
+                bridge.progress.emit("Registering with SIP…")
                 report = sip_call.doctor()
             except Exception as e:
-                report = f"RESULT: TEST FAILED\n{e}"
+                report = f"RESULT: TEST FAILED\n{e}\n\n{_tb.format_exc()}"
+                try:
+                    from esp_handset import sip_call
+
+                    sip_call.write_sip_report(extra=report)
+                except Exception:
+                    pass
             if gen == testing["gen"]:
                 bridge.done.emit(report)
 
