@@ -60,6 +60,7 @@ Heltec SW-520D path is gone. Wire a **tilt / vibration switch** (SW-520D or simi
 
 - Steps: walk / shake closes the switch; Digivice counts edges while the UI is running.
 - Piezo: software square-wave for alarms, timer, SMS/call chirps until USB speaker is sorted. Test: **Settings → Debug → Sound → PIEZO**.
+  Header **pin 15** (BCM **22**). Do **not** use header pin 22 — that is LCD DC.
 - Override pins: `DIGI_STEPS_BCM`, `DIGI_BUZZER_BCM` (set to `off` to disable).
 
 Active buzzers (with onboard oscillator) will only click on/off — use a **passive** element for tones.
