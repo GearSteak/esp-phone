@@ -1241,14 +1241,23 @@ class UnoBoard(QWidget):
     """108-card Uno: you + 3 CPUs. Reverse flips direction; Skip/+2/+4 hit next."""
 
     NAMES = ("You", "CPU1", "CPU2", "CPU3")
+    _THINK_MS = 1100
+    _FLY_PLAY_MS = 340
+    _FLY_DEAL_MS = 220
+    _FLY_DRAW_MS = 280
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setMinimumHeight(180)
         self.setFocusPolicy(Qt.StrongFocus)
+        self._gen = 0
+        self._fly = None
         self._cpu_timer = QTimer(self)
         self._cpu_timer.setSingleShot(True)
         self._cpu_timer.timeout.connect(self._cpu_play)
+        self._anim_timer = QTimer(self)
+        self._anim_timer.setInterval(33)
+        self._anim_timer.timeout.connect(self._tick_fly)
         self.reset()
 
     @property
@@ -1260,16 +1269,16 @@ class UnoBoard(QWidget):
         return self.turn == 0 and not self.over
 
     def reset(self):
+        self._gen += 1
         self._cpu_timer.stop()
+        self._anim_timer.stop()
+        self._fly = None
         deck = _uno_deck()
         random.shuffle(deck)
-        self.hands = [[deck.pop() for _ in range(7)] for _ in range(4)]
-        while deck and deck[-1][1] == "F":
-            random.shuffle(deck)
-        self.pile = [deck.pop()]
+        self.hands = [[] for _ in range(4)]
         self.deck = deck
-        top_c, top_f = self.pile[-1]
-        self.color = top_c if top_c in _UNO_COLORS else "R"
+        self.pile = []
+        self.color = "R"
         self.turn = 0
         self.direction = 1
         self.sel = 0
@@ -1277,7 +1286,145 @@ class UnoBoard(QWidget):
         self.picking = False
         self.drew = None
         self.over = ""
-        self.message = ""
+        self.message = "Dealing…"
+        self.update()
+        self._deal_step(0)
+
+    def _alive(self, gen: int) -> bool:
+        return gen == self._gen
+
+    def _later(self, ms: int, fn) -> None:
+        gen = self._gen
+        QTimer.singleShot(ms, lambda: fn() if self._alive(gen) else None)
+
+    def _busy(self) -> bool:
+        return self._fly is not None
+
+    def _geom(self):
+        r = self.rect()
+        slot_w = max(1, r.width() // 3)
+        cpus = [QRect(2 + i * slot_w, 4, slot_w - 4, 22) for i in range(3)]
+        cw, ch = 38, 52
+        mid = r.width() // 2
+        deck = QRect(mid - cw - 8, 28, cw, ch)
+        pile = QRect(mid + 6, 28, cw, ch)
+        return r, cpus, deck, pile, cw, ch
+
+    def _deck_pt(self) -> QPoint:
+        _r, _cpus, deck, _pile, _cw, _ch = self._geom()
+        return QPoint(deck.x(), deck.y())
+
+    def _pile_pt(self) -> QPoint:
+        _r, _cpus, _deck, pile, _cw, _ch = self._geom()
+        return QPoint(pile.x(), pile.y())
+
+    def _seat_pt(self, seat: int) -> QPoint:
+        r, cpus, _deck, _pile, cw, ch = self._geom()
+        if seat == 0:
+            n = max(1, len(self.hands[0]) + 1)
+            slot = min(36, max(16, (r.width() - 10) // n))
+            hw = max(14, slot - 3)
+            hh = int(hw * 1.4)
+            total = slot * n
+            x0 = (r.width() - total) // 2
+            i = len(self.hands[0])
+            return QPoint(x0 + i * slot, max(108, r.height() - hh - 6))
+        box = cpus[seat - 1]
+        return QPoint(box.center().x() - cw // 4, box.bottom() + 2)
+
+    def _hand_card_pt(self, idx: int) -> QPoint:
+        r, _cpus, _deck, _pile, _cw, _ch = self._geom()
+        n = max(1, len(self.hands[0]))
+        slot = min(36, max(16, (r.width() - 10) // n))
+        hw = max(14, slot - 3)
+        hh = int(hw * 1.4)
+        total = slot * n
+        x0 = (r.width() - total) // 2
+        return QPoint(x0 + idx * slot, max(108, r.height() - hh - 6))
+
+    def _start_fly(self, card, start: QPoint, end: QPoint, *, face: bool, dur: int, done) -> None:
+        self._fly = {
+            "card": card,
+            "sx": start.x(),
+            "sy": start.y(),
+            "ex": end.x(),
+            "ey": end.y(),
+            "t": 0,
+            "dur": max(90, int(dur)),
+            "face": face,
+            "done": done,
+            "w": 30,
+            "h": 42,
+        }
+        if not self._anim_timer.isActive():
+            self._anim_timer.start()
+        self.update()
+
+    def _tick_fly(self) -> None:
+        f = self._fly
+        if not f:
+            self._anim_timer.stop()
+            return
+        f["t"] += self._anim_timer.interval()
+        if f["t"] >= f["dur"]:
+            done = f["done"]
+            self._fly = None
+            self._anim_timer.stop()
+            if done:
+                done()
+            self.update()
+            return
+        self.update()
+
+    def _deal_step(self, n: int) -> None:
+        if n < 28:
+            seat = n % 4
+            card = self._take()
+            if card is None:
+                self._flip_upcard()
+                return
+            who = self.NAMES[seat]
+            self.message = f"Dealing to {who}…"
+            self._start_fly(
+                card,
+                self._deck_pt(),
+                self._seat_pt(seat),
+                face=(seat == 0),
+                dur=self._FLY_DEAL_MS,
+                done=lambda c=card, s=seat, k=n: self._dealt(c, s, k),
+            )
+            return
+        self._flip_upcard()
+
+    def _dealt(self, card, seat: int, n: int) -> None:
+        self.hands[seat].append(card)
+        if seat == 0:
+            self.sel = len(self.hands[0]) - 1
+        self.update()
+        self._deal_step(n + 1)
+
+    def _flip_upcard(self) -> None:
+        while self.deck and self.deck[-1][1] == "F":
+            random.shuffle(self.deck)
+        card = self._take()
+        if card is None:
+            self.message = "No cards"
+            self.update()
+            return
+        self.message = "Flipping the discard…"
+        self._start_fly(
+            card,
+            self._deck_pt(),
+            self._pile_pt(),
+            face=True,
+            dur=self._FLY_PLAY_MS,
+            done=lambda c=card: self._upcard_landed(c),
+        )
+
+    def _upcard_landed(self, card) -> None:
+        self.pile.append(card)
+        top_c, _f = card
+        self.color = top_c if top_c in _UNO_COLORS else "R"
         self._apply_upcard()
         if not self.message:
             self.message = "Match color / number / type"
@@ -1302,7 +1449,7 @@ class UnoBoard(QWidget):
         if "UNO" not in (self.message or ""):
             self.message = f"{self.NAMES[self.turn]} thinking…"
         self.update()
-        self._cpu_timer.start(420)
+        self._cpu_timer.start(self._THINK_MS)
 
     def _apply_upcard(self):
         _c, f = self.pile[-1]
@@ -1314,22 +1461,21 @@ class UnoBoard(QWidget):
         if f == "S":
             self.turn = 1
             self.message = "Start SKIP · CPU1 first"
-            self._cpu_timer.start(450)
+            self._later(self._THINK_MS, self._cpu_play)
             return
         if f == "R":
             self.direction = -1
             self.message = "Start REV · play goes CPU3"
             self.turn = 3
-            self._cpu_timer.start(450)
+            self._later(self._THINK_MS, self._cpu_play)
             return
         if f == "D":
-            self._give(self.hands[0], 2)
             self.turn = 1
-            self.message = "Start +2 · you draw 2, CPU1 first"
-            self._cpu_timer.start(450)
+            self.message = "Start +2 · you draw 2"
+            self._deal_penalty(0, 2, lambda: self._later(self._THINK_MS, self._cpu_play))
 
     def _top(self):
-        return self.pile[-1]
+        return self.pile[-1] if self.pile else ("R", "0")
 
     def _legal(self, card, hand=None) -> bool:
         hand = self.hands[self.turn] if hand is None else hand
@@ -1340,6 +1486,8 @@ class UnoBoard(QWidget):
             return not any(x[0] == self.color for x in hand if x[0] in _UNO_COLORS)
         if c == self.color:
             return True
+        if not self.pile:
+            return False
         return f == self._top()[1]
 
     def _refill(self) -> None:
@@ -1365,6 +1513,34 @@ class UnoBoard(QWidget):
             if card is None:
                 break
             who.append(card)
+
+    def _deal_penalty(self, seat: int, n: int, then) -> None:
+        def land(card, i: int) -> None:
+            self.hands[seat].append(card)
+            if seat == 0:
+                self.sel = len(self.hands[0]) - 1
+            self.update()
+            go(i + 1)
+
+        def go(i: int) -> None:
+            if i >= n:
+                then()
+                return
+            card = self._take()
+            if card is None:
+                then()
+                return
+            self.message = f"{self.NAMES[seat]} draws {i + 1}/{n}"
+            self._start_fly(
+                card,
+                self._deck_pt(),
+                self._seat_pt(seat),
+                face=(seat == 0),
+                dur=self._FLY_DRAW_MS,
+                done=lambda c=card, k=i: land(c, k),
+            )
+
+        go(0)
 
     def _uno_check(self, seat: int) -> None:
         if len(self.hands[seat]) == 1:
@@ -1392,34 +1568,32 @@ class UnoBoard(QWidget):
             self.color = self._cpu_color(seat)
             if f == "F":
                 nxt = self._peek(1)
-                self._give(self.hands[nxt], 4)
                 self.message = (
                     f"{self.NAMES[seat]} +4 {_uno_color_name(self.color)} · "
                     f"{self.NAMES[nxt]} draws 4"
                 )
-                self._advance(2)
+                self._deal_penalty(nxt, 4, lambda: self._advance(2))
                 return
             self.message = f"{self.NAMES[seat]} wild · {_uno_color_name(self.color)}"
-            self._advance(1)
+            self._later(400, lambda: self._advance(1))
             return
         if f == "R":
             self.direction *= -1
             arrow = "→" if self.direction > 0 else "←"
             self.message = f"REVERSE {arrow}"
-            self._advance(1)
+            self._later(500, lambda: self._advance(1))
             return
         if f == "S":
             nxt = self._peek(1)
             self.message = f"SKIP {self.NAMES[nxt]}"
-            self._advance(2)
+            self._later(500, lambda: self._advance(2))
             return
         if f == "D":
             nxt = self._peek(1)
-            self._give(self.hands[nxt], 2)
             self.message = f"+2 {self.NAMES[nxt]}"
-            self._advance(2)
+            self._deal_penalty(nxt, 2, lambda: self._advance(2))
             return
-        self._advance(1)
+        self._later(280, lambda: self._advance(1))
 
     def _start_color_pick(self) -> None:
         self.picking = True
@@ -1428,6 +1602,8 @@ class UnoBoard(QWidget):
         self.update()
 
     def _finish_color_pick(self) -> None:
+        if self._busy():
+            return
         self.color = _UNO_COLORS[self.color_i]
         self.picking = False
         face = self._top()[1]
@@ -1438,15 +1614,33 @@ class UnoBoard(QWidget):
             return
         if face == "F":
             nxt = self._peek(1)
-            self._give(self.hands[nxt], 4)
             self.message = f"{_uno_color_name(self.color)} · {self.NAMES[nxt]} draws 4"
-            self._advance(2)
+            self._deal_penalty(nxt, 4, lambda: self._advance(2))
             return
         self.message = f"Color {_uno_color_name(self.color)}"
-        self._advance(1)
+        self._later(280, lambda: self._advance(1))
+
+    def _play_landed(self, seat: int, card) -> None:
+        self.pile.append(card)
+        c, _f = card
+        if c in _UNO_COLORS:
+            self.color = c
+        self.update()
+        self._resolve_play(seat, card)
+
+    def _send_play(self, seat: int, card, origin: QPoint) -> None:
+        self.message = f"{self.NAMES[seat]} plays {_uno_label(card[1])}"
+        self._start_fly(
+            card,
+            origin,
+            self._pile_pt(),
+            face=True,
+            dur=self._FLY_PLAY_MS,
+            done=lambda: self._play_landed(seat, card),
+        )
 
     def draw_card(self):
-        if self.over or self.picking or self.turn != 0:
+        if self.over or self.picking or self.turn != 0 or self._busy():
             return
         if self.drew is not None:
             self.message = "Passed"
@@ -1457,21 +1651,31 @@ class UnoBoard(QWidget):
             self.message = "Deck empty"
             self.update()
             return
+        self.message = "Drawing…"
+        self._start_fly(
+            card,
+            self._deck_pt(),
+            self._seat_pt(0),
+            face=True,
+            dur=self._FLY_DRAW_MS,
+            done=lambda c=card: self._player_drew(c),
+        )
+
+    def _player_drew(self, card) -> None:
         self.hands[0].append(card)
         self.sel = len(self.hands[0]) - 1
         self.drew = card
         if self._legal(card, self.hands[0]):
             self.message = "Drew — Confirm to play it, ↓ to pass"
-        else:
-            self.message = "Drew, no play"
-            self.drew = None
             self.update()
-            self._advance(1)
             return
+        self.message = "Drew, no play"
+        self.drew = None
         self.update()
+        self._later(450, lambda: self._advance(1))
 
     def play_index(self, idx: int):
-        if self.over or self.picking or self.turn != 0:
+        if self.over or self.picking or self.turn != 0 or self._busy():
             return
         h = self.hands[0]
         if idx < 0 or idx >= len(h):
@@ -1485,11 +1689,11 @@ class UnoBoard(QWidget):
             self.message = "Illegal · match color/type or draw"
             self.update()
             return
+        origin = self._hand_card_pt(idx)
         h.pop(idx)
-        self.pile.append(card)
         self.sel = min(self.sel, max(0, len(h) - 1))
         self.drew = None
-        self._resolve_play(0, card)
+        self._send_play(0, card, origin)
 
     def _cpu_color(self, seat: int) -> str:
         counts = {c: 0 for c in _UNO_COLORS}
@@ -1499,7 +1703,7 @@ class UnoBoard(QWidget):
         return max(counts, key=counts.get)
 
     def _cpu_play(self):
-        if self.over or self.turn == 0:
+        if self.over or self.turn == 0 or self._busy():
             return
         seat = self.turn
         h = self.hands[seat]
@@ -1510,32 +1714,50 @@ class UnoBoard(QWidget):
         )
         if ranked:
             card = h.pop(ranked[0])
-            self.pile.append(card)
-            c, f = card
-            if c in _UNO_COLORS:
-                self.color = c
-            self._resolve_play(seat, card)
+            self._send_play(seat, card, self._seat_pt(seat))
             return
         card = self._take()
         if card is None:
             self.message = f"{self.NAMES[seat]} can't draw"
-            self._advance(1)
+            self._later(400, lambda: self._advance(1))
             return
+        self.message = f"{self.NAMES[seat]} draws"
+        self._start_fly(
+            card,
+            self._deck_pt(),
+            self._seat_pt(seat),
+            face=False,
+            dur=self._FLY_DRAW_MS,
+            done=lambda c=card, s=seat: self._cpu_drew(s, c),
+        )
+
+    def _cpu_drew(self, seat: int, card) -> None:
+        h = self.hands[seat]
         h.append(card)
+        self.update()
         if self._legal(card, h):
-            h.pop()
-            self.pile.append(card)
-            c, f = card
-            if c in _UNO_COLORS:
-                self.color = c
-            self.message = f"{self.NAMES[seat]} drew and played"
-            self._resolve_play(seat, card)
+            self.message = f"{self.NAMES[seat]} draws and plays"
+            self._later(
+                420,
+                lambda: self._cpu_play_drawn(seat, card),
+            )
             return
         self.message = f"{self.NAMES[seat]} drew"
-        self._advance(1)
+        self._later(450, lambda: self._advance(1))
+
+    def _cpu_play_drawn(self, seat: int, card) -> None:
+        if self.over or self.turn != seat:
+            return
+        h = self.hands[seat]
+        if not h or h[-1] is not card:
+            return
+        h.pop()
+        self._send_play(seat, card, self._seat_pt(seat))
 
     def digi_nav(self, dx: int, dy: int) -> bool:
         if self.over:
+            return bool(dx or dy)
+        if self._busy():
             return bool(dx or dy)
         if self.picking:
             if dx:
@@ -1558,6 +1780,8 @@ class UnoBoard(QWidget):
         if self.over:
             self.reset()
             return
+        if self._busy():
+            return
         if self.picking:
             self._finish_color_pick()
             return
@@ -1575,13 +1799,11 @@ class UnoBoard(QWidget):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing, True)
         p.setRenderHint(QPainter.SmoothPixmapTransform, True)
-        r = self.rect()
+        r, cpus, deck, pile, cw, ch = self._geom()
         accent = QColor("#ff6b6b")
         _fill_crt(p, r, accent)
-        # Three CPU seats across the top
-        slot_w = r.width() // 3
         for i, seat in enumerate((1, 2, 3)):
-            box = QRect(2 + i * slot_w, 4, slot_w - 4, 22)
+            box = cpus[i]
             on = self.turn == seat and not self.over
             p.setBrush(QColor(40, 20, 20, 180) if on else QColor(16, 20, 28, 160))
             p.setPen(QPen(_GOLD if on else _EDGE, 2 if on else 1))
@@ -1590,23 +1812,40 @@ class UnoBoard(QWidget):
             p.setFont(_font(9, on))
             p.drawText(box, Qt.AlignCenter, f"{self.NAMES[seat]} {len(self.hands[seat])}")
 
-        cw, ch = 40, 54
-        self._card(p, r.width() // 2 - cw // 2, 28, cw, ch, self._top(), big=True)
-        pip = QRect(r.width() // 2 + cw // 2 + 4, 42, 12, 12)
+        if self.deck:
+            self._card(p, deck.x(), deck.y(), cw, ch, ("W", "W"), back=True, big=True)
+        else:
+            p.setPen(_MUTED)
+            p.setBrush(Qt.NoBrush)
+            p.drawRoundedRect(deck, 6, 6)
+        p.setPen(_MUTED)
+        p.setFont(_font(8))
+        p.drawText(
+            QRect(deck.x(), deck.bottom() + 1, cw, 12),
+            Qt.AlignCenter,
+            f"{len(self.deck)}",
+        )
+        if self.pile:
+            self._card(p, pile.x(), pile.y(), cw, ch, self.pile[-1], big=True)
+        pip = QRect(pile.right() + 4, pile.y() + 16, 12, 12)
         p.setBrush(QColor(_UNO_HEX.get(self.color, "#888")))
         p.setPen(QPen(_INK, 1))
         p.drawEllipse(pip)
         arrow = "→" if self.direction > 0 else "←"
-        p.setPen(_MUTED)
-        p.setFont(_font(9))
+        p.setPen(_GOLD if self.turn == 0 and not self.over else _MUTED)
+        p.setFont(_font(8, True))
         p.drawText(
-            QRect(4, 30, r.width() // 2 - cw // 2 - 6, 40),
+            QRect(4, deck.bottom() + 1, max(8, deck.x() - 6), 12),
             Qt.AlignLeft | Qt.AlignVCenter,
             f"{arrow} You {len(self.hands[0])}",
         )
         p.setPen(_INK if self.turn == 0 and not self.over else _GOLD)
         p.setFont(_font(9, True))
-        p.drawText(QRect(4, 84, r.width() - 8, 24), Qt.AlignCenter | Qt.TextWordWrap, self.message)
+        p.drawText(
+            QRect(4, pile.bottom() + 14, r.width() - 8, 22),
+            Qt.AlignCenter | Qt.TextWordWrap,
+            self.message,
+        )
 
         if self.picking:
             box_w = 28
@@ -1619,30 +1858,59 @@ class UnoBoard(QWidget):
                 p.setBrush(QColor(_UNO_HEX[c]))
                 p.setPen(QPen(_GOLD if i == self.color_i else QColor("#101820"), 3 if i == self.color_i else 1))
                 p.drawRoundedRect(rr, 6, 6)
-            return
+        else:
+            n = max(1, len(self.hands[0]))
+            slot = min(36, max(16, (r.width() - 10) // n))
+            hw, hh = max(14, slot - 3), int(max(14, slot - 3) * 1.4)
+            total = slot * n
+            x0 = (r.width() - total) // 2
+            hand_y = max(108, r.height() - hh - 6)
+            for i, card in enumerate(self.hands[0]):
+                self._card(
+                    p,
+                    x0 + i * slot,
+                    hand_y,
+                    hw,
+                    hh,
+                    card,
+                    selected=(i == self.sel),
+                    legal=(not self.pile) or self._legal(card, self.hands[0]),
+                )
 
-        n = max(1, len(self.hands[0]))
-        slot = min(36, max(16, (r.width() - 10) // n))
-        hw, hh = max(14, slot - 3), int(max(14, slot - 3) * 1.4)
-        total = slot * n
-        x0 = (r.width() - total) // 2
-        hand_y = max(108, r.height() - hh - 6)
-        for i, card in enumerate(self.hands[0]):
+        f = self._fly
+        if f:
+            dur = max(1, f["dur"])
+            u = min(1.0, f["t"] / dur)
+            u = u * u * (3.0 - 2.0 * u)
+            x = int(f["sx"] + (f["ex"] - f["sx"]) * u)
+            y = int(f["sy"] + (f["ey"] - f["sy"]) * u)
             self._card(
                 p,
-                x0 + i * slot,
-                hand_y,
-                hw,
-                hh,
-                card,
-                selected=(i == self.sel),
-                legal=self._legal(card, self.hands[0]),
+                x,
+                y,
+                f["w"],
+                f["h"],
+                f["card"],
+                big=True,
+                back=not f["face"],
             )
 
-
-    def _card(self, p, x, y, w, h, card, selected=False, big=False, legal=True):
-        col, face = card
+    def _card(self, p, x, y, w, h, card, selected=False, big=False, legal=True, back=False):
         rect = QRect(x, y, w, h)
+        if back:
+            p.setOpacity(1.0)
+            p.setBrush(QColor("#7a1020"))
+            p.setPen(QPen(QColor("#ffd56a"), 1))
+            p.drawRoundedRect(rect, 6, 6)
+            inner = rect.adjusted(3, 4, -3, -4)
+            p.setBrush(QColor("#4a0c16"))
+            p.setPen(Qt.NoPen)
+            p.drawRoundedRect(inner, 4, 4)
+            p.setPen(QColor("#ffd56a"))
+            p.setFont(_font(11 if big else 8, True))
+            p.drawText(rect, Qt.AlignCenter, "U")
+            return
+        col, face = card
         p.setOpacity(1.0 if legal or big else 0.4)
         if col == "W":
             p.setBrush(QColor("#1a1a1a"))
@@ -1859,9 +2127,9 @@ def make_uno(on_back):
         "UNO",
         "You + 3 CPUs · Reverse · Skip",
         QColor("#ff6b6b"),
-        "You vs CPU1, CPU2, CPU3. ←→ pick, Confirm plays, ↓ draws. "
-        "Skip and +2/+4 hit the next seat. Reverse flips the table. "
-        "Wild/+4: pick a color. +4 only with no matching color. Empty hand wins.",
+        "You vs CPU1, CPU2, CPU3. Cards fly from the draw pile into hands. "
+        "←→ pick, Confirm plays, ↓ draws. Skip and +2/+4 hit the next seat. "
+        "Reverse flips the table. Wild/+4: pick a color. Empty hand wins.",
         board,
         [draw, play, anew],
         on_back,
