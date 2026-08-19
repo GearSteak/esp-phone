@@ -58,18 +58,27 @@ TOOLS_APPS = [
 ]
 
 SETTINGS_APPS = [
-    AppEntry("set_update", "Update", "Pull · install · restart", "↓"),
-    AppEntry("set_mouse", "Mouse", "Desktop pointer speed", "⇔"),
-    AppEntry("set_debug", "Debug", "Sound · alerts · tests", "⚒"),
-    AppEntry("set_appearance", "Look", "Wallpaper", "▣"),
-    AppEntry("set_orientation", "Screen", "Rotation · flip", "↻"),
-    AppEntry("set_security", "Security", "PIN", "🔒"),
-    AppEntry("set_network", "Network", "Wi‑Fi / LTE", "⌁"),
+    AppEntry("set_system", "System", "Update · Power · Linux", "⏻"),
+    AppEntry("set_display", "Display", "Look · Screen · Mouse", "▣"),
+    AppEntry("set_network", "Network", "Wi-Fi / LTE", "⌁"),
     AppEntry("set_accounts", "Accounts", "SIP · Email · AI", "@"),
+    AppEntry("set_security", "Security", "PIN", "🔒"),
+    AppEntry("set_debug", "Debug", "Sound · alerts · tests", "⚒"),
+    AppEntry("help", "Help", "Joystick map", "?"),
+]
+
+# Settings → System / Display hubs
+SYSTEM_APPS = [
+    AppEntry("set_update", "Update", "Pull · install · restart", "↓"),
     AppEntry("set_power", "Power", "Off · Restart", "⏻"),
     AppEntry("set_about", "About", "", "i"),
-    AppEntry("help", "Help", "Joystick map", "?"),
     AppEntry("linux", "Linux", "Full desktop", "▤"),
+]
+
+DISPLAY_APPS = [
+    AppEntry("set_appearance", "Look", "Wallpaper", "▣"),
+    AppEntry("set_orientation", "Screen", "Rotation · flip", "↻"),
+    AppEntry("set_mouse", "Mouse", "Desktop pointer speed", "⇔"),
 ]
 
 # Settings → Accounts hub
@@ -122,6 +131,8 @@ FOLDER_MAP = {
     "settings": ("folder_settings", "Settings", SETTINGS_APPS),
     "media": ("folder_media", "Media", MEDIA_APPS),
     "games": ("folder_games", "Games", GAMES_APPS),
+    "set_system": ("set_system", "System", SYSTEM_APPS),
+    "set_display": ("set_display", "Display", DISPLAY_APPS),
     "set_accounts": ("set_accounts", "Accounts", ACCOUNTS_APPS),
     "set_debug": ("set_debug", "Debug", DEBUG_APPS),
 }

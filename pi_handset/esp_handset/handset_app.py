@@ -271,6 +271,8 @@ from esp_handset.shell import (  # noqa: E402
     MEDIA_APPS,
     SETTINGS_APPS,
     SMS_APPS,
+    SYSTEM_APPS,
+    DISPLAY_APPS,
     TOOLS_APPS,
     PhoneShell,
 )
@@ -499,6 +501,14 @@ def build_app(bridge: Optional[EspBridge], modem: Optional[Sim7600]) -> PhoneShe
     shell.register_page(
         "set_debug",
         shell.build_folder_keyed("set_debug", "Debug", DEBUG_APPS),
+    )
+    shell.register_page(
+        "set_system",
+        shell.build_folder_keyed("set_system", "System", SYSTEM_APPS),
+    )
+    shell.register_page(
+        "set_display",
+        shell.build_folder_keyed("set_display", "Display", DISPLAY_APPS),
     )
     shell.register_page("dbg_sound", pages.make_debug_page(back))
     shell.register_page(

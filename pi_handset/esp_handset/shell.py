@@ -39,6 +39,8 @@ from esp_handset.shell_data import (
     SETTINGS_APPS,
     SETUP_APPS,
     SMS_APPS,
+    SYSTEM_APPS,
+    DISPLAY_APPS,
     TOOLS_APPS,
     AppEntry,
 )
@@ -68,6 +70,8 @@ __all__ = [
     "GAMES_APPS",
     "DEBUG_APPS",
     "ACCOUNTS_APPS",
+    "SYSTEM_APPS",
+    "DISPLAY_APPS",
 ]
 
 
