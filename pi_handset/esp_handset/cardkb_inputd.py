@@ -11,13 +11,15 @@ Poll /dev/i2c-1 @ 0x5F. Inject via uinput so keys work on Wayland
 (labwc / Pi OS Trixie) as well as X11. Do not use xdotool here —
 Xwayland "succeeds" then types into nothing native.
 
-Digivice itself reads CardKB in-process (cardkb_qt) and stops this daemon.
+Keep this process alive from boot (before labwc). Digivice only pauses
+I2C via /run/digivice/cardkb.pause — never systemctl stop this unit.
 """
 
 from __future__ import annotations
 
 import argparse
 import fcntl
+import os
 import subprocess
 import sys
 import time
@@ -29,7 +31,10 @@ I2C_TIMEOUT = 0x0702  # linux/i2c-dev.h — units of 10 ms
 # Digivice writes this so we release I2C 0x5F. Do NOT stop this process —
 # destroying the uinput keyboard after labwc has started means Wayland
 # never types CardKB on the Linux desktop.
-PAUSE = Path("/tmp/digivice-cardkb.pause")
+# /run/digivice has no sticky bit (unlike /tmp), so gear can delete a
+# pause file root created.
+PAUSE = Path("/run/digivice/cardkb.pause")
+PAUSE_LEGACY = Path("/tmp/digivice-cardkb.pause")
 
 ARROW = {
     0xB4: "LEFT",
@@ -89,6 +94,7 @@ def _attach_uinput_to_seat(name: str) -> None:
             continue
         if got != name:
             continue
+        node = Path("/dev/input") / ev.name
         log(f"uinput {ev.name} name={name} — udev add for seat")
         subprocess.run(
             ["udevadm", "trigger", "--action=add", str(ev)],
@@ -102,15 +108,34 @@ def _attach_uinput_to_seat(name: str) -> None:
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
+        if node.is_char_device():
+            subprocess.run(
+                ["loginctl", "attach", "seat0", str(node)],
+                check=False,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
         return
     log(f"WARN: no sysfs event node for {name} yet")
 
 
-def _paused() -> bool:
+def _ensure_pause_dir() -> None:
     try:
-        return PAUSE.is_file()
+        d = PAUSE.parent
+        d.mkdir(parents=True, exist_ok=True)
+        os.chmod(d, 0o0777)
     except OSError:
-        return False
+        pass
+
+
+def _paused() -> bool:
+    for p in (PAUSE, PAUSE_LEGACY):
+        try:
+            if p.is_file():
+                return True
+        except OSError:
+            continue
+    return False
 
 
 def _open_bus(smbus_mod: Any, bus_id: int) -> Any:
@@ -178,8 +203,10 @@ def main() -> int:
     except Exception:
         pass
 
-    events = [uinput.KEY_A + i for i in range(26)]
-    events += [uinput.KEY_0 + i for i in range(10)]
+    # Must list every KEY_* we emit. KEY_A+i is 30..55 — that misses QWERTY
+    # (KEY_Q=16 … KEY_P=25). Unregistered keys are dropped by the kernel.
+    events = [getattr(uinput, f"KEY_{c}") for c in "ABCDEFGHIJKLMNOPQRSTUVWXYZ"]
+    events += [getattr(uinput, f"KEY_{d}") for d in "0123456789"]
     events += [
         uinput.KEY_ENTER,
         uinput.KEY_BACKSPACE,
@@ -203,16 +230,20 @@ def main() -> int:
         uinput.KEY_RIGHTBRACE,
         uinput.KEY_BACKSLASH,
     ]
-    # BUS_VIRTUAL (0x06): labwc/libinput on Pi OS Trixie ignores some BUS_USB
-    # uinput gadgets. Create this device at boot and never tear it down.
+    # Same USB bustype as Digivice-Buttons (that pad already types on labwc).
+    # BUS_VIRTUAL (0x06) is often ignored by libinput on Pi OS Trixie.
     try:
         device = uinput.Device(
             events,
             name="Digivice-CardKB",
-            bustype=0x06,
+            bustype=0x03,
+            vendor=0x1D6B,
+            product=0x0105,
+            version=1,
         )
     except TypeError:
         device = uinput.Device(events, name="Digivice-CardKB")
+    _ensure_pause_dir()
     _attach_uinput_to_seat("Digivice-CardKB")
 
     bus: Optional[Any] = None

@@ -32,11 +32,13 @@ cardkb_ctl() {
       sudo -n digivice-cardkb-ctl "$op" >/dev/null 2>&1 && return 0
     fi
   fi
+  mkdir -p /run/digivice 2>/dev/null || true
+  chmod 0777 /run/digivice 2>/dev/null || true
   if [[ "$op" == "stop" ]]; then
-    echo 1 >/tmp/digivice-cardkb.pause 2>/dev/null || true
-    chmod 666 /tmp/digivice-cardkb.pause 2>/dev/null || true
+    echo 1 >/run/digivice/cardkb.pause 2>/dev/null || true
+    chmod 666 /run/digivice/cardkb.pause 2>/dev/null || true
   else
-    rm -f /tmp/digivice-cardkb.pause 2>/dev/null || true
+    rm -f /run/digivice/cardkb.pause /tmp/digivice-cardkb.pause 2>/dev/null || true
   fi
   if [[ "$(id -u)" -eq 0 ]]; then
     systemctl start cardkb-inputd.service >/dev/null 2>&1 || true

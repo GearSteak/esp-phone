@@ -1,7 +1,7 @@
 """In-process CardKB (I2C 0x5F) → Digivice keys / field typing.
 
 Bypasses xdotool. cardkb-inputd stays running (uinput for Linux desktop)
-but pauses I2C while /tmp/digivice-cardkb.pause exists.
+but pauses I2C while /run/digivice/cardkb.pause exists.
 """
 from __future__ import annotations
 
@@ -16,7 +16,8 @@ from PyQt5.QtGui import QKeyEvent
 from PyQt5.QtWidgets import QApplication, QLineEdit, QTextEdit, QPlainTextEdit
 
 ADDR = 0x5F
-_PAUSE = Path("/tmp/digivice-cardkb.pause")
+_PAUSE = Path("/run/digivice/cardkb.pause")
+_PAUSE_LEGACY = Path("/tmp/digivice-cardkb.pause")
 _TEXT_TYPES = (QLineEdit, QTextEdit, QPlainTextEdit)
 
 # CardKB arrow scancodes (M5 Stack CardKB)
@@ -30,16 +31,29 @@ _ARROW = {
 
 def _pause_desktop_reader() -> None:
     try:
+        _PAUSE.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            os.chmod(_PAUSE.parent, 0o0777)
+        except OSError:
+            pass
         _PAUSE.write_text("1\n", encoding="utf-8")
+        try:
+            os.chmod(_PAUSE, 0o0666)
+        except OSError:
+            pass
     except OSError:
-        pass
+        try:
+            _PAUSE_LEGACY.write_text("1\n", encoding="utf-8")
+        except OSError:
+            pass
 
 
 def _unpause_desktop_reader() -> None:
-    try:
-        _PAUSE.unlink()
-    except OSError:
-        pass
+    for p in (_PAUSE, _PAUSE_LEGACY):
+        try:
+            p.unlink()
+        except OSError:
+            pass
 
 
 def _open_bus(bus_id: int = 1) -> Any:

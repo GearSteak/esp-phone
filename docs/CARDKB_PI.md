@@ -18,15 +18,15 @@ CardKB wants a solid **5V** rail (brownout → LED blinks, no keys).
 ## Enable / fix on the Pi
 
 ```bash
-cd ~/esp-phone && git pull && sudo digivice-full-update
+cd ~/esp-phone && git pull && sudo bash pi_handset/session/full-update.sh
 
-# Doctor (I2C + wiring):
+# Doctor (I2C + uinput + pause file):
 sudo digivice-ensure-cardkb --doctor
 sudo usermod -aG i2c "$USER"   # needed for Digivice in-process reader
-# then reboot once if group was just added
+# then reboot once if group was just added, or after the first CardKB unit change
 ```
 
-Doctor checks: `i2cdetect` for **`5f`**, baudrate, packages.
+Doctor checks: `i2cdetect` for **`5f`**, `Digivice-CardKB` in `/proc/bus/input/devices`, pause file **absent** on the Linux desktop.
 
 ```bash
 sudo raspi-config nonint do_i2c 0
@@ -35,13 +35,15 @@ sudo i2cdetect -y 1          # must show 5f
 
 `full-update` seeds `dtparam=i2c_arm_baudrate=50000` (Pi Zero clock-stretch). **Reboot once** after that line is first added.
 
-## How keys reach Digivice
+## How keys reach Digivice vs Linux desktop
 
-**While Digivice is running**, CardKB is read **in-process** over I2C (no xdotool). That keeps typing instant in Accounts and other fields.
+`cardkb-inputd` is a **systemd uinput keyboard** (`Digivice-CardKB`). It must stay running from boot, **before labwc**. Do not `systemctl stop` it — Wayland ignores a keyboard created after login.
 
-`cardkb-inputd` is **stopped** during Digivice and restarted when you exit to Linux Desktop. On Pi OS Trixie (Wayland) it types via a **uinput** keyboard, not xdotool.
+**While Digivice is running**, CardKB is read **in-process** over I2C (`cardkb_qt.py`). Digivice writes `/run/digivice/cardkb.pause` so the daemon **releases I2C** but keeps the uinput node.
 
-Confirm on a text field (yellow ring + “Typing · Back exits”), then type. **Back** leaves the field.
+**Settings → Linux** (or `handset-desktop`) removes the pause file so the daemon types into the Pi OS desktop again.
+
+Confirm on a Digivice text field (yellow ring + “Typing · Back exits”), then type. **Back** leaves the field.
 
 ## “LED blinks once, then dead”
 

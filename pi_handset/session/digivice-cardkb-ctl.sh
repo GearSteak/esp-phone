@@ -5,7 +5,11 @@
 #   sudo digivice-cardkb-ctl start  # Linux desktop owns I2C
 set -e
 op="${1:-}"
-PAUSE=/tmp/digivice-cardkb.pause
+PAUSE_DIR=/run/digivice
+PAUSE="$PAUSE_DIR/cardkb.pause"
+LEGACY=/tmp/digivice-cardkb.pause
+mkdir -p "$PAUSE_DIR" 2>/dev/null || true
+chmod 0777 "$PAUSE_DIR" 2>/dev/null || true
 case "$op" in
   stop)
     echo 1 >"$PAUSE"
@@ -14,7 +18,7 @@ case "$op" in
     systemctl start cardkb-inputd.service 2>/dev/null || true
     ;;
   start)
-    rm -f "$PAUSE"
+    rm -f "$PAUSE" "$LEGACY"
     systemctl start cardkb-inputd.service 2>/dev/null || true
     ;;
   *)

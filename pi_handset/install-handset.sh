@@ -306,10 +306,17 @@ RestartSec=2
 WantedBy=multi-user.target
 EOF
 
+cat >/etc/tmpfiles.d/digivice-cardkb.conf <<'EOF'
+d /run/digivice 0777 root root -
+EOF
+mkdir -p /run/digivice
+chmod 0777 /run/digivice
+
 cat >/etc/systemd/system/cardkb-inputd.service <<EOF
 [Unit]
 Description=Digivice CardKB I2C → Linux desktop keyboard (uinput)
-After=multi-user.target
+After=local-fs.target systemd-modules-load.service
+Before=graphical.target display-manager.service lightdm.service greetd.service
 
 [Service]
 Type=simple
@@ -419,7 +426,11 @@ fi
 systemctl disable t9-keypad-inputd.service hat-inputd.service 2>/dev/null || true
 # CardKB on Digivice (I2C) — enable; retries quietly if unplugged
 systemctl enable cardkb-inputd.service 2>/dev/null || true
-systemctl restart cardkb-inputd.service || true
+if systemctl is-active --quiet cardkb-inputd.service; then
+  echo "cardkb-inputd already running (keep uinput)"
+else
+  systemctl start cardkb-inputd.service || true
+fi
 systemctl enable esp-keyd.service
 systemctl restart esp-keyd.service || true
 systemctl enable ModemManager.service || true

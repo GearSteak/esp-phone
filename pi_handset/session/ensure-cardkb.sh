@@ -43,13 +43,30 @@ doctor() {
   systemctl is-active cardkb-inputd 2>&1 || true
   systemctl cat cardkb-inputd 2>&1 | head -n 25 || true
   echo "--- linux keyboard ---"
-  grep -A3 -i 'Digivice-CardKB' /proc/bus/input/devices 2>/dev/null \
+  grep -A6 -i 'Digivice-CardKB' /proc/bus/input/devices 2>/dev/null \
     || echo "(no Digivice-CardKB in /proc yet — start the service)"
-  if [[ -f /tmp/digivice-cardkb.pause ]]; then
-    echo "PAUSE FILE present — I2C is for Digivice, not Linux"
-  else
-    echo "no pause file — daemon should type into Linux"
+  evdev="$(awk -v RS= '/Name=.*Digivice-CardKB/{print}' /proc/bus/input/devices 2>/dev/null \
+    | grep -o 'event[0-9]*' | head -n1 || true)"
+  if [[ -n "$evdev" && -e "/dev/input/$evdev" ]]; then
+    echo "--- udev $evdev ---"
+    udevadm info -q property "/dev/input/$evdev" 2>/dev/null \
+      | grep -E 'ID_INPUT|ID_BUS|TAGS|NAME' || true
   fi
+  echo "--- pause ---"
+  paused=0
+  for pf in /run/digivice/cardkb.pause /tmp/digivice-cardkb.pause; do
+    if [[ -f "$pf" ]]; then
+      echo "PAUSE FILE present: $pf  (ls: $(ls -l "$pf" 2>/dev/null))"
+      paused=1
+    fi
+  done
+  if [[ "$paused" -eq 0 ]]; then
+    echo "no pause file — daemon should type into Linux"
+  else
+    echo "I2C is paused for Digivice — on Linux desktop this file must be ABSENT"
+  fi
+  echo "--- unit After= (must NOT be multi-user.target — that drops boot start) ---"
+  systemctl show -p After -p Before -p WantedBy -p ActiveState cardkb-inputd 2>/dev/null || true
   echo "--- journal (last 30) ---"
   journalctl -u cardkb-inputd -n 30 --no-pager 2>&1 || true
   echo "=== wiring reminder ==="
@@ -76,11 +93,17 @@ if [[ ! -f /etc/modules-load.d/uinput.conf ]]; then
   echo uinput >/etc/modules-load.d/uinput.conf
 fi
 
+mkdir -p /run/digivice
+chmod 0777 /run/digivice
+cat >/etc/tmpfiles.d/digivice-cardkb.conf <<'EOF'
+d /run/digivice 0777 root root -
+EOF
+
 cat >/etc/udev/rules.d/99-digivice-cardkb.rules <<'EOF'
 # CardKB virtual keyboard — labwc/libinput must see it as a seat keyboard
 KERNEL=="uinput", GROUP="input", MODE="0660", OPTIONS+="static_node=uinput"
 SUBSYSTEM=="input", KERNEL=="event*", ATTRS{name}=="Digivice-CardKB", \
-  MODE="0660", GROUP="input", \
+  MODE="0666", GROUP="input", \
   ENV{ID_INPUT}="1", ENV{ID_INPUT_KEYBOARD}="1", \
   ENV{ID_INPUT_KEY}="1", TAG+="uaccess", TAG+="seat"
 EOF
@@ -116,7 +139,10 @@ usermod -aG i2c,input "$GUI_USER" 2>/dev/null || true
 cat >"$UNIT" <<EOF
 [Unit]
 Description=Digivice CardKB I2C → Linux desktop keyboard (uinput)
-After=multi-user.target
+# Start with the OS, before labwc. After=multi-user.target is an ordering
+# cycle with WantedBy=multi-user.target — systemd then drops the boot job.
+After=local-fs.target systemd-modules-load.service
+Before=graphical.target display-manager.service lightdm.service greetd.service
 
 [Service]
 Type=simple
@@ -136,7 +162,12 @@ EOF
 systemctl daemon-reload
 systemctl enable cardkb-inputd.service
 if systemctl is-active --quiet cardkb-inputd.service; then
-  echo "[ensure-cardkb] cardkb-inputd already running (keep uinput)"
+  if grep -A10 'Digivice-CardKB' /proc/bus/input/devices 2>/dev/null | grep -q 'Bus=0006'; then
+    echo "[ensure-cardkb] CardKB was BUS_VIRTUAL — recreate as USB (labwc)"
+    systemctl restart cardkb-inputd.service
+  else
+    echo "[ensure-cardkb] cardkb-inputd already running (keep uinput)"
+  fi
 else
   systemctl start cardkb-inputd.service
 fi
