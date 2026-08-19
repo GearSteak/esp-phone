@@ -220,6 +220,13 @@ download_debs_fallback() {
 
 install_cli() {
   export DEBIAN_FRONTEND=noninteractive
+  if [[ "$DEBS_ONLY" -eq 1 ]]; then
+    log "debs-only: skip apt repo (that hang) — fetch Debian .debs"
+    rm -f /etc/apt/sources.list.d/digivice-voip-debian.list \
+      /etc/apt/sources.list.d/digivice-voip-debian.sources
+    download_debs_fallback || true
+    return 0
+  fi
   log "apt-get update…"
   apt-get update -qq 2>&1 | tee -a "$LOG" | tail -n 8
 
@@ -242,9 +249,11 @@ install_cli() {
 
 DOCTOR=0
 LOCATE_ONLY=0
+DEBS_ONLY=0
 for a in "$@"; do
   [[ "$a" == "--doctor" || "$a" == "doctor" ]] && DOCTOR=1
   [[ "$a" == "--locate-only" || "$a" == "locate" ]] && LOCATE_ONLY=1
+  [[ "$a" == "--debs" || "$a" == "debs" ]] && DEBS_ONLY=1
 done
 
 install_linphonec_wrapper() {
