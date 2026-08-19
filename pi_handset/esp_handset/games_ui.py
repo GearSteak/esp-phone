@@ -1062,6 +1062,8 @@ def _card_color(suit: str) -> QColor:
 
 
 class SolitaireBoard(QWidget):
+    """Klondike: stock/waste/foundations on top, seven tableau columns below."""
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setMinimumHeight(200)
@@ -1069,7 +1071,7 @@ class SolitaireBoard(QWidget):
         self.reset()
 
     def reset(self):
-        deck = [(r, s) for s in _SUITS for r in _RANKS]
+        deck = [(r, s, False) for s in _SUITS for r in _RANKS]
         random.shuffle(deck)
         self.stock = deck
         self.waste: list = []
@@ -1077,43 +1079,310 @@ class SolitaireBoard(QWidget):
         self.tableau = [[] for _ in range(7)]
         for i in range(7):
             for j in range(i + 1):
-                self.tableau[i].append(self.stock.pop())
-        self.sel_col = 0
-        self.message = "Draw · move · foundation"
+                rnk, suit, _up = self.stock.pop()
+                self.tableau[i].append((rnk, suit, j == i))
+        self.row = 1
+        self.top_i = 0
+        self.col = 0
+        self.pick_i = self._top_pick(0)
+        self.held = None
+        self.won = False
+        self.message = "Confirm pick, then Confirm on another column"
         self.update()
 
+    def _rank_i(self, r: str) -> int:
+        return _RANKS.index(r)
+
+    def _red(self, s: str) -> bool:
+        return s in "♥♦"
+
+    def _top_pick(self, col: int):
+        pile = self.tableau[col]
+        return (len(pile) - 1) if pile else None
+
+    def _first_up(self, col: int):
+        pile = self.tableau[col]
+        if not pile:
+            return None
+        for i, card in enumerate(pile):
+            if card[2]:
+                return i
+        return len(pile) - 1
+
+    def _flip_top(self, col: int) -> None:
+        pile = self.tableau[col]
+        if pile and not pile[-1][2]:
+            r, s, _u = pile[-1]
+            pile[-1] = (r, s, True)
+
+    def _can_on_tableau(self, moving, onto) -> bool:
+        if onto is None:
+            return moving[0] == "K"
+        return self._red(moving[1]) != self._red(onto[1]) and (
+            self._rank_i(moving[0]) == self._rank_i(onto[0]) - 1
+        )
+
+    def _can_on_foundation(self, card, suit: str) -> bool:
+        if card[1] != suit:
+            return False
+        pile = self.foundations[suit]
+        if not pile:
+            return card[0] == "A"
+        return self._rank_i(card[0]) == self._rank_i(pile[-1][0]) + 1
+
+    def _held_cards(self):
+        if not self.held:
+            return []
+        kind = self.held[0]
+        if kind == "waste":
+            return [self.waste[-1]] if self.waste else []
+        if kind == "found":
+            pile = self.foundations.get(self.held[1], [])
+            return [pile[-1]] if pile else []
+        if kind == "col":
+            c, i = self.held[1], self.held[2]
+            return list(self.tableau[c][i:])
+        return []
+
+    def _clear_held(self) -> None:
+        self.held = None
+
+    def _remove_held(self) -> list:
+        cards = self._held_cards()
+        if not cards or not self.held:
+            return []
+        kind = self.held[0]
+        if kind == "waste":
+            self.waste.pop()
+        elif kind == "found":
+            self.foundations[self.held[1]].pop()
+        else:
+            c, i = self.held[1], self.held[2]
+            del self.tableau[c][i:]
+            self._flip_top(c)
+        self.held = None
+        return cards
+
+    def _check_win(self) -> None:
+        if all(len(self.foundations[s]) == 13 for s in _SUITS):
+            self.won = True
+            self.message = "You win · Confirm for a new deal"
+
     def draw(self):
+        if self.won:
+            return
         if not self.stock:
-            self.stock = list(reversed(self.waste))
+            self.stock = [(r, s, False) for r, s, _u in reversed(self.waste)]
             self.waste = []
-        elif self.stock:
-            self.waste.append(self.stock.pop())
+            self.message = "Recycled waste"
+        else:
+            r, s, _u = self.stock.pop()
+            self.waste.append((r, s, True))
+            self.message = f"Drew {r}{s}"
+        self.held = None
         self.update()
 
     def to_foundation(self):
-        if not self.waste:
-            self.message = "Nothing on waste"
+        if self.won:
+            return
+        if self.held and len(self._held_cards()) == 1:
+            card = self._held_cards()[0]
+            if self._drop_foundation(card[1]):
+                return
+            self.message = "Can't go to foundation"
             self.update()
             return
-        r, s = self.waste[-1]
-        pile = self.foundations[s]
-        need = _RANKS[len(pile)] if len(pile) < 13 else None
-        if need == r:
-            pile.append(self.waste.pop())
-            self.message = f"{r}{s} → foundation"
-        else:
-            self.message = "Can't place"
+        if self.row == 1 and self.tableau[self.col]:
+            if self._send_col_top_up(self.col):
+                return
+        if self.waste:
+            card = self.waste[-1]
+            if self._can_on_foundation(card, card[1]):
+                self.foundations[card[1]].append(self.waste.pop())
+                self.message = f"{card[0]}{card[1]} → foundation"
+                self._check_win()
+                self.update()
+                return
+        self.message = "Nothing to send up"
+        self.update()
+
+    def _send_col_top_up(self, col: int) -> bool:
+        pile = self.tableau[col]
+        if not pile or not pile[-1][2]:
+            return False
+        card = pile[-1]
+        if not self._can_on_foundation(card, card[1]):
+            return False
+        self.foundations[card[1]].append(pile.pop())
+        self._flip_top(col)
+        self.held = None
+        self.pick_i = self._top_pick(col)
+        self.message = f"{card[0]}{card[1]} → foundation"
+        self._check_win()
+        self.update()
+        return True
+
+    def _drop_foundation(self, suit: str) -> bool:
+        cards = self._held_cards()
+        if len(cards) != 1:
+            return False
+        card = cards[0]
+        if not self._can_on_foundation(card, suit):
+            return False
+        self._remove_held()
+        self.foundations[suit].append(card)
+        self.message = f"{card[0]}{card[1]} → {suit}"
+        self._check_win()
+        self.update()
+        return True
+
+    def _drop_tableau(self, dest: int) -> bool:
+        cards = self._held_cards()
+        if not cards:
+            return False
+        if self.held and self.held[0] == "col" and self.held[1] == dest:
+            return False
+        onto = self.tableau[dest][-1] if self.tableau[dest] else None
+        if onto is not None and not onto[2]:
+            return False
+        if not self._can_on_tableau(cards[0], onto):
+            return False
+        self._remove_held()
+        self.tableau[dest].extend(cards)
+        self.col = dest
+        self.pick_i = self._top_pick(dest)
+        self.message = f"{cards[0][0]}{cards[0][1]} → column {dest + 1}"
+        self.update()
+        return True
+
+    def _pick_here(self) -> None:
+        if self.row == 0:
+            if self.top_i == 0:
+                self.draw()
+                return
+            if self.top_i == 1:
+                if not self.waste:
+                    self.message = "Waste empty"
+                    self.update()
+                    return
+                self.held = ("waste",)
+                card = self.waste[-1]
+                self.message = f"Holding {card[0]}{card[1]} · drop on a column"
+                self.update()
+                return
+            suit = _SUITS[self.top_i - 2]
+            pile = self.foundations[suit]
+            if not pile:
+                self.message = "Empty foundation"
+                self.update()
+                return
+            self.held = ("found", suit)
+            card = pile[-1]
+            self.message = f"Holding {card[0]}{card[1]}"
+            self.update()
+            return
+        pile = self.tableau[self.col]
+        if not pile:
+            self.message = "Empty column · Kings go here"
+            self.update()
+            return
+        i = self.pick_i if self.pick_i is not None else self._top_pick(self.col)
+        if i is None or i < 0 or i >= len(pile) or not pile[i][2]:
+            self.message = "Face-down · uncover from the top"
+            self.update()
+            return
+        self.held = ("col", self.col, i)
+        n = len(pile) - i
+        card = pile[i]
+        extra = f" +{n - 1}" if n > 1 else ""
+        self.message = f"Holding {card[0]}{card[1]}{extra} · Confirm on dest"
+        self.update()
+
+    def _activate(self) -> None:
+        if self.won:
+            self.reset()
+            return
+        if not self.held:
+            self._pick_here()
+            return
+        if self.row == 0:
+            if self.top_i == 0:
+                self._clear_held()
+                self.draw()
+                return
+            if self.top_i == 1:
+                if self.held[0] == "waste":
+                    self._clear_held()
+                    self.message = "Put back"
+                    self.update()
+                    return
+                self.message = "Drop on a column or foundation"
+                self.update()
+                return
+            suit = _SUITS[self.top_i - 2]
+            if self._drop_foundation(suit):
+                return
+            self.message = "Can't stack there"
+            self.update()
+            return
+        dest = self.col
+        if self.held[0] == "col" and self.held[1] == dest:
+            if self._send_col_top_up(dest):
+                return
+            self._clear_held()
+            self.message = "Cancelled"
+            self.update()
+            return
+        if self._drop_tableau(dest):
+            return
+        self.message = "Can't stack · red/black and one rank down"
         self.update()
 
     def digi_nav(self, dx: int, dy: int) -> bool:
-        if dx:
-            self.sel_col = (self.sel_col + (1 if dx > 0 else -1)) % 7
+        if self.won:
+            return bool(dx or dy)
+        if self.row == 1 and not self.held and dy:
+            pile = self.tableau[self.col]
+            fu = self._first_up(self.col)
+            if pile and fu is not None:
+                cur = self.pick_i if self.pick_i is not None else len(pile) - 1
+                nxt = cur + (1 if dy > 0 else -1)
+                if fu <= nxt < len(pile):
+                    self.pick_i = nxt
+                    card = pile[nxt]
+                    n = len(pile) - nxt
+                    self.message = f"Grab from {card[0]}{card[1]}" + (
+                        f" ({n} cards)" if n > 1 else ""
+                    )
+                    self.update()
+                    return True
+            if dy < 0:
+                self.row = 0
+                self.update()
+                return True
+            return True
+        if dy > 0 and self.row == 0:
+            self.row = 1
+            self.pick_i = self._top_pick(self.col)
             self.update()
             return True
-        return bool(dy)
+        if dy < 0 and self.row == 1:
+            self.row = 0
+            self.update()
+            return True
+        if dx:
+            if self.row == 0:
+                self.top_i = (self.top_i + (1 if dx > 0 else -1)) % 6
+            else:
+                self.col = (self.col + (1 if dx > 0 else -1)) % 7
+                if not self.held:
+                    self.pick_i = self._top_pick(self.col)
+            self.update()
+            return True
+        return False
 
     def digi_confirm(self):
-        self.draw()
+        self._activate()
 
     def paintEvent(self, _e):
         p = QPainter(self)
@@ -1122,46 +1391,73 @@ class SolitaireBoard(QWidget):
         r = self.rect()
         accent = QColor("#3dff9a")
         _fill_crt(p, r, accent)
-        # Playing-card aspect (~2.5×3.5), not squares
         gap = max(26, (r.width() - 12) // 7)
         cw = min(32, gap - 3)
         ch = int(cw * 1.4)
         y0 = 8
-        # stock / waste
-        self._draw_card_back(p, 8, y0, cw, ch)
+        stock_on = self.row == 0 and self.top_i == 0
+        waste_on = self.row == 0 and self.top_i == 1
+        if self.stock:
+            self._draw_card_back(p, 8, y0, cw, ch)
+        else:
+            self._draw_slot(p, 8, y0, cw, ch, "")
+        if stock_on:
+            self._ring(p, 8, y0, cw, ch)
         p.setPen(_MUTED)
         p.setFont(_font(8))
         p.drawText(QRect(4, y0 + ch + 2, cw + 8, 12), Qt.AlignCenter, f"{len(self.stock)}")
+        wx = 8 + cw + 8
         if self.waste:
-            self._draw_card(p, 8 + cw + 8, y0, cw, ch, self.waste[-1])
-        # foundations
-        x = r.width() - 4 * (cw + 4) - 6
+            self._draw_card(p, wx, y0, cw, ch, self.waste[-1], selected=waste_on or (self.held and self.held[0] == "waste"))
+        else:
+            self._draw_slot(p, wx, y0, cw, ch, "")
+            if waste_on:
+                self._ring(p, wx, y0, cw, ch)
+        fx = r.width() - 4 * (cw + 4) - 6
         for i, s in enumerate(_SUITS):
             pile = self.foundations[s]
+            on = self.row == 0 and self.top_i == i + 2
+            held_f = self.held and self.held[0] == "found" and self.held[1] == s
             if pile:
-                self._draw_card(p, x + i * (cw + 4), y0, cw, ch, pile[-1])
+                self._draw_card(p, fx + i * (cw + 4), y0, cw, ch, pile[-1], selected=on or held_f)
             else:
-                self._draw_slot(p, x + i * (cw + 4), y0, cw, ch, s)
+                self._draw_slot(p, fx + i * (cw + 4), y0, cw, ch, s)
+                if on:
+                    self._ring(p, fx + i * (cw + 4), y0, cw, ch)
 
-        # tableau
         ty = y0 + ch + 16
+        held_set = set()
+        if self.held and self.held[0] == "col":
+            c0, i0 = self.held[1], self.held[2]
+            for j in range(i0, len(self.tableau[c0])):
+                held_set.add((c0, j))
         for i, col in enumerate(self.tableau):
             tx = 6 + i * gap
+            col_on = self.row == 1 and self.col == i
             if not col:
                 self._draw_slot(p, tx, ty, cw, ch, "")
+                if col_on:
+                    self._ring(p, tx, ty, cw, ch)
+                continue
+            step = max(10, ch // 4)
             for j, card in enumerate(col):
-                self._draw_card(
-                    p,
-                    tx,
-                    ty + j * max(10, ch // 4),
-                    cw,
-                    ch,
-                    card,
-                    selected=(i == self.sel_col and j == len(col) - 1),
-                )
-        p.setPen(_MUTED)
-        p.setFont(_font(9))
-        p.drawText(QRect(8, r.height() - 18, r.width() - 16, 14), Qt.AlignCenter, self.message)
+                grab = col_on and not self.held and self.pick_i is not None and j >= self.pick_i
+                sel = (i, j) in held_set or grab or (col_on and j == len(col) - 1 and self.held is None and self.pick_i is None)
+                if not card[2]:
+                    self._draw_card_back(p, tx, ty + j * step, cw, ch)
+                    if col_on and j == len(col) - 1:
+                        self._ring(p, tx, ty + j * step, cw, ch)
+                else:
+                    self._draw_card(p, tx, ty + j * step, cw, ch, card, selected=sel)
+
+        p.setPen(_GOLD if self.held else _MUTED)
+        p.setFont(_font(8))
+        p.drawText(QRect(6, r.height() - 16, r.width() - 12, 14), Qt.AlignCenter, self.message)
+
+    def _ring(self, p, x, y, w, h):
+        p.setBrush(Qt.NoBrush)
+        p.setPen(QPen(QColor("#ffd56a"), 2))
+        p.drawRoundedRect(QRect(x, y, w, h).adjusted(0, 0, -1, -1), 3, 3)
 
     def _draw_slot(self, p, x, y, w, h, label):
         p.setBrush(QColor(20, 40, 30, 120))
@@ -1183,7 +1479,7 @@ class SolitaireBoard(QWidget):
         p.drawRect(x + 4, y + 4, w - 8, h - 8)
 
     def _draw_card(self, p, x, y, w, h, card, selected=False):
-        rank, suit = card
+        rank, suit = card[0], card[1]
         rect = QRect(x, y, w, h)
         fname = f"cards/{_SUIT_FILE.get(suit, 'spade')}_{_RANK_FILE.get(rank, '1')}.png"
         if not _draw_pm(p, fname, rect, fill=True):
@@ -2107,7 +2403,10 @@ def make_solitaire(on_back):
         "SOLITAIRE",
         "Klondike · green felt",
         QColor("#3dff9a"),
-        "Confirm draws from the stock. Foundation sends the waste card up if it fits. ←→ pick a tableau column.",
+        "←→ pick a column. Confirm grabs the card, Confirm again on another "
+        "column drops it (red/black, one rank down). Kings go on empty columns. "
+        "↑↓ change how many cards you grab. ↑ also reaches stock / waste / foundations. "
+        "Foundation sends the selected column top or waste up if it fits.",
         board,
         [draw, found, anew],
         on_back,
