@@ -9,6 +9,7 @@ from typing import Callable, List, Optional
 from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtWidgets import (
     QLabel,
+    QLineEdit,
     QListWidget,
     QListWidgetItem,
     QStackedWidget,
@@ -57,7 +58,13 @@ _LIST = (
     "QListWidget::item:selected { background:#fff; color:#000; }"
 )
 _READ = "QTextEdit { background:#000; color:#fff; border:none; font-size:12px; }"
+_EDIT = (
+    "QLineEdit { background:#000; color:#fff; border:2px solid #fff; "
+    "font-size:16px; padding:6px; }"
+)
 _TABS = ("CHARS", "REF", "TOOLS", "SET")
+_GEAR_MAX = 20
+_SPELL_MAX = 12
 
 _DICE = (
     ("d4", 4, None),
@@ -178,9 +185,27 @@ def make_shadowdark_page(on_back: Callable[[], None]) -> QWidget:
     read.setStyleSheet(_READ)
     read.setFocusPolicy(Qt.StrongFocus)
 
+    type_page = QWidget()
+    tyl = QVBoxLayout(type_page)
+    tyl.setContentsMargins(4, 8, 4, 8)
+    type_lab = QLabel("Type")
+    type_lab.setWordWrap(True)
+    type_lab.setStyleSheet("font-size:12px; color:#ccc;")
+    type_ed = QLineEdit()
+    type_ed.setStyleSheet(_EDIT)
+    type_ed.setFocusPolicy(Qt.StrongFocus)
+    type_hint = QLabel("CardKB / BT keyboard · Confirm save · Back save")
+    type_hint.setWordWrap(True)
+    type_hint.setStyleSheet("font-size:10px; color:#888;")
+    tyl.addWidget(type_lab)
+    tyl.addWidget(type_ed)
+    tyl.addWidget(type_hint)
+    tyl.addStretch(1)
+
     stack.addWidget(menu)
     stack.addWidget(sheet_page)
     stack.addWidget(read)
+    stack.addWidget(type_page)
 
     state = {
         "tab": 0,
@@ -188,9 +213,12 @@ def make_shadowdark_page(on_back: Callable[[], None]) -> QWidget:
         "round": 1,
         "dice": "",
         "spells": load_spells(),
-        "view": "menu",  # menu | sheet | read
-        "ref": "root",  # root | rules | spells | armor | weapons | gear
+        "view": "menu",  # menu | sheet | read | pick | type
+        "ref": "root",
         "after_read": "menu",
+        "type_kind": "name",
+        "sheet_row": 0,
+        "pick": "",
     }
 
     def paint_tabs() -> None:
@@ -229,16 +257,105 @@ def make_shadowdark_page(on_back: Callable[[], None]) -> QWidget:
     def sheet_text(c: dict) -> str:
         mods = "  ".join(f"{s} {c.get(s, 10)}({_mod(int(c.get(s, 10))):+d})" for s in STATS)
         nxt = XP_NEXT.get(int(c.get("level") or 1), 10 * (int(c.get("level") or 1) + 1))
-        gear = ", ".join(c.get("gear") or []) or "—"
-        spells = ", ".join(c.get("spells") or []) or "—"
+        notes = str(c.get("notes") or "").strip()
+        extra = f"\n{notes}" if notes else ""
         return (
             f"{c.get('name')}  {c.get('ancestry')} {c.get('klass')}  "
             f"Lv {c.get('level')} {c.get('align')}\n"
             f"{mods}\n"
             f"AC {c.get('ac')}  HP {c.get('hp')}/{c.get('hp_max')}  "
-            f"XP {c.get('xp')}/{nxt}\n"
-            f"Gear: {gear}\nSpells: {spells}"
+            f"XP {c.get('xp')}/{nxt}{extra}"
         )
+
+    def _cur() -> tuple:
+        rows = _chars()
+        i = int(state["idx"])
+        if i < 0 or i >= len(rows):
+            return None, rows, i
+        return rows[i], rows, i
+
+    def show_pick(title: str, rows: list) -> None:
+        state["view"] = "pick"
+        tabs_lab.setText(title)
+        menu.clear()
+        for lab, kind, payload in rows:
+            _add(menu, lab, kind, payload)
+        if menu.count():
+            menu.setCurrentRow(0)
+        stack.setCurrentWidget(menu)
+        menu.setFocus(Qt.OtherFocusReason)
+
+    def start_type(kind: str, prompt: str, initial: str) -> None:
+        state["view"] = "type"
+        state["type_kind"] = kind
+        type_lab.setText(prompt)
+        type_ed.setText(initial)
+        type_ed.setCursorPosition(len(type_ed.text()))
+        stack.setCurrentWidget(type_page)
+        type_ed.setFocus(Qt.OtherFocusReason)
+
+    def save_type() -> None:
+        text = type_ed.text().strip()
+        c, rows, i = _cur()
+        if c is None:
+            show_sheet(state["idx"])
+            return
+        kind = state["type_kind"]
+        if kind == "name":
+            if text:
+                c["name"] = text[:40]
+        elif kind == "notes":
+            c["notes"] = text[:200]
+        elif kind == "gear_custom":
+            if text:
+                gear = list(c.get("gear") or [])
+                if len(gear) < _GEAR_MAX:
+                    gear.append(text[:40])
+                    c["gear"] = gear
+        _save_chars(rows)
+        show_sheet(i)
+
+    def fill_gear_cats() -> None:
+        state["pick"] = "gear_cats"
+        show_pick(
+            "Add gear",
+            [
+                ("Type a name…", "gear_custom", None),
+                ("Armor", "gear_cat", "armor"),
+                ("Weapons", "gear_cat", "weapons"),
+                ("Adventuring gear", "gear_cat", "gear"),
+            ],
+        )
+
+    def fill_gear_items(cat: str) -> None:
+        table = {"armor": ARMOR, "weapons": WEAPONS, "gear": GEAR}[cat]
+        rows = [(f"{row['name']}", "gear_add", row["name"]) for row in table]
+        state["pick"] = "gear_items"
+        show_pick("Add " + cat, rows)
+
+    def fill_spell_pick() -> None:
+        c, _rows, _i = _cur()
+        owned = {str(s) for s in (c.get("spells") or [])} if c else set()
+        klass = str((c or {}).get("klass") or "").lower()
+        rows = []
+        for sp in state["spells"]:
+            name = str(sp.get("name") or "")
+            if not name or name in owned:
+                continue
+            cls = str(sp.get("class") or "").lower()
+            if klass in ("priest", "wizard") and klass not in cls:
+                continue
+            rows.append((f"{name}  T{sp.get('tier')}", "spell_add", name))
+        if not rows:
+            # Fighters etc. — show the full list minus owned
+            for sp in state["spells"]:
+                name = str(sp.get("name") or "")
+                if name and name not in owned:
+                    rows.append((f"{name}  T{sp.get('tier')} {sp.get('class')}", "spell_add", name))
+        if not rows:
+            rows = [("(none left / missing spells.json)", "noop", None)]
+        state["pick"] = "spells"
+        show_pick("Add spell", rows)
 
     def fill_chars() -> None:
         menu.clear()
@@ -347,40 +464,45 @@ def make_shadowdark_page(on_back: Callable[[], None]) -> QWidget:
             return
         state["idx"] = i
         state["view"] = "sheet"
+        paint_tabs()
         c = rows[i]
         sheet_meta.setText(sheet_text(c))
+        keep = int(state.get("sheet_row") or 0)
         sheet_list.clear()
+        _add(sheet_list, f"Name: {c.get('name')}…", "name")
         for lab, kind, payload in (
             ("Hurt −1 HP", "hp", -1),
             ("Heal +1 HP", "hp", 1),
             ("−1 XP", "xp", -1),
             ("+1 XP", "xp", 1),
-            ("Rename (random)", "rename", None),
-            ("Delete", "delete", None),
-            ("Back to list", "back", None),
         ):
             _add(sheet_list, lab, kind, payload)
-        sheet_list.setCurrentRow(0)
+        _add(sheet_list, "+ Add gear", "add_gear")
+        for gi, g in enumerate(c.get("gear") or []):
+            _add(sheet_list, f"− {g}", "drop_gear", gi)
+        _add(sheet_list, "+ Add spell", "add_spell")
+        for si, s in enumerate(c.get("spells") or []):
+            _add(sheet_list, f"− {s}", "drop_spell", si)
+        _add(sheet_list, "Notes…", "notes")
+        _add(sheet_list, "Delete", "delete")
+        _add(sheet_list, "Back to list", "back")
+        sheet_list.setCurrentRow(max(0, min(keep, sheet_list.count() - 1)))
         stack.setCurrentWidget(sheet_page)
         sheet_list.setFocus(Qt.OtherFocusReason)
 
     def bump_hp(delta: int) -> None:
-        rows = _chars()
-        i = state["idx"]
-        if i >= len(rows):
+        c, rows, i = _cur()
+        if c is None:
             return
-        c = rows[i]
         mx = int(c.get("hp_max") or 1)
         c["hp"] = max(0, min(mx, int(c.get("hp") or 0) + delta))
         _save_chars(rows)
         show_sheet(i)
 
     def bump_xp(delta: int) -> None:
-        rows = _chars()
-        i = state["idx"]
-        if i >= len(rows):
+        c, rows, i = _cur()
+        if c is None:
             return
-        c = rows[i]
         c["xp"] = max(0, int(c.get("xp") or 0) + delta)
         lv = int(c.get("level") or 1)
         need = XP_NEXT.get(lv, 10 * (lv + 1))
@@ -409,14 +531,51 @@ def make_shadowdark_page(on_back: Callable[[], None]) -> QWidget:
         _save_chars(rows)
         show_sheet(len(rows) - 1)
 
-    def do_rename() -> None:
-        rows = _chars()
-        i = state["idx"]
-        if i >= len(rows):
+    def add_gear(name: str) -> None:
+        c, rows, i = _cur()
+        if c is None or not name:
             return
-        anc = str(rows[i].get("ancestry") or "Human")
-        rows[i]["name"] = random.choice(NAMES.get(anc, NAMES["Human"]))
+        gear = list(c.get("gear") or [])
+        if len(gear) >= _GEAR_MAX:
+            return
+        gear.append(name)
+        c["gear"] = gear
         _save_chars(rows)
+        show_sheet(i)
+
+    def drop_gear(gi: int) -> None:
+        c, rows, i = _cur()
+        if c is None:
+            return
+        gear = list(c.get("gear") or [])
+        if 0 <= gi < len(gear):
+            gear.pop(gi)
+            c["gear"] = gear
+            _save_chars(rows)
+        show_sheet(i)
+
+    def add_spell(name: str) -> None:
+        c, rows, i = _cur()
+        if c is None or not name:
+            return
+        spells = list(c.get("spells") or [])
+        if name in spells or len(spells) >= _SPELL_MAX:
+            show_sheet(i)
+            return
+        spells.append(name)
+        c["spells"] = spells
+        _save_chars(rows)
+        show_sheet(i)
+
+    def drop_spell(si: int) -> None:
+        c, rows, i = _cur()
+        if c is None:
+            return
+        spells = list(c.get("spells") or [])
+        if 0 <= si < len(spells):
+            spells.pop(si)
+            c["spells"] = spells
+            _save_chars(rows)
         show_sheet(i)
 
     def do_delete() -> None:
@@ -457,6 +616,7 @@ def make_shadowdark_page(on_back: Callable[[], None]) -> QWidget:
             "Shadowdark companion · personal use, not for resale.",
             "← → switch Chars / Ref / Tools / Set",
             "↑ ↓ move in the list   Confirm open   Back close",
+            "On a character: Name… types with CardKB. + Add gear / spell, − drops.",
             "Dice stay on the Tools list; result is the line under the tabs.",
             "",
             "Put the core PDF in ~/Books (filename containing shadowdark).",
@@ -530,6 +690,18 @@ def make_shadowdark_page(on_back: Callable[[], None]) -> QWidget:
             return
         kind, payload = it.data(Qt.UserRole)
         if kind == "noop":
+            return
+        if kind == "gear_custom":
+            start_type("gear_custom", "Custom gear name", "")
+            return
+        if kind == "gear_cat":
+            fill_gear_items(str(payload))
+            return
+        if kind == "gear_add":
+            add_gear(str(payload))
+            return
+        if kind == "spell_add":
+            add_spell(str(payload))
             return
         if kind == "new":
             do_new()
@@ -634,17 +806,45 @@ def make_shadowdark_page(on_back: Callable[[], None]) -> QWidget:
         it = sheet_list.currentItem()
         if it is None:
             return
+        state["sheet_row"] = sheet_list.currentRow()
         kind, payload = it.data(Qt.UserRole)
         if kind == "hp":
             bump_hp(int(payload))
         elif kind == "xp":
             bump_xp(int(payload))
-        elif kind == "rename":
-            do_rename()
+        elif kind == "name":
+            c, _rows, _i = _cur()
+            start_type("name", "Character name", str((c or {}).get("name") or ""))
+        elif kind == "notes":
+            c, _rows, _i = _cur()
+            start_type("notes", "Notes", str((c or {}).get("notes") or ""))
+        elif kind == "add_gear":
+            fill_gear_cats()
+        elif kind == "drop_gear":
+            drop_gear(int(payload))
+        elif kind == "add_spell":
+            fill_spell_pick()
+        elif kind == "drop_spell":
+            drop_spell(int(payload))
         elif kind == "delete":
             do_delete()
         elif kind == "back":
             goto_tab(0)
+
+    def leave_type() -> bool:
+        if state["view"] != "type":
+            return False
+        save_type()
+        return True
+
+    def leave_pick() -> bool:
+        if state["view"] != "pick":
+            return False
+        if state.get("pick") == "gear_items":
+            fill_gear_cats()
+            return True
+        show_sheet(int(state["idx"]))
+        return True
 
     def leave_read() -> bool:
         if state["view"] != "read":
@@ -672,6 +872,7 @@ def make_shadowdark_page(on_back: Callable[[], None]) -> QWidget:
 
     menu.itemActivated.connect(on_menu)
     sheet_list.itemActivated.connect(on_sheet)
+    type_ed.returnPressed.connect(save_type)
 
     tick = QTimer(body)
     tick.setInterval(500)
@@ -682,6 +883,10 @@ def make_shadowdark_page(on_back: Callable[[], None]) -> QWidget:
     chrome = page_chrome("Shadowdark", body, on_back, scroll=False)
 
     def on_hardware_back() -> bool:
+        if leave_type():
+            return True
+        if leave_pick():
+            return True
         if leave_read():
             return True
         if leave_sheet():
@@ -700,6 +905,8 @@ def make_shadowdark_page(on_back: Callable[[], None]) -> QWidget:
         return True
 
     def digi_move_v(delta: int) -> bool:
+        if state["view"] == "type":
+            return True
         if state["view"] == "read":
             bar = read.verticalScrollBar()
             bar.setValue(bar.value() + int(delta) * 28)
