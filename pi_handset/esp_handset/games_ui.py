@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import random
+from pathlib import Path
 from typing import Callable, Optional
 
 from PyQt5.QtCore import QPoint, QRect, Qt, QTimer, pyqtSignal
@@ -11,6 +12,7 @@ from PyQt5.QtGui import (
     QLinearGradient,
     QPainter,
     QPen,
+    QPixmap,
     QRadialGradient,
 )
 from PyQt5.QtWidgets import (
@@ -61,6 +63,46 @@ def _font(px: int, bold: bool = False) -> QFont:
     f.setPixelSize(max(9, int(px)))
     f.setBold(bool(bold))
     return f
+
+
+_ASSET_DIR = Path(__file__).resolve().parent / "game_assets"
+_PIX: dict = {}
+
+
+def _pix(name: str) -> Optional[QPixmap]:
+    if name in _PIX:
+        return _PIX[name]
+    path = _ASSET_DIR / name
+    pm = QPixmap(str(path)) if path.is_file() else QPixmap()
+    _PIX[name] = None if pm.isNull() else pm
+    return _PIX[name]
+
+
+def _draw_pm(p: QPainter, name: str, rect: QRect, *, fill: bool = False) -> bool:
+    pm = _pix(name)
+    if pm is None:
+        return False
+    mode = Qt.IgnoreAspectRatio if fill else Qt.KeepAspectRatio
+    scaled = pm.scaled(
+        max(1, rect.width()),
+        max(1, rect.height()),
+        mode,
+        Qt.SmoothTransformation,
+    )
+    x = rect.x() + (rect.width() - scaled.width()) // 2
+    y = rect.y() + (rect.height() - scaled.height()) // 2
+    p.drawPixmap(x, y, scaled)
+    return True
+
+
+def _square_grid(r: QRect, cols: int, rows: int, margin: int = 6):
+    """Integer square cells, board centered in r. Returns (x, y, cell)."""
+    inner = r.adjusted(margin, margin, -margin, -margin)
+    cell = max(4, min(inner.width() // cols, inner.height() // rows))
+    w, h = cell * cols, cell * rows
+    x = inner.left() + (inner.width() - w) // 2
+    y = inner.top() + (inner.height() - h) // 2
+    return x, y, cell
 
 
 def _fill_crt(p: QPainter, r: QRect, accent: QColor) -> None:
@@ -590,54 +632,47 @@ class SnakeBoard(QWidget):
     def paintEvent(self, _e):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing, True)
+        p.setRenderHint(QPainter.SmoothPixmapTransform, True)
         r = self.rect()
         accent = QColor("#3dff9a")
         _fill_crt(p, r, accent)
-        margin = 8
-        board = r.adjusted(margin, margin, -margin, -margin)
-        cw = board.width() / self.cols
-        ch = board.height() / self.rows
+        ox, oy, cell = _square_grid(r, self.cols, self.rows, 8)
+        bw, bh = cell * self.cols, cell * self.rows
         # grid wash
         p.setPen(QPen(QColor(40, 60, 50, 50), 1))
         for x in range(self.cols + 1):
-            xx = int(board.left() + x * cw)
-            p.drawLine(xx, board.top(), xx, board.bottom())
+            xx = ox + x * cell
+            p.drawLine(xx, oy, xx, oy + bh)
         for y in range(self.rows + 1):
-            yy = int(board.top() + y * ch)
-            p.drawLine(board.left(), yy, board.right(), yy)
+            yy = oy + y * cell
+            p.drawLine(ox, yy, ox + bw, yy)
 
-        # food — glowing apple
-        fx = board.left() + self.food.x() * cw
-        fy = board.top() + self.food.y() * ch
-        fr = QRect(int(fx + 2), int(fy + 2), int(cw - 4), int(ch - 4))
-        glow = QRadialGradient(fr.center(), fr.width())
-        glow.setColorAt(0.0, QColor("#ff6b6b"))
-        glow.setColorAt(1.0, QColor("#ff6b6b00"))
-        p.setBrush(glow)
-        p.setPen(Qt.NoPen)
-        p.drawEllipse(fr.adjusted(-2, -2, 2, 2))
-        p.setBrush(QColor("#ff5252"))
-        p.drawRoundedRect(fr, 4, 4)
+        # food — apple sprite in a square cell
+        fr = QRect(ox + self.food.x() * cell + 1, oy + self.food.y() * cell + 1, cell - 2, cell - 2)
+        if not _draw_pm(p, "apple.png", fr):
+            p.setBrush(QColor("#ff5252"))
+            p.setPen(Qt.NoPen)
+            p.drawEllipse(fr)
 
         n = len(self.snake)
         for i, s in enumerate(self.snake):
-            t = i / max(1, n - 1)
-            c = QColor("#7dffb0") if i == 0 else QColor(
-                int(30 + 40 * (1 - t)),
-                int(180 + 40 * (1 - t)),
-                int(90 + 30 * (1 - t)),
-            )
-            sx = board.left() + s.x() * cw
-            sy = board.top() + s.y() * ch
-            cell = QRect(int(sx + 1), int(sy + 1), int(cw - 2), int(ch - 2))
-            p.setBrush(c)
-            p.setPen(QPen(c.lighter(130), 1))
-            p.drawRoundedRect(cell, 4, 4)
+            cell_r = QRect(ox + s.x() * cell + 1, oy + s.y() * cell + 1, cell - 2, cell - 2)
             if i == 0:
-                p.setBrush(QColor("#0a120e"))
-                eye = 2
-                p.drawEllipse(cell.center() + QPoint(-3, -2), eye, eye)
-                p.drawEllipse(cell.center() + QPoint(3, -2), eye, eye)
+                if not _draw_pm(p, "snake.png", cell_r):
+                    p.setBrush(QColor("#7dffb0"))
+                    p.setPen(QPen(QColor("#b6ffd4"), 1))
+                    p.drawRoundedRect(cell_r, 4, 4)
+            else:
+                if not _draw_pm(p, "block_green.png", cell_r, fill=True):
+                    t = i / max(1, n - 1)
+                    c = QColor(
+                        int(30 + 40 * (1 - t)),
+                        int(180 + 40 * (1 - t)),
+                        int(90 + 30 * (1 - t)),
+                    )
+                    p.setBrush(c)
+                    p.setPen(QPen(c.lighter(130), 1))
+                    p.drawRoundedRect(cell_r, 3, 3)
 
         if self.paused and self.alive:
             p.fillRect(r, QColor(0, 0, 0, 120))
@@ -759,13 +794,16 @@ class PongBoard(QWidget):
 
         bx = int(court.left() + self.ball[0] * court.width())
         by = int(court.top() + self.ball[1] * court.height())
-        glow = QRadialGradient(QPoint(bx, by), 14)
-        glow.setColorAt(0.0, QColor("#ffffff"))
-        glow.setColorAt(1.0, QColor("#5ad1ff00"))
-        p.setBrush(glow)
-        p.drawEllipse(QPoint(bx, by), 10, 10)
-        p.setBrush(QColor("#ffffff"))
-        p.drawEllipse(QPoint(bx, by), 5, 5)
+        bs = max(10, min(18, court.width() // 16))
+        br = QRect(bx - bs // 2, by - bs // 2, bs, bs)
+        if not _draw_pm(p, "ball.png", br):
+            glow = QRadialGradient(QPoint(bx, by), bs)
+            glow.setColorAt(0.0, QColor("#ffffff"))
+            glow.setColorAt(1.0, QColor("#5ad1ff00"))
+            p.setBrush(glow)
+            p.drawEllipse(QPoint(bx, by), bs // 2 + 4, bs // 2 + 4)
+            p.setBrush(QColor("#ffffff"))
+            p.drawEllipse(QPoint(bx, by), bs // 2, bs // 2)
 
         p.setPen(_INK)
         p.setFont(_font(14, True))
@@ -797,6 +835,15 @@ _COLORS = {
     "Z": "#ff6b6b",
     "J": "#82aaff",
     "L": "#ff9e64",
+}
+_BLOCK_PIX = {
+    "I": "block_blue.png",
+    "O": "block_yellow.png",
+    "T": "block_purple.png",
+    "S": "block_green.png",
+    "Z": "block_red.png",
+    "J": "block_brown.png",
+    "L": "block_orange.png",
 }
 
 
@@ -932,32 +979,34 @@ class TetrisBoard(QWidget):
     def paintEvent(self, _e):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing, True)
+        p.setRenderHint(QPainter.SmoothPixmapTransform, True)
         r = self.rect()
         accent = QColor("#c792ea")
         _fill_crt(p, r, accent)
-        margin = 8
-        board = r.adjusted(margin, margin, -margin, -margin)
-        cw = board.width() / self.w
-        ch = board.height() / self.h
+        ox, oy, cell = _square_grid(r, self.w, self.h, 8)
+        bw, bh = cell * self.w, cell * self.h
         p.setBrush(QColor("#0c1218"))
         p.setPen(QPen(QColor("#2a3545"), 2))
-        p.drawRoundedRect(board, 6, 6)
+        p.drawRoundedRect(QRect(ox - 2, oy - 2, bw + 4, bh + 4), 6, 6)
 
         def draw_cell(gx, gy, kind, ghost=False):
             if gy < 0:
                 return
-            x = int(board.left() + gx * cw)
-            y = int(board.top() + gy * ch)
-            cell = QRect(x + 1, y + 1, int(cw - 2), int(ch - 2))
-            col = QColor(_COLORS.get(kind, "#888"))
+            cell_r = QRect(ox + gx * cell + 1, oy + gy * cell + 1, cell - 2, cell - 2)
             if ghost:
-                col.setAlpha(70)
-            g = QLinearGradient(cell.topLeft(), cell.bottomRight())
-            g.setColorAt(0.0, col.lighter(130))
-            g.setColorAt(1.0, col.darker(120))
-            p.setBrush(g)
-            p.setPen(QPen(col.lighter(150), 1))
-            p.drawRoundedRect(cell, 3, 3)
+                p.setOpacity(0.28)
+            if not _draw_pm(p, _BLOCK_PIX.get(kind, "block_blue.png"), cell_r, fill=True):
+                col = QColor(_COLORS.get(kind, "#888"))
+                if ghost:
+                    col.setAlpha(70)
+                g = QLinearGradient(cell_r.topLeft(), cell_r.bottomRight())
+                g.setColorAt(0.0, col.lighter(130))
+                g.setColorAt(1.0, col.darker(120))
+                p.setBrush(g)
+                p.setPen(QPen(col.lighter(150), 1))
+                p.drawRoundedRect(cell_r, 3, 3)
+            if ghost:
+                p.setOpacity(1.0)
 
         for y in range(self.h):
             for x in range(self.w):
@@ -988,6 +1037,22 @@ class TetrisBoard(QWidget):
 # ── Solitaire ────────────────────────────────────────────────────────────────
 _SUITS = "♠♥♦♣"
 _RANKS = "A23456789TJQK"
+_SUIT_FILE = {"♠": "spade", "♥": "heart", "♦": "diamond", "♣": "club"}
+_RANK_FILE = {
+    "A": "1",
+    "2": "2",
+    "3": "3",
+    "4": "4",
+    "5": "5",
+    "6": "6",
+    "7": "7",
+    "8": "8",
+    "9": "9",
+    "T": "10",
+    "J": "jack",
+    "Q": "queen",
+    "K": "king",
+}
 
 
 def _card_color(suit: str) -> QColor:
@@ -1051,36 +1116,47 @@ class SolitaireBoard(QWidget):
     def paintEvent(self, _e):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing, True)
+        p.setRenderHint(QPainter.SmoothPixmapTransform, True)
         r = self.rect()
         accent = QColor("#3dff9a")
         _fill_crt(p, r, accent)
-        cw, ch = 28, 38
-        y0 = 12
+        # Playing-card aspect (~2.5×3.5), not squares
+        gap = max(26, (r.width() - 12) // 7)
+        cw = min(32, gap - 3)
+        ch = int(cw * 1.4)
+        y0 = 8
         # stock / waste
-        self._draw_card_back(p, 12, y0, cw, ch)
+        self._draw_card_back(p, 8, y0, cw, ch)
         p.setPen(_MUTED)
         p.setFont(_font(8))
-        p.drawText(QRect(8, y0 + ch + 2, cw + 8, 12), Qt.AlignCenter, f"{len(self.stock)}")
+        p.drawText(QRect(4, y0 + ch + 2, cw + 8, 12), Qt.AlignCenter, f"{len(self.stock)}")
         if self.waste:
-            self._draw_card(p, 48, y0, cw, ch, self.waste[-1])
+            self._draw_card(p, 8 + cw + 8, y0, cw, ch, self.waste[-1])
         # foundations
-        x = r.width() - 4 * (cw + 6) - 8
+        x = r.width() - 4 * (cw + 4) - 6
         for i, s in enumerate(_SUITS):
             pile = self.foundations[s]
             if pile:
-                self._draw_card(p, x + i * (cw + 6), y0, cw, ch, pile[-1])
+                self._draw_card(p, x + i * (cw + 4), y0, cw, ch, pile[-1])
             else:
-                self._draw_slot(p, x + i * (cw + 6), y0, cw, ch, s)
+                self._draw_slot(p, x + i * (cw + 4), y0, cw, ch, s)
 
         # tableau
-        ty = y0 + ch + 20
-        gap = max(cw + 4, (r.width() - 16) // 7)
+        ty = y0 + ch + 16
         for i, col in enumerate(self.tableau):
-            tx = 8 + i * gap
+            tx = 6 + i * gap
             if not col:
                 self._draw_slot(p, tx, ty, cw, ch, "")
             for j, card in enumerate(col):
-                self._draw_card(p, tx, ty + j * 12, cw, ch, card, selected=(i == self.sel_col and j == len(col) - 1))
+                self._draw_card(
+                    p,
+                    tx,
+                    ty + j * max(10, ch // 4),
+                    cw,
+                    ch,
+                    card,
+                    selected=(i == self.sel_col and j == len(col) - 1),
+                )
         p.setPen(_MUTED)
         p.setFont(_font(9))
         p.drawText(QRect(8, r.height() - 18, r.width() - 16, 14), Qt.AlignCenter, self.message)
@@ -1095,25 +1171,42 @@ class SolitaireBoard(QWidget):
             p.drawText(QRect(x, y, w, h), Qt.AlignCenter, label)
 
     def _draw_card_back(self, p, x, y, w, h):
+        rect = QRect(x, y, w, h)
+        if _draw_pm(p, "cards/back-red.png", rect, fill=True):
+            return
         p.setBrush(QColor("#1a3a5c"))
         p.setPen(QPen(QColor("#5ad1ff"), 1))
-        p.drawRoundedRect(QRect(x, y, w, h), 4, 4)
+        p.drawRoundedRect(rect, 4, 4)
         p.setPen(QPen(QColor("#3a6a9c"), 1))
         p.drawRect(x + 4, y + 4, w - 8, h - 8)
 
     def _draw_card(self, p, x, y, w, h, card, selected=False):
         rank, suit = card
-        p.setBrush(QColor("#f4f7fb"))
-        p.setPen(QPen(QColor("#ffd56a") if selected else QColor("#1a2030"), 2 if selected else 1))
-        p.drawRoundedRect(QRect(x, y, w, h), 4, 4)
-        p.setPen(_card_color(suit))
-        p.setFont(_font(9, True))
-        p.drawText(QRect(x + 2, y + 2, w - 4, 14), Qt.AlignLeft, f"{rank}{suit}")
+        rect = QRect(x, y, w, h)
+        fname = f"cards/{_SUIT_FILE.get(suit, 'spade')}_{_RANK_FILE.get(rank, '1')}.png"
+        if not _draw_pm(p, fname, rect, fill=True):
+            p.setBrush(QColor("#f4f7fb"))
+            p.setPen(QPen(QColor("#ffd56a") if selected else QColor("#1a2030"), 2 if selected else 1))
+            p.drawRoundedRect(rect, 4, 4)
+            p.setPen(_card_color(suit))
+            p.setFont(_font(9, True))
+            p.drawText(QRect(x + 2, y + 2, w - 4, 14), Qt.AlignLeft, f"{rank}{suit}")
+            return
+        if selected:
+            p.setBrush(Qt.NoBrush)
+            p.setPen(QPen(QColor("#ffd56a"), 2))
+            p.drawRoundedRect(rect.adjusted(0, 0, -1, -1), 3, 3)
 
 
 # ── Uno (simple) ─────────────────────────────────────────────────────────────
 _UNO_COLORS = ["R", "G", "B", "Y"]
 _UNO_HEX = {"R": "#ff5252", "G": "#3dff9a", "B": "#5ad1ff", "Y": "#ffd56a"}
+_UNO_BLOCK = {
+    "R": "block_red.png",
+    "G": "block_green.png",
+    "B": "block_blue.png",
+    "Y": "block_yellow.png",
+}
 
 
 class UnoBoard(QWidget):
@@ -1173,32 +1266,37 @@ class UnoBoard(QWidget):
     def paintEvent(self, _e):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing, True)
+        p.setRenderHint(QPainter.SmoothPixmapTransform, True)
         r = self.rect()
         accent = QColor("#ff6b6b")
         _fill_crt(p, r, accent)
-        # discard
+        # discard — real-card aspect
+        cw, ch = 40, 56
         top = self.pile[-1]
-        self._card(p, r.width() // 2 - 22, 16, 44, 60, top, big=True)
+        self._card(p, r.width() // 2 - cw // 2, 10, cw, ch, top, big=True)
         p.setPen(_MUTED)
         p.setFont(_font(9))
-        p.drawText(QRect(0, 80, r.width(), 14), Qt.AlignCenter, self.message)
+        p.drawText(QRect(0, 70, r.width(), 14), Qt.AlignCenter, self.message)
         # hand
         n = max(1, len(self.hand))
-        cw = min(36, (r.width() - 16) // n)
-        total = cw * n
+        slot = min(34, (r.width() - 12) // n)
+        hw, hh = slot - 3, int((slot - 3) * 1.4)
+        total = slot * n
         x0 = (r.width() - total) // 2
         for i, card in enumerate(self.hand):
-            self._card(p, x0 + i * cw, 100, cw - 4, 48, card, selected=(i == self.sel))
+            self._card(p, x0 + i * slot, 90, hw, hh, card, selected=(i == self.sel))
 
     def _card(self, p, x, y, w, h, card, selected=False, big=False):
         col, num = card
-        base = QColor(_UNO_HEX.get(col, "#888"))
-        p.setBrush(base)
-        p.setPen(QPen(QColor("#fff") if selected else base.darker(140), 2 if selected else 1))
-        p.drawRoundedRect(QRect(x, y, w, h), 6, 6)
+        rect = QRect(x, y, w, h)
+        p.setBrush(QColor("#f4f7fb"))
+        p.setPen(QPen(QColor("#fff") if selected else QColor("#1a2030"), 2 if selected else 1))
+        p.drawRoundedRect(rect, 6, 6)
+        inner = rect.adjusted(3, 8, -3, -8)
+        _draw_pm(p, _UNO_BLOCK.get(col, "block_red.png"), inner, fill=True)
         p.setPen(QColor("#101820"))
         p.setFont(_font(16 if big else 11, True))
-        p.drawText(QRect(x, y, w, h), Qt.AlignCenter, str(num))
+        p.drawText(rect, Qt.AlignCenter, str(num))
 
 
 # ── Card game shell (menu + play, no score race) ─────────────────────────────

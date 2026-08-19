@@ -1,0 +1,9 @@
+Game sprites (vendored for Digivice 240×320)
+
+Twemoji (CC-BY 4.0, Twitter)
+  https://github.com/twitter/twemoji
+  apple, snake, ball, colored squares, suit glyphs
+
+SVG-cards (LGPL-2.1+, Hartmut deBeer / David Bellot)
+  https://github.com/htdebeer/SVG-cards
+  PNG faces in cards/ — see SVG-CARDS-LICENSE
