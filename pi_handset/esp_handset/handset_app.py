@@ -263,6 +263,7 @@ from esp_handset import ollama_chat  # noqa: E402
 from esp_handset import store  # noqa: E402
 from esp_handset import display_geom as geom  # noqa: E402
 from esp_handset.shell import (  # noqa: E402
+    APPS_APPS,
     ACCOUNTS_APPS,
     CALLS_APPS,
     CLOCK_APPS,
@@ -354,6 +355,10 @@ def build_app(bridge: Optional[EspBridge], modem: Optional[Sim7600]) -> PhoneShe
         )
 
     # Radial submenus (main → folder → app)
+    shell.register_page(
+        "folder_apps",
+        shell.build_folder_keyed("folder_apps", "Apps", APPS_APPS),
+    )
     shell.register_page(
         "folder_calls",
         shell.build_folder_keyed("folder_calls", "Calls", CALLS_APPS),
@@ -620,6 +625,9 @@ def build_app(bridge: Optional[EspBridge], modem: Optional[Sim7600]) -> PhoneShe
     shell.register_page("tetris", games_ui.make_tetris(back))
     shell.register_page("solitaire", games_ui.make_solitaire(back))
     shell.register_page("uno", games_ui.make_uno(back))
+    from esp_handset.shadowdark_ui import make_shadowdark_page
+
+    shell.register_page("shadowdark", make_shadowdark_page(back))
     shell.register_page("set_security", features.make_security_page(back))
     shell.register_page(
         "set_accounts",
@@ -736,6 +744,16 @@ def build_app(bridge: Optional[EspBridge], modem: Optional[Sim7600]) -> PhoneShe
                 if callable(ref):
                     ref()
                 status(done)
+                play_alert()
+            from esp_handset.shadowdark_ui import check_torch_tick
+
+            torch = check_torch_tick()
+            if torch:
+                store.push_notif("Shadowdark", torch, "torch")
+                ref = getattr(notifs_page, "refresh_notifs", None)
+                if callable(ref):
+                    ref()
+                status(torch)
                 play_alert()
         except Exception as e:
             print(f"[handset] alarm poll: {e}", flush=True)

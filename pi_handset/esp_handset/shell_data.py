@@ -14,7 +14,7 @@ class AppEntry:
     glyph: str = "◆"
 
 
-# 5 top + 5 bottom (Linux lives under Settings, not on home)
+# 5 top + 4 bottom — Games/Tools live under Apps
 HOME_APPS: List[AppEntry] = [
     AppEntry("calls", "Calls", "Phone · contacts", "☎"),
     AppEntry("sms", "SMS", "Texts · LoRa", "✉"),
@@ -22,9 +22,8 @@ HOME_APPS: List[AppEntry] = [
     AppEntry("camera", "Camera", "Snap · preview", "◉"),
     AppEntry("browser", "Browser", "Open web", "⎋"),
     AppEntry("media", "Media", "Gallery · notes · GPS", "▶"),
-    AppEntry("games", "Games", "Emu · arcade", "♠"),
-    AppEntry("tools", "Tools", "Calc · steps", "⚒"),
     AppEntry("email", "Email", "Gmail · Inbox", "@"),
+    AppEntry("apps", "Apps", "Games · tools · Shadowdark", "◆"),
     AppEntry("settings", "Settings", "Device · Linux", "⚙"),
 ]
 
@@ -112,6 +111,12 @@ GAMES_APPS = [
     AppEntry("uno", "Uno", "Match color · number", "U"),
 ]
 
+APPS_APPS = [
+    AppEntry("games", "Games", "Emu · arcade · cards", "♠"),
+    AppEntry("tools", "Tools", "Calc · steps · AI", "⚒"),
+    AppEntry("shadowdark", "Shadowdark", "Dice · torch timer", "⚔"),
+]
+
 EMU_PAGE_KEYS = ("gb", "nes", "smsgg")
 
 # Settings → Debug hub
@@ -124,6 +129,7 @@ COMM_APPS = CALLS_APPS + SMS_APPS
 SETUP_APPS = TOOLS_APPS + SETTINGS_APPS  # legacy alias
 
 FOLDER_MAP = {
+    "apps": ("folder_apps", "Apps", APPS_APPS),
     "calls": ("folder_calls", "Calls", CALLS_APPS),
     "sms": ("folder_sms", "SMS", SMS_APPS),
     "time": ("folder_time", "Time", TIME_APPS),
