@@ -98,7 +98,7 @@ doctor() {
   echo "--- PATH ---"
   echo "$PATH"
   echo "--- apt policy ---"
-  apt-cache policy linphone-cli 2>&1 | head -n 20 || true
+  apt-cache policy linphone-cli liblinphone12 2>&1 | head -n 30 || true
   echo "--- apt-cache search ---"
   apt-cache search --names-only 'linphone' 2>&1 | head -n 30 || true
   echo "--- dpkg ---"
@@ -120,55 +120,102 @@ doctor() {
 }
 
 ensure_debian_voip_repo() {
-  local codename arch list
+  local codename arch key
   codename="$(os_codename)"
   arch="$(os_arch)"
-  list=/etc/apt/sources.list.d/digivice-voip-debian.list
-  # Raspberry Pi OS sometimes omits Debian main packages Digivice needs
-  if apt-cache show linphone-cli >/dev/null 2>&1; then
-    log "linphone-cli already visible in apt-cache"
-    return 0
-  fi
-  log "Adding Debian $codename main ($arch) for linphone-cli…"
-  cat >"$list" <<EOF
-# Digivice VoIP — linphone-cli from Debian
-deb [arch=${arch}] http://deb.debian.org/debian ${codename} main
-deb [arch=${arch}] http://deb.debian.org/debian ${codename}-updates main
+  log "Debian $codename ($arch) for linphone-cli + liblinphone12…"
+  apt-get install -y debian-archive-keyring 2>&1 | tee -a "$LOG" | tail -n 8 || true
+  key=""
+  for cand in \
+    /usr/share/keyrings/debian-archive-keyring.gpg \
+    /usr/share/keyrings/debian-archive-keyring.pgp
+  do
+    [[ -f "$cand" ]] && key="$cand" && break
+  done
+  rm -f /etc/apt/sources.list.d/digivice-voip-debian.list
+  if [[ -n "$key" ]]; then
+    cat >/etc/apt/sources.list.d/digivice-voip-debian.sources <<EOF
+Types: deb
+URIs: http://deb.debian.org/debian
+Suites: ${codename}
+Components: main
+Architectures: ${arch}
+Signed-By: ${key}
 EOF
-  apt-get update -qq 2>&1 | tee -a "$LOG" | tail -n 15
+  else
+    log "WARN: no debian-archive-keyring — trusted=yes for VoIP debs only"
+    echo "deb [arch=${arch} trusted=yes] http://deb.debian.org/debian ${codename} main" \
+      >/etc/apt/sources.list.d/digivice-voip-debian.list
+  fi
+  cat >/etc/apt/preferences.d/digivice-voip-debian <<'EOF'
+Package: *
+Pin: origin deb.debian.org
+Pin-Priority: 1
+
+Package: /linphone|liblinphone|libbctoolbox|libbellesip|libbelr|libbelcard|liblime|libmediastreamer|libortp|libbcmatroska|libbcg729|libbzrtp|belcard-data|bellesip-data/
+Pin: origin deb.debian.org
+Pin-Priority: 990
+EOF
+  apt-get update -qq 2>&1 | tee -a "$LOG" | tail -n 20
+}
+
+_pool_latest() {
+  local pool="$1" regex="$2" hit
+  hit="$(curl -fsSL "$pool" 2>/dev/null | grep -oE "$regex" | sort -V | tail -n1 || true)"
+  [[ -z "$hit" ]] && hit="$(wget -q -O - "$pool" 2>/dev/null | grep -oE "$regex" | sort -V | tail -n1 || true)"
+  [[ -n "$hit" ]] && echo "${pool%/}/$hit"
+}
+
+_fetch_deb() {
+  local url="$1" dest="$2"
+  [[ -n "$url" ]] || return 1
+  log "get $(basename "$url")"
+  curl -fL --retry 3 -o "$dest" "$url" 2>>"$LOG" \
+    || wget -q -O "$dest" "$url" 2>>"$LOG"
+  [[ -s "$dest" ]]
 }
 
 download_debs_fallback() {
-  # Last resort: fetch known .debs from Debian pool (bookworm / trixie)
-  local codename arch ver base tmp
-  codename="$(os_codename)"
+  # Raspbian has no linphone-cli. Fetch the Debian armhf stack, including
+  # liblinphone12 (installing only linphone-cli.deb leaves it uninstallable).
+  local arch tmp pool url f
   arch="$(os_arch)"
   tmp=/var/tmp/digivice-voip
   mkdir -p "$tmp"
-  case "$codename" in
-    trixie|forky|sid) ver="5.3.105-5" ;;
-    *) ver="5.1.65-4" ;;
-  esac
-  base="http://deb.debian.org/debian/pool/main/l/linphone"
-  log "Direct .deb fallback ver=$ver arch=$arch"
-  (
-    cd "$tmp" || exit 1
-    rm -f linphone-cli_*.deb linphone-common_*.deb 2>/dev/null || true
-    curl -fsSL -o "linphone-common_${ver}_all.deb" \
-      "${base}/linphone-common_${ver}_all.deb" 2>&1 | tee -a "$LOG" \
-      || wget -q -O "linphone-common_${ver}_all.deb" \
-        "${base}/linphone-common_${ver}_all.deb" 2>&1 | tee -a "$LOG"
-    curl -fsSL -o "linphone-cli_${ver}_${arch}.deb" \
-      "${base}/linphone-cli_${ver}_${arch}.deb" 2>&1 | tee -a "$LOG" \
-      || wget -q -O "linphone-cli_${ver}_${arch}.deb" \
-        "${base}/linphone-cli_${ver}_${arch}.deb" 2>&1 | tee -a "$LOG"
-    if [[ ! -f "linphone-cli_${ver}_${arch}.deb" ]]; then
-      log "curl failed for linphone-cli_${ver}_${arch}.deb"
-      return 1
-    fi
-    apt-get install -y "./linphone-common_${ver}_all.deb" "./linphone-cli_${ver}_${arch}.deb" \
-      2>&1 | tee -a "$LOG"
-  )
+  log "Direct .deb fallback arch=$arch"
+  cd "$tmp" || return 1
+  rm -f ./*.deb 2>/dev/null || true
+
+  pool=http://deb.debian.org/debian/pool/main
+  _fetch_deb "$(_pool_latest "$pool/l/linphone" "linphone-common_[^\"<> ]+_all\\.deb")" \
+    "$tmp/linphone-common.deb" || return 1
+  _fetch_deb "$(_pool_latest "$pool/l/linphone" "liblinphone12_[^\"<> ]+_${arch}\\.deb")" \
+    "$tmp/liblinphone12.deb" || return 1
+  _fetch_deb "$(_pool_latest "$pool/l/linphone" "linphone-cli_[^\"<> ]+_${arch}\\.deb")" \
+    "$tmp/linphone-cli.deb" || return 1
+  for spec in \
+    "b/bctoolbox|libbctoolbox2_[^\"<> ]+_${arch}\\.deb" \
+    "b/belle-sip|libbellesip3_[^\"<> ]+_${arch}\\.deb" \
+    "b/belr|libbelr1_[^\"<> ]+_${arch}\\.deb" \
+    "b/belcard|libbelcard1_[^\"<> ]+_${arch}\\.deb" \
+    "l/lime|liblime1_[^\"<> ]+_${arch}\\.deb" \
+    "m/mediastreamer2|libmediastreamer2-14_[^\"<> ]+_${arch}\\.deb" \
+    "o/ortp|libortp16_[^\"<> ]+_${arch}\\.deb" \
+    "b/bcmatroska2|libbcmatroska2-5_[^\"<> ]+_${arch}\\.deb" \
+    "b/bcg729|libbcg729-0_[^\"<> ]+_${arch}\\.deb" \
+    "b/bzrtp|libbzrtp1_[^\"<> ]+_${arch}\\.deb"
+  do
+    url="$(_pool_latest "$pool/${spec%%|*}" "${spec##*|}")"
+    f="$tmp/$(basename "${url:-x}")"
+    _fetch_deb "$url" "$f" || log "WARN: skip ${spec##*|}"
+  done
+
+  log "apt-get install local linphone debs…"
+  apt-get install -y "$tmp"/*.deb 2>&1 | tee -a "$LOG"
+  if ! have_bin; then
+    dpkg -i "$tmp"/*.deb 2>&1 | tee -a "$LOG" || true
+    apt-get install -y -f 2>&1 | tee -a "$LOG" || true
+  fi
 }
 
 install_cli() {
@@ -176,18 +223,14 @@ install_cli() {
   log "apt-get update…"
   apt-get update -qq 2>&1 | tee -a "$LOG" | tail -n 8
 
-  if ! apt-cache show linphone-cli >/dev/null 2>&1; then
-    ensure_debian_voip_repo
-  fi
+  ensure_debian_voip_repo
 
-  log "apt-get install linphone-cli…"
-  if ! apt-get install -y linphone-cli 2>&1 | tee -a "$LOG"; then
-    log "WARN: linphone-cli install failed — retry with linphone-common"
-    apt-get install -y --fix-missing linphone-common linphone-cli 2>&1 | tee -a "$LOG" || true
-  fi
+  log "apt-get install linphone-cli liblinphone12…"
+  apt-get install -y linphone-cli liblinphone12 linphone-common 2>&1 | tee -a "$LOG" || true
 
   if ! have_bin; then
     log "searching apt for linphone packages…"
+    apt-cache policy linphone-cli liblinphone12 2>&1 | tee -a "$LOG" | head -n 40 || true
     apt-cache search linphone 2>&1 | tee -a "$LOG" | head -n 40 || true
     apt-get install -y linphone-nogtk 2>&1 | tee -a "$LOG" || true
   fi

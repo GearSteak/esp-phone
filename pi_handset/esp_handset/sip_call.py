@@ -640,7 +640,7 @@ def _read_voip_status() -> str:
 
 def _kick_voip_install(*, force: bool = False) -> None:
     """Start linphone-cli install in the background; do not block the UI."""
-    global _INSTALL_STARTED
+    global _INSTALL_STARTED, _INSTALL_STATE, _INSTALL_MSG
     now = time.time()
     with _INSTALL_LOCK:
         if _INSTALL_STATE == "running" and now - _INSTALL_STARTED < 300.0:

@@ -251,7 +251,7 @@ def make_sip_account_page(on_back: Callable[[], None]) -> QWidget:
                 from esp_handset import sip_call
 
                 bridge.progress.emit("Installing VoIP if needed…")
-                sip_call.prepare_voip(180.0)
+                sip_call.prepare_voip(300.0)
                 bridge.progress.emit("Registering with SIP…")
                 report = sip_call.doctor()
             except Exception as e:
@@ -279,7 +279,7 @@ def make_sip_account_page(on_back: Callable[[], None]) -> QWidget:
                 pass
             bridge.done.emit("RESULT: TEST TIMED OUT\n" + extra)
 
-        QTimer.singleShot(90000, timed_out)
+        QTimer.singleShot(300000, timed_out)
 
     save.clicked.connect(do_save)
     test.clicked.connect(do_test)
