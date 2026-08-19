@@ -90,7 +90,7 @@ def recent_log(n: int = 14) -> str:
 def _redact(text: str) -> str:
     s = text or ""
     s = re.sub(r"(?im)^(\s*(?:SIP_PASS|passwd|password|ha1)\s*=\s*).+$", r"\1***", s)
-    s = re.sub(r"(?i)(register sip:\S+\s+\S+\s+)\S+", r"\1***", s)
+    s = re.sub(r"(?im)^(register sip:\S+ \S+ )\S+$", r"\1***", s)
     try:
         pw = (_sip_env().get("SIP_PASS") or "").strip()
         if len(pw) >= 4:
@@ -963,6 +963,27 @@ def _core_log_registered() -> Optional[bool]:
     return _text_registered(text)
 
 
+def _zadarma_block_reason() -> str:
+    """Zadarma 403 lockout / auth reject from linphone-core.log, else empty."""
+    try:
+        if not _CORE_LOG.is_file():
+            return ""
+        text = _CORE_LOG.read_text(encoding="utf-8", errors="replace")[-20000:]
+    except OSError:
+        return ""
+    if re.search(r"(?i)Blocked for incorrect passwords", text):
+        return (
+            "Zadarma blocked this SIP login (too many wrong passwords). "
+            "Set a new SIP password in Zadarma, save it in Settings → Accounts, "
+            "then wait before Test SIP again."
+        )
+    if re.search(r"(?i)403 Forbidden", text) and re.search(
+        r"(?i)LinphoneRegistrationFailed", text
+    ):
+        return "Zadarma rejected REGISTER (403). Check SIP user/password in Accounts."
+    return ""
+
+
 class LinphoneEngine:
     """One long-lived `linphonec -c rc`. PTY + CR so readline actually accepts commands."""
 
@@ -1176,9 +1197,15 @@ class LinphoneEngine:
             self.stop()
             time.sleep(0.4)
         elif self.alive() and not self.registered:
+            blocked = _zadarma_block_reason()
+            if blocked:
+                return _set_error(blocked)
             _log("linphonec up but not registered — retry REGISTER")
             if self.ensure_registered(12.0, send_register=True):
                 return ""
+            blocked = _zadarma_block_reason()
+            if blocked:
+                return _set_error(blocked)
             _log("still unregistered — restart linphonec")
             self.stop()
             time.sleep(0.4)
@@ -1242,7 +1269,10 @@ class LinphoneEngine:
         self._reader.start()
         # rc has reg_sendregister=1 — do not type status/proxy into a password prompt
         if not self.ensure_registered(16.0, send_register=False):
-            if not self.ensure_registered(12.0, send_register=True):
+            blocked = _zadarma_block_reason()
+            if not blocked:
+                self.ensure_registered(12.0, send_register=True)
+            if not self.registered:
                 if not self.alive():
                     err = _set_error("linphonec exited during register")
                     try:
@@ -1250,15 +1280,18 @@ class LinphoneEngine:
                     except Exception:
                         pass
                     return err
+                blocked = _zadarma_block_reason()
                 with self._lock:
                     tail = " | ".join(list(self.lines)[-5:])
                 ip = _local_ipv4()
-                if not ip:
+                if blocked:
+                    err = _set_error(blocked)
+                elif not ip:
                     err = _set_error("No IPv4 — Wi-Fi/cell is down")
                 else:
                     err = _set_error("SIP not registered — check Wi‑Fi / Accounts")
                 extra = _redact(tail)[:180]
-                if extra:
+                if extra and not blocked:
                     err = _set_error(f"{err}\n{extra}")
                 try:
                     write_sip_report(extra=err + "\n" + recent_log(20))
@@ -1304,6 +1337,8 @@ class LinphoneEngine:
                     self._cli_ready = True
                 ready = True
             if send_register and not sent and ready and self._user and self._server:
+                if _zadarma_block_reason():
+                    return False
                 self.cmd(
                     f"register sip:{self._user}@{self._server} "
                     f"sip:{self._server} {self._password}"
