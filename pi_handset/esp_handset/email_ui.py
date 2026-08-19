@@ -6,13 +6,14 @@ import imaplib
 import re
 import smtplib
 import ssl
+import threading
 from datetime import datetime
 from email.header import decode_header, make_header
 from email.message import EmailMessage
 from email.utils import parsedate_to_datetime
 from typing import Callable, List, Optional
 
-from PyQt5.QtCore import Qt, QTimer
+from PyQt5.QtCore import QObject, Qt, QTimer, pyqtSignal
 from PyQt5.QtGui import QColor, QFont, QPainter
 from PyQt5.QtWidgets import (
     QFrame,
@@ -478,14 +479,14 @@ def make_email_page(on_back: Callable[[], None]) -> QWidget:
     # ── Inbox ────────────────────────────────────────────────────────────
     inbox = QWidget()
     il = QVBoxLayout(inbox)
-    il.setContentsMargins(4, 2, 4, 4)
-    il.setSpacing(4)
+    il.setContentsMargins(4, 1, 4, 2)
+    il.setSpacing(2)
 
     head = QHBoxLayout()
     head.setSpacing(4)
     title = QLabel("Inbox")
     title.setStyleSheet(
-        f"font-size:14px; font-weight:700; color:{_TEXT}; letter-spacing:0.2px;"
+        f"font-size:13px; font-weight:700; color:{_TEXT}; letter-spacing:0.2px;"
     )
     acct = QLabel("")
     acct.setStyleSheet(f"font-size:8px; color:{_MUTED};")
@@ -501,10 +502,21 @@ def make_email_page(on_back: Callable[[], None]) -> QWidget:
         b = QPushButton(lab)
         b.setFocusPolicy(Qt.StrongFocus)
         b.setCursor(Qt.PointingHandCursor)
-        b.setMinimumHeight(22)
+        b.setFixedHeight(16)
         b.setProperty("panel", key)
         chips_row.addWidget(b, 1)
         chip_btns[key] = b
+    compose_btn = QPushButton("✏️")
+    compose_btn.setFocusPolicy(Qt.StrongFocus)
+    compose_btn.setCursor(Qt.PointingHandCursor)
+    compose_btn.setFixedSize(22, 16)
+    compose_btn.setToolTip("Compose")
+    compose_btn.setStyleSheet(
+        f"QPushButton {{ font-size:9px; font-weight:700; padding:0;"
+        f" color:#fff; background:{_RED}; border:none; border-radius:8px; }}"
+        'QPushButton[digiFocus="1"] { border:2px solid #FFE600; }'
+    )
+    chips_row.addWidget(compose_btn, 0)
     il.addLayout(chips_row)
 
     status = QLabel("")
@@ -525,7 +537,7 @@ def make_email_page(on_back: Callable[[], None]) -> QWidget:
         f"QListWidget::item:selected {{ background:{_CHIP}; }}"
         'QListWidget[digiFocus="1"] { border:2px solid #FFE600; border-radius:10px; }'
     )
-    empty = QLabel("Empty folder.\nRefresh or set\nAccounts → Email.")
+    empty = QLabel("Empty folder.\nSet Accounts → Email.")
     empty.setAlignment(Qt.AlignCenter)
     empty.setWordWrap(True)
     empty.setStyleSheet(
@@ -569,14 +581,6 @@ def make_email_page(on_back: Callable[[], None]) -> QWidget:
     pl.addWidget(p_scroll, 1)
     split.addWidget(preview, 1)
     il.addLayout(split, 1)
-
-    bar = QHBoxLayout()
-    bar.setSpacing(6)
-    refresh = _btn("↻ Refresh")
-    compose_btn = _btn("✏️", fab=True)
-    bar.addWidget(refresh, 1)
-    bar.addWidget(compose_btn, 0)
-    il.addLayout(bar)
 
     # ── Reader ───────────────────────────────────────────────────────────
     reader = QWidget()
@@ -665,15 +669,30 @@ def make_email_page(on_back: Callable[[], None]) -> QWidget:
     stack.addWidget(reader)
     stack.addWidget(compose)
 
-    state = {"messages": [], "busy": False, "panel": "inbox", "mailbox": "INBOX"}
+    state = {
+        "messages": [],
+        "busy": False,
+        "pending": False,
+        "panel": "inbox",
+        "mailbox": "INBOX",
+    }
+
+    class _FetchBus(QObject):
+        finished = pyqtSignal(object, str, str, str)  # messages, err, panel, mailbox
+
+    class _BodyBus(QObject):
+        finished = pyqtSignal(str, str, str)  # uid, text, err
+
+    fetch_bus = _FetchBus()
+    body_bus = _BodyBus()
 
     def _chip_style(key: str) -> None:
         active = state["panel"]
         for k, b in chip_btns.items():
             on = k == active
             b.setStyleSheet(
-                f"QPushButton {{ font-size:9px; font-weight:{'700' if on else '600'};"
-                f" padding:2px 2px; border:none; border-radius:10px;"
+                f"QPushButton {{ font-size:7px; font-weight:{'700' if on else '600'};"
+                f" padding:0px 1px; border:none; border-radius:7px;"
                 f" color:{'#fff' if on else _TEXT};"
                 f" background:{_RED if on else _CHIP}; }}"
                 'QPushButton[digiFocus="1"] { border:2px solid #FFE600; }'
@@ -690,8 +709,6 @@ def make_email_page(on_back: Callable[[], None]) -> QWidget:
         p_from.setText(f"{name}" + (f"\n{addr}" if addr else ""))
         p_subj.setText(str(msg.get("subject") or "(no subject)"))
         p_body.setText(_reader_preview(msg))
-        if not str(msg.get("body") or "").strip() and msg.get("uid"):
-            QTimer.singleShot(50, lambda m=msg: _fetch_body(m, for_preview=True))
 
     def _set_acct() -> None:
         em = _creds()
@@ -739,7 +756,7 @@ def make_email_page(on_back: Callable[[], None]) -> QWidget:
             return snip
         if msg.get("uid"):
             return "Loading…"
-        return "Open Refresh to load body."
+        return "Open to load body."
 
     def _open_reader(msg: dict) -> None:
         try:
@@ -767,99 +784,132 @@ def make_email_page(on_back: Callable[[], None]) -> QWidget:
             except Exception:
                 pass
 
+    def _apply_body(uid: str, text: str, err: str) -> None:
+        snip = ""
+        if text:
+            snip = _snippet_text(text)
+            for m in state["messages"]:
+                if _uid_str(m.get("uid") or "") == uid:
+                    m["body"] = text[:4000]
+                    if snip:
+                        m["snippet"] = snip
+                    m["unread"] = False
+            _cache_set(state["messages"], state["panel"])
+        if stack.currentWidget() is reader:
+            if err and not text:
+                r_body.setText(
+                    f"(Could not load body)\n{err}\n\n"
+                    f"{snip or ''}"
+                )
+            elif not text:
+                r_body.setText(
+                    f"(Could not load body)\nUID FETCH failed for {uid}"
+                )
+            else:
+                r_body.setText(text[:4000] or "(empty message)")
+        cur = lst.currentRow()
+        if text and 0 <= cur < len(state["messages"]):
+            if _uid_str(state["messages"][cur].get("uid") or "") == uid:
+                p_body.setText(text[:4000] or "(empty message)")
+
+    body_bus.finished.connect(_apply_body)
+
     def _fetch_body(msg: dict, for_preview: bool = False) -> None:
+        del for_preview
         em = _creds()
         user = em.get("user") or ""
         password = em.get("pass") or ""
         host = em.get("host") or "imap.gmail.com"
         uid = _uid_str(msg.get("uid") or "")
+        mailbox = state.get("mailbox") or "INBOX"
         if not user or not password or not uid:
             if stack.currentWidget() is reader:
                 r_body.setText("(Missing account or message id)")
             return
-        try:
-            uid_b = uid.encode("utf-8")
-            M = imaplib.IMAP4_SSL(host, 993)
-            M.login(user, password)
-            M.select(state.get("mailbox") or "INBOX")
+
+        def work() -> None:
             text = ""
-            # Prefer part 1 (usually text/plain) — avoids downloading attachments.
-            for spec in ("(BODY.PEEK[1])", "(BODY.PEEK[TEXT])"):
-                typ, data = M.uid("fetch", uid_b, spec)
-                payloads = _fetch_payload_parts(data)
-                if typ != "OK" or not payloads:
-                    continue
-                blob = payloads[0][:12000]
-                if not blob or blob.strip().upper() == b"NIL":
-                    continue
-                decoded = _decode_part_bytes(blob, "utf-8").strip()
-                if not decoded:
-                    continue
-                if re.search(r"(?i)<html|</p>|<br\s*/?>", decoded[:600]):
-                    decoded = _strip_html_preview(decoded)
-                # Skip obvious MIME envelope noise
-                if decoded.lstrip().startswith("--") and "Content-Type:" in decoded[:200]:
-                    continue
-                text = decoded
-                if text:
-                    break
-            if not text:
-                typ, data = M.uid("fetch", uid_b, "(RFC822)")
-                payloads = _fetch_payload_parts(data)
-                if typ == "OK" and payloads:
-                    raw = payloads[0][:200_000]
-                    text = _extract_text(email_lib.message_from_bytes(raw))
+            err = ""
             try:
-                M.logout()
-            except Exception:
-                pass
-            if not text:
-                if stack.currentWidget() is reader:
-                    r_body.setText(
-                        "(Could not load body)\n"
-                        f"UID FETCH failed for {uid}\n"
-                        "Try ↻ Refresh, then open again.\n\n"
-                        f"{msg.get('snippet') or ''}"
-                    )
-                elif for_preview:
-                    p_body.setText(str(msg.get("snippet") or "(no preview)"))
-                return
-            msg["body"] = text[:4000]
-            snip = _snippet_text(text)
-            if snip:
-                msg["snippet"] = snip
-            for m in state["messages"]:
-                if _uid_str(m.get("uid") or "") == uid:
-                    m["body"] = msg["body"]
-                    if snip:
-                        m["snippet"] = snip
-                    m["unread"] = False
-            _cache_set(state["messages"], state["panel"])
-            if stack.currentWidget() is reader:
-                r_body.setText(msg["body"] or "(empty message)")
-            if for_preview or lst.currentRow() >= 0:
-                cur = lst.currentRow()
-                if 0 <= cur < len(state["messages"]):
-                    if _uid_str(state["messages"][cur].get("uid") or "") == uid:
-                        p_body.setText(msg["body"] or "(empty message)")
-        except Exception as e:
-            if stack.currentWidget() is reader:
-                snip = str(msg.get("snippet") or "")
-                if snip.casefold() in _PLACEHOLDER_SNIPS:
-                    snip = ""
-                r_body.setText(
-                    f"(Could not load body)\n{e}\n"
-                    "Try ↻ Refresh, then open again.\n\n"
-                    f"{snip}"
-                )
+                uid_b = uid.encode("utf-8")
+                M = imaplib.IMAP4_SSL(host, 993)
+                M.login(user, password)
+                M.select(mailbox)
+                for spec in ("(BODY.PEEK[1])", "(BODY.PEEK[TEXT])"):
+                    typ, data = M.uid("fetch", uid_b, spec)
+                    payloads = _fetch_payload_parts(data)
+                    if typ != "OK" or not payloads:
+                        continue
+                    blob = payloads[0][:12000]
+                    if not blob or blob.strip().upper() == b"NIL":
+                        continue
+                    decoded = _decode_part_bytes(blob, "utf-8").strip()
+                    if not decoded:
+                        continue
+                    if re.search(r"(?i)<html|</p>|<br\s*/?>", decoded[:600]):
+                        decoded = _strip_html_preview(decoded)
+                    if decoded.lstrip().startswith("--") and "Content-Type:" in decoded[:200]:
+                        continue
+                    text = decoded
+                    if text:
+                        break
+                if not text:
+                    typ, data = M.uid("fetch", uid_b, "(RFC822)")
+                    payloads = _fetch_payload_parts(data)
+                    if typ == "OK" and payloads:
+                        raw = payloads[0][:200_000]
+                        text = _extract_text(email_lib.message_from_bytes(raw))
+                try:
+                    M.logout()
+                except Exception:
+                    pass
+            except Exception as e:
+                err = str(e)
+            body_bus.finished.emit(uid, text, err)
+
+        threading.Thread(target=work, name="imap-body", daemon=True).start()
+
+    def _apply_fetch(messages: object, err: str, panel: str, mailbox: str) -> None:
+        state["busy"] = False
+        if mailbox:
+            state["mailbox"] = mailbox
+        if panel != state["panel"]:
+            if state["pending"]:
+                state["pending"] = False
+                do_fetch()
+            return
+        msgs = list(messages) if isinstance(messages, list) else []
+        if err:
+            status.setText("Sync failed")
+            empty.setText(f"Couldn't sync\n\n{_auth_hint(err, _creds().get('user') or '')}")
+            if not state["messages"]:
+                lst.hide()
+                empty.show()
+        else:
+            _cache_set(msgs, panel)
+            _fill_list(msgs)
+            store.push_notif(
+                "Email",
+                f"{len(msgs)} in {title.text()}",
+                "email",
+                toast=False,
+            )
+            status.setText("Updated just now")
+        if state["pending"]:
+            state["pending"] = False
+            do_fetch()
+
+    fetch_bus.finished.connect(_apply_fetch)
 
     def do_fetch() -> None:
         if state["busy"]:
+            state["pending"] = True
             return
         em = _creds()
         user = em.get("user") or ""
         password = em.get("pass") or ""
         host = em.get("host") or "imap.gmail.com"
+        panel = state["panel"]
         if not user or not password:
             status.setText("Set Accounts → Email")
             empty.setText(
@@ -873,27 +923,24 @@ def make_email_page(on_back: Callable[[], None]) -> QWidget:
             return
         state["busy"] = True
         status.setText("Syncing…")
-        refresh.setEnabled(False)
+        prev_body = {
+            _uid_str(m.get("uid") or ""): str(m.get("body") or "")
+            for m in state["messages"]
+            if m.get("uid") and m.get("body")
+        }
 
-        def work():
+        def work() -> None:
             messages: List[dict] = []
             err = ""
-            # Keep previously opened bodies across refresh (match by UID)
-            prev_body = {
-                _uid_str(m.get("uid") or ""): str(m.get("body") or "")
-                for m in state["messages"]
-                if m.get("uid") and m.get("body")
-            }
+            mailbox = "INBOX"
             try:
                 M = imaplib.IMAP4_SSL(host, 993)
                 M.login(user, password)
                 names = _imap_list_names(M)
-                mailbox = _pick_mailbox(names, state["panel"])
-                state["mailbox"] = mailbox
+                mailbox = _pick_mailbox(names, panel)
                 typ, _sel = M.select(mailbox)
                 if typ != "OK":
                     raise RuntimeError(f"Cannot open {mailbox}")
-                # Stable UIDs — sequence numbers break on a later connection
                 typ, data = M.uid("search", None, "ALL")
                 if typ != "OK" or not data or data[0] is None:
                     raise RuntimeError("UID SEARCH failed")
@@ -901,7 +948,6 @@ def make_email_page(on_back: Callable[[], None]) -> QWidget:
                 for num in reversed(ids):
                     try:
                         uid_s = _uid_str(num)
-                        # Header + first MIME part peek for list snippet (UID FETCH)
                         typ, msg_data = M.uid(
                             "fetch",
                             num,
@@ -957,30 +1003,9 @@ def make_email_page(on_back: Callable[[], None]) -> QWidget:
                 M.logout()
             except Exception as e:
                 err = str(e)
-            return messages, err
+            fetch_bus.finished.emit(messages, err, panel, mailbox)
 
-        # Keep UI responsive: run sync on timer tick (short IMAP ok on Pi)
-        try:
-            messages, err = work()
-        finally:
-            state["busy"] = False
-            refresh.setEnabled(True)
-        if err:
-            status.setText("Sync failed")
-            empty.setText(f"Couldn't sync\n\n{_auth_hint(err, user)}")
-            if not state["messages"]:
-                lst.hide()
-                empty.show()
-            return
-        _cache_set(messages, state["panel"])
-        _fill_list(messages)
-        store.push_notif(
-            "Email",
-            f"{len(messages)} in {title.text()}",
-            "email",
-            toast=False,
-        )
-        status.setText("Updated just now")
+        threading.Thread(target=work, name="imap-sync", daemon=True).start()
 
     def on_item(item: Optional[QListWidgetItem] = None) -> None:
         # Confirm / activate → full reader; arrows already drive the right pane
@@ -998,8 +1023,6 @@ def make_email_page(on_back: Callable[[], None]) -> QWidget:
             _clear_preview("This folder is empty")
 
     def set_panel(key: str) -> None:
-        if state["busy"]:
-            return
         state["panel"] = key
         state["mailbox"] = _PANEL_ALIASES.get(key, ("INBOX",))[0]
         label = dict(_PANELS).get(key, "Mail")
@@ -1009,12 +1032,12 @@ def make_email_page(on_back: Callable[[], None]) -> QWidget:
         cached = _cache_get(key)
         if cached:
             _fill_list(cached)
-            status.setText("Cached · Refresh to sync")
+            status.setText("Cached · syncing…")
         else:
             _fill_list([])
             empty.show()
             lst.hide()
-        QTimer.singleShot(50, do_fetch)
+        do_fetch()
 
     def open_compose(to: str = "") -> None:
         c_to.setText(to or "")
@@ -1056,7 +1079,6 @@ def make_email_page(on_back: Callable[[], None]) -> QWidget:
         except Exception as e:
             c_status.setText(str(e)[:80])
 
-    refresh.clicked.connect(do_fetch)
     compose_btn.clicked.connect(lambda: open_compose())
     lst.itemActivated.connect(on_item)
     lst.currentRowChanged.connect(lambda _i: on_select())
@@ -1071,7 +1093,7 @@ def make_email_page(on_back: Callable[[], None]) -> QWidget:
     cached = _cache_get("inbox")
     if cached:
         _fill_list(cached)
-        status.setText("Cached · Refresh to sync")
+        status.setText("Cached")
     else:
         _fill_list([])
         empty.show()
@@ -1092,10 +1114,13 @@ def make_email_page(on_back: Callable[[], None]) -> QWidget:
     def prefill_to(addr: str) -> None:
         compose_to(addr)
 
+    def on_page_show() -> None:
+        _set_acct()
+        if stack.currentWidget() is inbox:
+            do_fetch()
+
     chrome.on_hardware_back = on_hardware_back  # type: ignore[attr-defined]
     chrome.compose_to = compose_to  # type: ignore[attr-defined]
     chrome.prefill_to = prefill_to  # type: ignore[attr-defined]
-    # Auto-refresh once if account exists and cache empty
-    if _creds().get("user") and _creds().get("pass") and not cached:
-        QTimer.singleShot(400, do_fetch)
+    chrome.on_page_show = on_page_show  # type: ignore[attr-defined]
     return chrome
