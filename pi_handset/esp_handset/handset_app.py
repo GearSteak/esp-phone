@@ -588,6 +588,9 @@ def build_app(bridge: Optional[EspBridge], modem: Optional[Sim7600]) -> PhoneShe
         ),
     )
     shell.register_page("ebooks", features.make_ebook_page(back))
+    from esp_handset.files_ui import make_files_page
+
+    shell.register_page("files", make_files_page(back))
     shell.register_page(
         "audiobooks",
         features.make_file_media_page(

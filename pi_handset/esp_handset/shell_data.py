@@ -14,7 +14,7 @@ class AppEntry:
     glyph: str = "◆"
 
 
-# 5 top + 4 bottom — Games/Tools live under Apps
+# 5 top + 5 bottom — Games/Tools live under Apps
 HOME_APPS: List[AppEntry] = [
     AppEntry("calls", "Calls", "Phone · contacts", "☎"),
     AppEntry("sms", "SMS", "Texts · LoRa", "✉"),
@@ -24,6 +24,7 @@ HOME_APPS: List[AppEntry] = [
     AppEntry("media", "Media", "Gallery · notes · GPS", "▶"),
     AppEntry("email", "Email", "Gmail · Inbox", "@"),
     AppEntry("apps", "Apps", "Games · tools · Shadowdark", "◆"),
+    AppEntry("files", "Files", "Browse · PDFs", "▤"),
     AppEntry("settings", "Settings", "Device · Linux", "⚙"),
 ]
 

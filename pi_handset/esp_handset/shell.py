@@ -541,7 +541,7 @@ class PhoneShell(QMainWindow):
         page = QWidget()
         lay = QVBoxLayout(page)
         lay.setContentsMargins(0, 0, 0, 0)
-        # 5 top + 4 bottom = 9 main icons
+        # 5 top + 5 bottom = 10 main icons
         self._home = DigiviceHome(HOME_APPS, top_count=5, on_activate=self._on_icon)
         lay.addWidget(self._home, 1)
         return page

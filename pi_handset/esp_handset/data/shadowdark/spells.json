@@ -1,0 +1,634 @@
+[
+  {
+    "name": "Acid Arrow",
+    "tier": 2,
+    "class": "wizard",
+    "duration": "Focus Range",
+    "range": "Far",
+    "text": ": Far You conjure a corrosive bolt that hits one foe, dealing 1d6 damage a round. The bolt remains in the target for as long as you focus."
+  },
+  {
+    "name": "Alarm",
+    "tier": 1,
+    "class": "wizard",
+    "duration": "1 day Range",
+    "range": "Close",
+    "text": ": Close You touch one object, such as a door threshold, setting a magical alarm on it. If any creature you do not designate while casting the spell touches or crosses past the object, a magical bell sounds in your head."
+  },
+  {
+    "name": "Alter Self",
+    "tier": 2,
+    "class": "wizard",
+    "duration": "5 rounds Range",
+    "range": "Self",
+    "text": ": Self You magically change your physical form, gaining one feature that modifies your existing anatomy. For example, you can grow functional gills on your neck or bear claws on your fingers. This spell can\u2019t grow wings or limbs."
+  },
+  {
+    "name": "Animate Dead",
+    "tier": 3,
+    "class": "wizard",
+    "duration": "1 day Range",
+    "range": "Close",
+    "text": ": Close You touch one humanoid\u2019s remains, and it rises as a zombie or skeleton under your control. The remains must have at least three limbs and its head intact. The undead creature acts on your turn. After 1 day, the creature collapses into grave dust. 55"
+  },
+  {
+    "name": "Antimagic Shell",
+    "tier": 5,
+    "class": "wizard",
+    "duration": "Focus Range",
+    "range": "Self",
+    "text": ": Self An invisible, near-sized cube of null-magic appears centered on you. Within the cube, no spells can be cast. Magic items and spells have no effect in the zone, and no magic can enter. The cube moves with you. Spells such as dispel magic have no effect on it. Another ant\u2026"
+  },
+  {
+    "name": "Arcane Eye",
+    "tier": 4,
+    "class": "wizard",
+    "duration": "Focus Range",
+    "range": "Near",
+    "text": ": Near You conjure an invisible, grape- sized eye within range. You can see through the eye. It can see in the dark out to near range, fly near on your turn, and squeeze through openings as narrow as a keyhole."
+  },
+  {
+    "name": "Augury",
+    "tier": 2,
+    "class": "priest",
+    "duration": "Instant Range",
+    "range": "Self",
+    "text": ": Self You interpret the meaning of supernatural portents and omens. Ask the GM one question about a specific course of action. The GM says whether the action will lead to \u201cweal\u201d or \u201cwoe.\u201d"
+  },
+  {
+    "name": "Bless",
+    "tier": 2,
+    "class": "priest",
+    "duration": "Instant Range",
+    "range": "Close",
+    "text": ": Close One creature you touch gains a luck token."
+  },
+  {
+    "name": "Blind/Deafen",
+    "tier": 2,
+    "class": "priest",
+    "duration": "Focus Range",
+    "range": "Near",
+    "text": ": Near You utter a divine censure, blinding or deafening one creature you can see in range. The creature has disadvantage on tasks requiring the lost sense. 56"
+  },
+  {
+    "name": "Burning Hands",
+    "tier": 1,
+    "class": "wizard",
+    "duration": "Instant Range",
+    "range": "Close",
+    "text": ": Close You spread your fingers with thumbs touching, unleashing a circle of flame that roars out to a close area around where you stand. Creatures within the area of effect take 1d6 damage, and flammable objects catch fire."
+  },
+  {
+    "name": "Charm Person",
+    "tier": 1,
+    "class": "wizard",
+    "duration": "1d8 days Range",
+    "range": "Near",
+    "text": ": Near You magically beguile one humanoid of level 2 or less within near range, who regards you as a friend for the duration. The spell ends if you or your allies do anything to hurt it that it notices. The target knows you magically enchanted it after the spell ends."
+  },
+  {
+    "name": "Cleansing Weapon",
+    "tier": 2,
+    "class": "priest",
+    "duration": "5 rounds Range",
+    "range": "Close",
+    "text": ": Close One weapon you touch is wreathed in purifying flames. It deals an additional 1d4 damage (1d6 vs. undead) for the duration."
+  },
+  {
+    "name": "Cloudkill",
+    "tier": 4,
+    "class": "wizard",
+    "duration": "5 rounds Range",
+    "range": "Far",
+    "text": ": Far A putrid cloud of yellow poison fills a near-sized cube within range. It spreads around corners. Creatures inside the cloud are blinded and take 2d6 damage at the beginning of their turns. A creature of LV 9 or less that ends its turn fully inside the cloud dies. 57"
+  },
+  {
+    "name": "Command",
+    "tier": 3,
+    "class": "priest",
+    "duration": "Focus Range",
+    "range": "Far",
+    "text": ": Far You issue a verbal command to one creature in range who can understand you. The command must be one word, such as \u201ckneel.\u201d The target obeys the command for as long as you focus. If your command is ever directly harmful to the creature, it may make a Charisma check vs. yo\u2026"
+  },
+  {
+    "name": "Commune",
+    "tier": 4,
+    "class": "priest",
+    "duration": "Instant Range",
+    "range": "Self",
+    "text": ": Self You seek your god's counsel. Ask the GM up to three yes or no questions. The GM truthfully answers \"yes\" or \"no\" to each. If you cast this spell more than once in 24 hours, treat a failed spellcasting check for it as a critical failure instead."
+  },
+  {
+    "name": "Confusion",
+    "tier": 4,
+    "class": "wizard",
+    "duration": "Focus Range",
+    "range": "Near",
+    "text": ": Near You mesmerize one creature you can see in range. The target can't take actions, and it moves in a random direction on its turn. If the target is LV 9+, it may make a WIS check vs. your last spellcasting check at the start of its turn to end the spell."
+  },
+  {
+    "name": "Control Water",
+    "tier": 4,
+    "class": "priest",
+    "duration": "Focus Range",
+    "range": "Far",
+    "text": ", wizard : Far You move and shape water. You can cause a section of water up to 100 feet in width and depth to change shape, defy gravity, or flow in a different direction. 58"
+  },
+  {
+    "name": "Create Undead",
+    "tier": 5,
+    "class": "wizard",
+    "duration": "1 day Range",
+    "range": "Close",
+    "text": ": Close You conjure a vengeful undead creature to do your bidding. When you cast this spell, you choose to summon either a wight or wraith. It appears next to you and is under your control. The undead creature acts on your turn. After 1 day, it melts away into smoke."
+  },
+  {
+    "name": "Cure Wounds",
+    "tier": 1,
+    "class": "priest",
+    "duration": "Instant Range",
+    "range": "Close",
+    "text": ": Close Your touch restores ebbing life. Roll a number of d6s equal to 1 + half your level (rounded down). One target you touch regains that many hit points."
+  },
+  {
+    "name": "Detect Magic",
+    "tier": 1,
+    "class": "wizard",
+    "duration": "Focus Range",
+    "range": "Near",
+    "text": ": Near You can sense the presence of magic within near range for the spell's duration. If you focus for two rounds, you discern its general properties. Full barriers block this spell."
+  },
+  {
+    "name": "Detect Thoughts",
+    "tier": 2,
+    "class": "wizard",
+    "duration": "Focus Range",
+    "range": "Near",
+    "text": ": Near You peer into the mind of one creature you can see within range. Each round, you learn the target\u2019s immediate thoughts. On its turn, the target makes a Wisdom check vs. your last spellcasting check. If the target succeeds, it notices your presence in its mind and the sp\u2026"
+  },
+  {
+    "name": "Dimension Door",
+    "tier": 4,
+    "class": "wizard",
+    "duration": "Instant Range",
+    "range": "Self",
+    "text": ": Self You teleport yourself and up to one other willing creature within close to any point you can see."
+  },
+  {
+    "name": "Disintegrate",
+    "tier": 5,
+    "class": "wizard",
+    "duration": "Instant Range",
+    "range": "Far",
+    "text": ": Far A green ray shoots from your finger and turns a creature or object into ash. A target creature of LV 5 or less instantly dies. If it is LV 6+, it takes 3d8 damage instead. A non-magical object up to the size of a large tree is destroyed."
+  },
+  {
+    "name": "Divination",
+    "tier": 4,
+    "class": "wizard",
+    "duration": "Instant Range",
+    "range": "Self",
+    "text": ": Self You throw the divining bones or peer into the blackness between the stars, seeking a portent. You can ask the GM one yes or no question. The GM truthfully answers \"yes\" or \"no.\" If you cast this spell more than once in 24 hours, treat a failed spellcasting check for it \u2026"
+  },
+  {
+    "name": "Divine Vengeance",
+    "tier": 5,
+    "class": "priest",
+    "duration": "10 rounds Range",
+    "range": "Self",
+    "text": ": Self You become the divine avatar of your god's wrath, wreathed in holy flames or a black aura of smoldering corruption. For the spell's duration, you can fly a near distance, your weapons are magical, and you have a +4 bonus to your weapon attacks and damage."
+  },
+  {
+    "name": "Dispel Magic",
+    "tier": 3,
+    "class": "wizard",
+    "duration": "Instant Range",
+    "range": "Near",
+    "text": ": Near End one spell that affects one target you can see in range. 60"
+  },
+  {
+    "name": "Feather Fall",
+    "tier": 1,
+    "class": "wizard",
+    "duration": "Instant Range",
+    "range": "Self",
+    "text": ": Self You may make an attempt to cast this spell when you fall. Your rate of descent slows so that you land safely on your feet."
+  },
+  {
+    "name": "Fixed Object",
+    "tier": 2,
+    "class": "wizard",
+    "duration": "5 rounds Range",
+    "range": "Close",
+    "text": ": Close An object you touch that weighs no more than 5 pounds becomes fixed in its current location. It can support up to 5,000 pounds of weight for the duration of the spell."
+  },
+  {
+    "name": "Dominion",
+    "tier": 5,
+    "class": "priest",
+    "duration": "10 rounds Range",
+    "range": "Near",
+    "text": ": Near Mighty beings come to your aid. The beings must have a combined total of 16 levels or less. Chaotic PCs summon demons/devils, and lawful or neutral PCs summon angels. The beings act of free will to aid you on your turn. After 10 rounds, they return to their realms. You \u2026"
+  },
+  {
+    "name": "Fabricate",
+    "tier": 3,
+    "class": "wizard",
+    "duration": "10 rounds Range",
+    "range": "Near",
+    "text": ": Near This spell can't target creatures. You turn a tree-sized collection of raw materials into a finished work. For example, you convert a pile of bricks or rocks into a bridge. The finished work converts back to raw materials when the spell ends."
+  },
+  {
+    "name": "Fireball",
+    "tier": 3,
+    "class": "wizard",
+    "duration": "Instant Range",
+    "range": "Far",
+    "text": ": Far You hurl a small flame that erupts into a fiery blast. All creatures in a near-sized cube around where the flame lands take 4d6 damage. 61"
+  },
+  {
+    "name": "Flame Strike",
+    "tier": 4,
+    "class": "priest",
+    "duration": "Instant Range",
+    "range": "Far",
+    "text": ": Far You call down a holy pillar of fire, immolating one creature you can see within range. The target takes 2d6 damage."
+  },
+  {
+    "name": "Floating Disk",
+    "tier": 1,
+    "class": "wizard",
+    "duration": "10 rounds Range",
+    "range": "Near",
+    "text": ": Near You create a floating, circular disk of force with a concave center. It can carry up to 20 gear slots. It hovers at waist level and automatically stays within near of you. It can\u2019t cross over drop- offs or pits taller than a human."
+  },
+  {
+    "name": "Fly",
+    "tier": 3,
+    "class": "wizard",
+    "duration": "5 rounds Range",
+    "range": "Self",
+    "text": ": Self Your feet lift from the ground, and you take to the air like a hummingbird. You can fly near for the spell's duration and are able to hover in place."
+  },
+  {
+    "name": "Gaseous Form",
+    "tier": 3,
+    "class": "wizard",
+    "duration": "10 rounds Range",
+    "range": "Self",
+    "text": ": Self You and your gear turn into a cloud of smoke for the spell's duration. You can fly and pass through any gap that smoke could. You can sense the terrain and any movement around you out to a near distance. You can't cast spells while in this form."
+  },
+  {
+    "name": "Heal",
+    "tier": 5,
+    "class": "priest",
+    "duration": "Instant Range",
+    "range": "Close",
+    "text": ": Close One creature you touch is healed to full hit points. You cannot cast this spell again until you complete a rest. 62"
+  },
+  {
+    "name": "Hold Monster",
+    "tier": 5,
+    "class": "wizard",
+    "duration": "Focus Range",
+    "range": "Near",
+    "text": ": Near You paralyze one creature you can see within range. If the target is LV 9+, it may make a STR check vs. your last spellcasting check at the start of its turn to end the spell."
+  },
+  {
+    "name": "Hold Person",
+    "tier": 2,
+    "class": "wizard",
+    "duration": "Focus Range",
+    "range": "Near",
+    "text": ": Near You magically paralyze one humanoid creature of LV 4 or less you can see within range."
+  },
+  {
+    "name": "Hold Portal",
+    "tier": 1,
+    "class": "wizard",
+    "duration": "10 rounds Range",
+    "range": "Near",
+    "text": ": Near You magically hold a portal closed for the duration. A creature must make a successful STR check vs. your spellcasting check to open the portal. The knock spell ends this spell."
+  },
+  {
+    "name": "Holy Weapon",
+    "tier": 1,
+    "class": "priest",
+    "duration": "5 rounds Range",
+    "range": "Close",
+    "text": ": Close One weapon you touch is imbued with a sacred blessing. The weapon becomes magical and has +1 to attack and damage rolls for the duration."
+  },
+  {
+    "name": "Illusion",
+    "tier": 3,
+    "class": "wizard",
+    "duration": "Focus Range",
+    "range": "Far",
+    "text": ": Far You create a convincing visible and audible illusion that fills up to a near-sized cube in range. The illusion cannot cause harm, but creatures who believe the illusion is real react to it as though it were. A creature who inspects the illusion from afar must pass a Wisd\u2026"
+  },
+  {
+    "name": "Invisibility",
+    "tier": 2,
+    "class": "wizard",
+    "duration": "10 rounds Range",
+    "range": "Close",
+    "text": ": Close A creature you touch becomes invisible for the spell\u2019s duration. The spell ends if the target attacks or casts a spell."
+  },
+  {
+    "name": "Judgment",
+    "tier": 5,
+    "class": "priest",
+    "duration": "5 rounds Range",
+    "range": "Close",
+    "text": ": Close You instantly banish a creature you touch, sending it and all possessions it carries to face the judgment of your god. You can banish an intelligent creature of LV 10 or less. When the creature returns in 5 rounds, it has been healed to full hit points if its deeds ple\u2026"
+  },
+  {
+    "name": "Knock",
+    "tier": 2,
+    "class": "wizard",
+    "duration": "Instant Range",
+    "range": "Near",
+    "text": ": Near A door, window, gate, chest, or portal you can see within range instantly opens, defeating all mundane locks and barriers. This spell creates a loud knock audible to all within earshot. 64"
+  },
+  {
+    "name": "Lay To Rest",
+    "tier": 3,
+    "class": "priest",
+    "duration": "Instant Range",
+    "range": "Close",
+    "text": ": Close You instantly send an undead creature you touch to its final afterlife, destroying it utterly. You can target an undead creature of LV 9 or less."
+  },
+  {
+    "name": "Levitate",
+    "tier": 2,
+    "class": "wizard",
+    "duration": "Focus Range",
+    "range": "Self",
+    "text": ": Self You can float a near distance vertically per round on your turn. You can also push against solid objects to move horizontally."
+  },
+  {
+    "name": "Light",
+    "tier": 1,
+    "class": "priest",
+    "duration": "1 hour real time Range",
+    "range": "Close",
+    "text": ", wizard : Close One object you touch glows with bright, heatless light, illuminating out to a near distance for 1 hour of real time."
+  },
+  {
+    "name": "Lightning Bolt",
+    "tier": 3,
+    "class": "wizard",
+    "duration": "Instant Range",
+    "range": "Far",
+    "text": ": Far You shoot a blue-white ray of lightning from your hands, hitting all creatures in a straight line out to a far distance. Creatures struck by the lightning take 3d6 damage."
+  },
+  {
+    "name": "Mage Armor",
+    "tier": 1,
+    "class": "wizard",
+    "duration": "10 rounds Range",
+    "range": "Self",
+    "text": ": Self An invisible layer of magical force protects your vitals. Your armor class becomes 14 (18 on a critical spellcasting check) for the spell\u2019s duration. 65"
+  },
+  {
+    "name": "Magic Circle",
+    "tier": 3,
+    "class": "wizard",
+    "duration": "Focus Range",
+    "range": "Near",
+    "text": ": Near You conjure a circle of runes out to near-sized cube centered on yourself and name a type of creature (for example, demons). For the spell\u2019s duration, creatures of the chosen type cannot attack or cast a hostile spell on anyone inside the circle. The chosen creatures al\u2026"
+  },
+  {
+    "name": "Magic Missile",
+    "tier": 1,
+    "class": "wizard",
+    "duration": "Instant Range",
+    "range": "Far",
+    "text": ": Far You have advantage on your check to cast this spell. A glowing bolt of force streaks from your open hand, dealing 1d4 damage to one target."
+  },
+  {
+    "name": "Mass Cure",
+    "tier": 3,
+    "class": "priest",
+    "duration": "Instant Range",
+    "range": "Near",
+    "text": ": Near All allies within near range of you regain 2d6 hit points."
+  },
+  {
+    "name": "Mirror Image",
+    "tier": 2,
+    "class": "wizard",
+    "duration": "5 rounds Range",
+    "range": "Self",
+    "text": ": Self You create a number of illusory duplicates of yourself equal to half your level rounded down (minimum 1). The duplicates surround you and mimic you. Each time a creature attacks you, the attack misses and causes one of the duplicates to evaporate. If all of the illusion\u2026"
+  },
+  {
+    "name": "Misty Step",
+    "tier": 2,
+    "class": "wizard",
+    "duration": "Instant Range",
+    "range": "Self",
+    "text": ": Self In a puff of smoke, you teleport a near distance to an area you can see. 66"
+  },
+  {
+    "name": "Passwall",
+    "tier": 4,
+    "class": "wizard",
+    "duration": "5 rounds Range",
+    "range": "Close",
+    "text": ": Close A tunnel of your height opens in a barrier you touch and lasts for the duration. The passage can be up to near distance in length and must be in a straight line."
+  },
+  {
+    "name": "Pillar Of Salt",
+    "tier": 4,
+    "class": "priest",
+    "duration": "Focus Range",
+    "range": "Near",
+    "text": ": Near A creature you target turns into a statue made of hardened salt. You can target a creature you can see of LV 5 or less. If you successfully focus on this spell for 3 rounds in a row, the transformation becomes permanent."
+  },
+  {
+    "name": "Plane Shift",
+    "tier": 5,
+    "class": "priest",
+    "duration": "Instant Range",
+    "range": "Close",
+    "text": ", wizard : Close You fold space and time, transporting yourself and all willing creatures within close range to a location on another plane of your choice. Unless you have been to your intended location before, you appear in a random place on the destination plane. 67"
+  },
+  {
+    "name": "Polymorph",
+    "tier": 4,
+    "class": "wizard",
+    "duration": "10 rounds Range",
+    "range": "Close",
+    "text": ": Close You transform a creature you touch into another natural creature you choose of equal or smaller size. Any gear the target carries melds into its new form. The target gains the creature's physical stats and features, but it retains its non-physical stats and features. I\u2026"
+  },
+  {
+    "name": "Power Word Kill",
+    "tier": 5,
+    "class": "wizard",
+    "duration": "Instant Range",
+    "range": "Near",
+    "text": ": Near You utter the Word of Doom. One creature you target of LV 9 or less dies if it hears you. Treat a failed spellcasting check for this spell as a critical failure, and roll the mishap with disadvantage."
+  },
+  {
+    "name": "Prismatic Orb",
+    "tier": 5,
+    "class": "wizard",
+    "duration": "Instant Range",
+    "range": "Far",
+    "text": ": Far You send a strobing orb of energy streaking toward a target within range. Choose an energy type from fire, cold, or electricity. The orb deals 3d8 damage and delivers a concussive blast of the chosen energy type. If the energy type is anathema to the target's existence (\u2026"
+  },
+  {
+    "name": "Prophecy",
+    "tier": 5,
+    "class": "priest",
+    "duration": "Instant Range",
+    "range": "Self",
+    "text": ": Self You commune directly with your god for guidance. Ask the GM one question. The GM answers the question truthfully using the knowledge your god possesses. Deities are mighty, but not omniscient. You cannot cast this spell again until you complete penance."
+  },
+  {
+    "name": "From Evil",
+    "tier": 1,
+    "class": "priest",
+    "duration": "Focus Range",
+    "range": "Close",
+    "text": ", wizard : Close For the spell\u2019s duration, chaotic beings have disadvantage on attack rolls and hostile spellcasting checks against the target. These beings also can\u2019t possess, compel, or beguile it. When cast on an already- possessed target, the possessing entity makes a CHA \u2026"
+  },
+  {
+    "name": "Rebuke Unholy",
+    "tier": 3,
+    "class": "priest",
+    "duration": "Instant Range",
+    "range": "Near",
+    "text": ": Near You rebuke creatures who oppose your alignment, forcing them to flee. You must present a holy symbol to cast this spell. If you are lawful or neutral, this spell affects demons, devils, and outsiders. If you are chaotic, this spell affects angels and natural creatures o\u2026"
+  },
+  {
+    "name": "Regenerate",
+    "tier": 4,
+    "class": "priest",
+    "duration": "Focus Range",
+    "range": "Close",
+    "text": ": Close A creature you touch regains 1d4 hit points on your turn for the duration. This spell also regrows lost body parts."
+  },
+  {
+    "name": "Resilient Sphere",
+    "tier": 4,
+    "class": "wizard",
+    "duration": "5 rounds Range",
+    "range": "Close",
+    "text": ": Close You conjure a weightless, glassy sphere around you that extends out to close range. For the spell's duration, nothing can pass through or crush the sphere. You can roll the sphere a near distance on your turn."
+  },
+  {
+    "name": "Restoration",
+    "tier": 3,
+    "class": "priest",
+    "duration": "Instant Range",
+    "range": "Close",
+    "text": ": Close With the touch of your hands, you expunge curses and illnesses. One curse, illness, or affliction of your choice affecting the target creature ends. 70"
+  },
+  {
+    "name": "Scrying",
+    "tier": 5,
+    "class": "wizard",
+    "duration": "Focus Range",
+    "range": "Self",
+    "text": ": Self You look into a crystal ball or reflecting pool, calling up images of a distant place. For the spell's duration, you can see and hear a creature or location you choose that is on the same plane. This spell is DC 18 to cast if you try to scry on a creature or location th\u2026"
+  },
+  {
+    "name": "Sending",
+    "tier": 3,
+    "class": "wizard",
+    "duration": "Instant Range",
+    "range": "",
+    "text": ": Unlimited You send a brief mental message to any creature with whom you are familiar who is on the same plane."
+  },
+  {
+    "name": "Shapechange",
+    "tier": 5,
+    "class": "wizard",
+    "duration": "Focus Range",
+    "range": "Self",
+    "text": ": Self You transform yourself and any gear you carry into another natural creature you've seen of level 10 or less. You assume the creature's physical stats and features, but you retain your non-physical stats and features (including INT, WIS, and CHA). If you go to 0 HP while\u2026"
+  },
+  {
+    "name": "Shield Of Faith",
+    "tier": 1,
+    "class": "priest",
+    "duration": "5 rounds Range",
+    "range": "Self",
+    "text": ": Self A protective force wrought of your holy conviction surrounds you. You gain a +2 bonus to your armor class for the duration. 71"
+  },
+  {
+    "name": "Silence",
+    "tier": 2,
+    "class": "wizard",
+    "duration": "Focus Range",
+    "range": "Far",
+    "text": ": Far You magically mute sound in a near cube within the spell\u2019s range. Creatures inside the area are deafened, and any sounds they create cannot be heard."
+  },
+  {
+    "name": "Sleep",
+    "tier": 1,
+    "class": "wizard",
+    "duration": "Instant Range",
+    "range": "Near",
+    "text": ": Near You weave a lulling spell that fills a near-sized cube extending from you. Living creatures in the area of effect fall into a deep sleep if they are LV 2 or less. Vigorous shaking or being injured wakes them."
+  },
+  {
+    "name": "Smite",
+    "tier": 2,
+    "class": "priest",
+    "duration": "Instant Range",
+    "range": "Near",
+    "text": ": Near You call down punishing flames on a creature you can see within range. It takes 1d6 damage."
+  },
+  {
+    "name": "Speak With Dead",
+    "tier": 3,
+    "class": "priest",
+    "duration": "Instant Range",
+    "range": "Close",
+    "text": ", wizard : Close A dead body you touch answers your questions in a distant, wheezing voice. You can ask the dead body up to three yes or no questions (one at a time). The GM truthfully answers \"yes\" or \"no\" to each. If you cast this spell more than once in 24 hours, treat a fa\u2026"
+  },
+  {
+    "name": "Stoneskin",
+    "tier": 4,
+    "class": "wizard",
+    "duration": "10 rounds Range",
+    "range": "Self",
+    "text": ": Self Your skin becomes like granite. For the spell's duration, your armor class becomes 17 (20 on a critical spellcasting check). 72"
+  },
+  {
+    "name": "Telekinesis",
+    "tier": 4,
+    "class": "wizard",
+    "duration": "Focus Range",
+    "range": "Far",
+    "text": ": Far You lift a creature or object with your mind. Choose a target that weighs 1,000 pounds or less. You can move it a near distance in any direction and hold it in place."
+  },
+  {
+    "name": "Teleport",
+    "tier": 5,
+    "class": "wizard",
+    "duration": "Instant Range",
+    "range": "Close",
+    "text": ": Close You and any willing creatures you choose within close range teleport to a location you specify on your same plane. You can travel to a known teleportation sigil or to a location you've been before. Otherwise, you have a 50% chance of arriving off-target."
+  },
+  {
+    "name": "Turn Undead",
+    "tier": 1,
+    "class": "priest",
+    "duration": "Instant Range",
+    "range": "Near",
+    "text": ": Near You rebuke undead creatures, forcing them to flee. You must present a holy symbol to cast this spell. Undead creatures within near of you must make a CHA check vs. your spellcasting check. If a creature fails by 10+ points and is equal to or less than your level, it is \u2026"
+  },
+  {
+    "name": "Extraplanar",
+    "tier": 5,
+    "class": "wizard",
+    "duration": "Focus Range",
+    "range": "Near",
+    "text": ": Near You reach into the outer planes, summoning forth a creature. You summon an elemental or outsider of LV 7 or less. The creature is under your control and acts on your turn. If you lose focus on this spell, you lose control of the creature and it becomes hostile toward yo\u2026"
+  }
+]

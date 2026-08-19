@@ -111,7 +111,7 @@ fi
 
 # In-UI emulators — libretro C cores (fast on Pi Zero 2W) + PyBoy GB fallback
 log "pip: PyBoy + numpy (GB fallback)…"
-python3 -m pip install --break-system-packages -q 'pyboy' 'pillow' 'numpy' \
+python3 -m pip install --break-system-packages -q 'pyboy' 'pillow' 'numpy' 'pypdf' \
   2>&1 | tee -a "$LOG" | tail -n 15 \
   || log "WARN: pip pyboy failed — Games→GB Play can use gambatte core instead"
 
