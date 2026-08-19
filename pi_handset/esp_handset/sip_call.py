@@ -321,8 +321,8 @@ def _write_linphonerc(env: Dict[str, str]) -> Optional[Path]:
     body = (
         "[sip]\n"
         "sip_port=5060\n"
-        "sip_tcp_port=-1\n"
-        "sip_tls_port=-1\n"
+        "sip_tcp_port=0\n"
+        "sip_tls_port=0\n"
         "use_info=0\n"
         "guess_hostname=1\n"
         "inc_timeout=45\n"
@@ -377,7 +377,6 @@ def _write_linphonerc(env: Dict[str, str]) -> Optional[Path]:
         f"username={user}\n"
         f"userid={user}\n"
         f"passwd={password}\n"
-        f"realm={server}\n"
         f"domain={server}\n"
         "\n"
         "[proxy_0]\n"
@@ -387,6 +386,15 @@ def _write_linphonerc(env: Dict[str, str]) -> Optional[Path]:
         "reg_sendregister=1\n"
         "publish=0\n"
         "dial_escape_plus=0\n"
+        "\n"
+        "[account_0]\n"
+        f"reg_identity=sip:{user}@{server}\n"
+        f"reg_proxy=<sip:{server};transport=udp>\n"
+        "reg_sendregister=1\n"
+        "expires=120\n"
+        "publish=0\n"
+        "dial_escape_plus=0\n"
+        "nat_policy_ref=nat_policy_0\n"
     )
     path = _linphonerc_path()
     try:
@@ -829,16 +837,28 @@ def _line_registered(line: str) -> Optional[bool]:
         return None
     low = s.lower()
     if re.search(
-        r"(?i)registration failed|unregistered|registered\s*=\s*-1|"
-        r"LinphoneRegistrationFailed|not registered",
+        r"(?i)registration failed|unregistered|"
+        r"registered\s*=\s*-1|LinphoneRegistrationFailed|"
+        r"\bnot registered\b|io error|unauthorized|403 forbidden",
         s,
     ):
-        if not re.search(r"(?i)registration (is )?successful|registration ok", s):
+        # 401 challenge chatter is normal — only fail if there is no success on this line
+        if not re.search(
+            r"(?i)registration (on\b.*)?(is )?successful|"
+            r"registration ok|registered\s*=\s*1|now registered",
+            s,
+        ):
+            # "401 Unauthorized" during digest is not a failed REGISTER
+            if re.search(r"(?i)\b401\b", s) and not re.search(
+                r"(?i)registration failed", s
+            ):
+                return None
             return False
     if re.search(
-        r"(?i)registration (is )?(successful|ok)|registered to|"
-        r"identity\s*=|identity:\s*sip:|LinphoneRegistrationOk|"
-        r"is registered|registered identity|^registered ",
+        r"(?i)registration (on\b.*)?(is )?(successful|sucessful|ok)|registered to|"
+        r"LinphoneRegistrationOk|"
+        r"now registered|is registered|"
+        r"registered\s*=\s*[1-9]|registered identity|^registered,",
         s,
     ):
         if "not registered" not in low and "unregistered" not in low:
@@ -1067,8 +1087,17 @@ class LinphoneEngine:
             if not self.ensure_registered(14.0, send_register=True):
                 if not self.alive():
                     err = _set_error("linphonec exited during register")
-                else:
-                    err = _set_error("SIP not registered — check Wi‑Fi / Accounts")
+                    try:
+                        write_sip_report(extra=err + "\n" + recent_log(20))
+                    except Exception:
+                        pass
+                    return err
+                with self._lock:
+                    tail = " | ".join(list(self.lines)[-5:])
+                err = _set_error("SIP not registered — check Wi‑Fi / Accounts")
+                extra = _redact(tail)[:180]
+                if extra:
+                    err = _set_error(f"{err}\n{extra}")
                 try:
                     write_sip_report(extra=err + "\n" + recent_log(20))
                 except Exception:
@@ -1084,7 +1113,7 @@ class LinphoneEngine:
         if send_register and self._user and self._server:
             self.cmd(
                 f"register sip:{self._user}@{self._server} "
-                f"{self._server} {self._password}"
+                f"sip:{self._server} {self._password}"
             )
         deadline = time.time() + max(1.0, timeout_s)
         n = 0
