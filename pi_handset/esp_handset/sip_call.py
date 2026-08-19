@@ -5,6 +5,7 @@ a Zadarma UDP config, wait for REGISTER, then send: call sip:1XXXXXXXXXX@host
 """
 from __future__ import annotations
 
+import hashlib
 import os
 import re
 import shutil
@@ -42,6 +43,7 @@ _DISC_TTL = 90.0
 _last_error = ""
 _last_register_raw = ""
 _LOG = Path.home() / ".esp-handset" / "sip-last.log"
+_CORE_LOG = Path.home() / ".esp-handset" / "linphone-core.log"
 _REPORT = Path.home() / ".esp-handset" / "sip-doctor.txt"
 
 
@@ -87,7 +89,7 @@ def recent_log(n: int = 14) -> str:
 
 def _redact(text: str) -> str:
     s = text or ""
-    s = re.sub(r"(?im)^(\s*(?:SIP_PASS|passwd|password)\s*=\s*).+$", r"\1***", s)
+    s = re.sub(r"(?im)^(\s*(?:SIP_PASS|passwd|password|ha1)\s*=\s*).+$", r"\1***", s)
     s = re.sub(r"(?i)(register sip:\S+\s+\S+\s+)\S+", r"\1***", s)
     try:
         pw = (_sip_env().get("SIP_PASS") or "").strip()
@@ -214,6 +216,7 @@ def write_sip_report(*, extra: str = "", run_doctor: bool = False) -> Path:
         ("linphonerc", _linphonerc_path()),
         ("~/.linphonerc", Path.home() / ".linphonerc"),
         ("sip-last.log", _LOG),
+        ("linphone-core.log", _CORE_LOG),
         (
             "linphone-ensure.log",
             Path.home() / ".esp-handset" / "linphone-ensure.log",
@@ -363,23 +366,26 @@ def _write_linphonerc(env: Dict[str, str]) -> Optional[Path]:
     if not user or not server or not password:
         return None
     sound = _alsa_usb_label()
+    ip = _local_ipv4() or "127.0.0.1"
+    ha1 = hashlib.md5(f"{user}:{server}:{password}".encode("utf-8")).hexdigest()
     _prepare_linphone_home()
-    # firewall_policy: 0=none 1=manual NAT 2=STUN 3=ICE
-    # Do not set guess_hostname — linphone then uses contact=sip:user@unknown-host
-    # and register_only_when_network_is_up skips REGISTER.
+    # guess_hostname=0 made Contact sip:gear@unknown-host (Zadarma ignores that).
+    # Skip STUN on REGISTER — linphone 5 rewrites nat_policy_ref to a random id
+    # then fails next start with "There is no NatPolicy with ref […]".
     body = (
         "[sip]\n"
         "sip_port=5060\n"
         "sip_tcp_port=0\n"
         "sip_tls_port=0\n"
         "use_info=0\n"
-        "guess_hostname=0\n"
+        "guess_hostname=1\n"
         "register_only_when_network_is_up=0\n"
         "inc_timeout=45\n"
         "use_ipv6=0\n"
         "ipv6_enabled=0\n"
         "default_proxy=0\n"
         f"display_name={display}\n"
+        f"contact=sip:{user}@{ip}\n"
         "\n"
         "[rtp]\n"
         "audio_rtp_port=7078\n"
@@ -387,17 +393,8 @@ def _write_linphonerc(env: Dict[str, str]) -> Optional[Path]:
         "nortp_timeout=30\n"
         "\n"
         "[net]\n"
-        "stun_server=stun.zadarma.com\n"
-        "firewall_policy=2\n"
-        "nat_policy_ref=nat_policy_0\n"
+        "firewall_policy=0\n"
         "mtu=1300\n"
-        "\n"
-        "[nat_policy_0]\n"
-        "stun_server=stun.zadarma.com\n"
-        "stun_enabled=1\n"
-        "ice_enabled=0\n"
-        "turn_enabled=0\n"
-        "protocols=stun\n"
         "\n"
         "[sound]\n"
         "echocancellation=0\n"
@@ -427,6 +424,7 @@ def _write_linphonerc(env: Dict[str, str]) -> Optional[Path]:
         f"username={user}\n"
         f"userid={user}\n"
         f"passwd={password}\n"
+        f"ha1={ha1}\n"
         f"realm={server}\n"
         f"domain={server}\n"
         "\n"
@@ -955,6 +953,16 @@ def _text_registered(text: str) -> Optional[bool]:
     return last
 
 
+def _core_log_registered() -> Optional[bool]:
+    try:
+        if not _CORE_LOG.is_file():
+            return None
+        text = _CORE_LOG.read_text(encoding="utf-8", errors="replace")[-12000:]
+    except OSError:
+        return None
+    return _text_registered(text)
+
+
 class LinphoneEngine:
     """One long-lived `linphonec -c rc`. PTY + CR so readline actually accepts commands."""
 
@@ -973,6 +981,7 @@ class LinphoneEngine:
         self._rc_key = ""
         self._auth_prompt = False
         self._pass_sent_at = 0.0
+        self._cli_ready = False
 
     def alive(self) -> bool:
         return self.proc is not None and self.proc.poll() is None
@@ -986,6 +995,7 @@ class LinphoneEngine:
                 return
             self._pass_sent_at = now
             self._auth_prompt = True
+            self._cli_ready = False
         _log("linphonec password prompt — sending SIP_PASS once")
         try:
             payload = (self._password + "\r\n").encode("utf-8")
@@ -1013,6 +1023,8 @@ class LinphoneEngine:
             with self._lock:
                 if self._pass_sent_at and (time.time() - self._pass_sent_at) > 0.4:
                     self._auth_prompt = False
+                if not self._auth_prompt:
+                    self._cli_ready = True
         # PTY echo of our own commands — not linphonec status
         if low in ("status register", "status", "proxy list", "register") or low.startswith(
             "register sip:"
@@ -1025,6 +1037,7 @@ class LinphoneEngine:
             if flag is True:
                 self.registered = True
                 self._auth_prompt = False
+                self._cli_ready = True
             elif flag is False:
                 self.registered = False
             self.phase = _phase_from_line(line, self.phase)
@@ -1176,7 +1189,13 @@ class LinphoneEngine:
         if not self.bin:
             return _set_error("linphonec not found")
         _kill_stray_linphone()
+        try:
+            _CORE_LOG.parent.mkdir(parents=True, exist_ok=True)
+            _CORE_LOG.write_text("", encoding="utf-8")
+        except OSError:
+            pass
         attempts = (
+            [self.bin, "-S", "-d", "1", "-l", str(_CORE_LOG), "-c", str(rc)],
             [self.bin, "-S", "-c", str(rc)],
             [self.bin, "-c", str(rc)],
             [self.bin, f"--config={rc}"],
@@ -1215,14 +1234,15 @@ class LinphoneEngine:
         self.registered = False
         self._auth_prompt = False
         self._pass_sent_at = 0.0
+        self._cli_ready = False
         self._rc_key = rc_key
         self._reader = threading.Thread(
             target=self._read_loop, name="linphonec-out", daemon=True
         )
         self._reader.start()
-        # rc has reg_sendregister=1 — wait for that before shoving extra commands
-        if not self.ensure_registered(10.0, send_register=False):
-            if not self.ensure_registered(14.0, send_register=True):
+        # rc has reg_sendregister=1 — do not type status/proxy into a password prompt
+        if not self.ensure_registered(16.0, send_register=False):
+            if not self.ensure_registered(12.0, send_register=True):
                 if not self.alive():
                     err = _set_error("linphonec exited during register")
                     try:
@@ -1252,41 +1272,43 @@ class LinphoneEngine:
         return ""
 
     def ensure_registered(self, timeout_s: float, *, send_register: bool) -> bool:
-        if send_register and self._user and self._server:
-            with self._lock:
-                prompting = self._auth_prompt
-            if not prompting:
-                self.cmd(
-                    f"register sip:{self._user}@{self._server} "
-                    f"sip:{self._server} {self._password}"
-                )
-        deadline = time.time() + max(1.0, timeout_s)
-        n = 0
+        started = time.time()
+        sent = False
+        deadline = started + max(1.0, timeout_s)
         while time.time() < deadline:
             with self._lock:
                 if self.registered:
                     _log("linphonec registered")
                     return True
                 recent = "\n".join(list(self.lines)[-8:])
-            flag = _text_registered(recent)
+                prompting = self._auth_prompt
+                ready = self._cli_ready
+                sent_pw = self._pass_sent_at
+            flag = _text_registered(recent) or _core_log_registered()
             if flag is True:
                 with self._lock:
                     self.registered = True
+                    self._cli_ready = True
                 _log("linphonec registered")
                 return True
             if not self.alive():
                 return False
-            with self._lock:
-                waiting_auth = self._auth_prompt
-            if waiting_auth:
-                n += 1
-                time.sleep(0.35)
-                continue
-            if n and n % 5 == 0:
-                self.cmd("status register")
-            if n == 6:
-                self.cmd("proxy list")
-            n += 1
+            elapsed = time.time() - started
+            if sent_pw and (time.time() - sent_pw) > 1.0:
+                with self._lock:
+                    self._auth_prompt = False
+                    self._cli_ready = True
+                ready = True
+            elif elapsed > 6.0 and not prompting:
+                with self._lock:
+                    self._cli_ready = True
+                ready = True
+            if send_register and not sent and ready and self._user and self._server:
+                self.cmd(
+                    f"register sip:{self._user}@{self._server} "
+                    f"sip:{self._server} {self._password}"
+                )
+                sent = True
             time.sleep(0.35)
         with self._lock:
             return bool(self.registered)
@@ -1300,7 +1322,7 @@ class LinphoneEngine:
         if not self.alive():
             return
         with self._lock:
-            if self._auth_prompt:
+            if self._auth_prompt or not self._cli_ready:
                 return
         try:
             shown = line.split(maxsplit=1)[0]
