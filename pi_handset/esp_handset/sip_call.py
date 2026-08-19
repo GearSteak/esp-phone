@@ -415,6 +415,7 @@ def _write_linphonerc(env: Dict[str, str]) -> Optional[Path]:
         f"username={user}\n"
         f"userid={user}\n"
         f"passwd={password}\n"
+        f"realm={server}\n"
         f"domain={server}\n"
         "\n"
         "[proxy_0]\n"
@@ -958,16 +959,40 @@ class LinphoneEngine:
         self._server = ""
         self._password = ""
         self._rc_key = ""
+        self._auth_prompt = False
 
     def alive(self) -> bool:
         return self.proc is not None and self.proc.poll() is None
+
+    def _send_sip_password(self) -> None:
+        if not self._password or not self.alive():
+            return
+        _log("linphonec password prompt — sending SIP_PASS")
+        try:
+            payload = (self._password + "\r\n").encode("utf-8")
+            if self._pty is not None:
+                os.write(self._pty, payload)
+                return
+            proc = self.proc
+            if proc is not None and proc.stdin is not None:
+                proc.stdin.write(self._password + "\n")
+                proc.stdin.flush()
+        except Exception as e:
+            _log(f"password send failed: {e}")
 
     def _handle_line(self, line: str) -> None:
         line = _clean_cli(line)
         if not line:
             return
-        # PTY echo of our own commands — not linphonec status
         low = line.lower()
+        if "password for" in low:
+            with self._lock:
+                self._auth_prompt = True
+            self._send_sip_password()
+            with self._lock:
+                self._auth_prompt = False
+            return
+        # PTY echo of our own commands — not linphonec status
         if low in ("status register", "status", "proxy list", "register") or low.startswith(
             "register sip:"
         ):
@@ -1002,7 +1027,10 @@ class LinphoneEngine:
                     while "\n" in buf:
                         line, buf = buf.split("\n", 1)
                         self._handle_line(line)
-                    if "linphonec>" in buf:
+                    if re.search(r"(?i)password for ", buf):
+                        self._handle_line(buf)
+                        buf = ""
+                    elif "linphonec>" in buf:
                         self._handle_line(buf)
                         buf = ""
                 return
@@ -1150,6 +1178,7 @@ class LinphoneEngine:
             )
         self.phase = "idle"
         self.registered = False
+        self._auth_prompt = False
         self._rc_key = rc_key
         self._reader = threading.Thread(
             target=self._read_loop, name="linphonec-out", daemon=True
@@ -1225,6 +1254,9 @@ class LinphoneEngine:
     def cmd(self, line: str) -> None:
         if not self.alive():
             return
+        with self._lock:
+            if self._auth_prompt:
+                return
         try:
             shown = line.split(maxsplit=1)[0]
             _log(f"linphonec < {shown}")
