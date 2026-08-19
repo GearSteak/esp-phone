@@ -468,6 +468,40 @@ def _call_uri(digits: str, server: str) -> str:
     return f"sip:{digits}@{server}"
 
 
+def _voip_bin_runs(path: str) -> bool:
+    """False when the ELF exists but cannot load (rc 127 / missing .so)."""
+    if not path or not _exists(path):
+        return False
+    try:
+        r = subprocess.run(
+            [path, "-v"],
+            capture_output=True,
+            text=True,
+            timeout=4.0,
+            check=False,
+        )
+    except Exception:
+        return False
+    blob = ((r.stdout or "") + (r.stderr or "")).lower()
+    if "error while loading shared libraries" in blob:
+        return False
+    if "cannot open shared object" in blob:
+        return False
+    if r.returncode == 127:
+        return False
+    return True
+
+
+def _broken_linphonec_msg() -> str:
+    for p in ("/usr/bin/linphonec", "/usr/local/bin/linphonec"):
+        if not _exists(p):
+            continue
+        if _voip_bin_runs(p):
+            continue
+        return _cmd_out([p, "-v"], timeout=4.0, cap=400)
+    return ""
+
+
 def _is_linphonec_cli(path: str) -> bool:
     if not path or not _exists(path):
         return False
@@ -590,19 +624,22 @@ def _find_via_find(name: str) -> Optional[str]:
 
 def _discover_linphonec_uncached() -> Optional[str]:
     pinned = _read_pin("linphonec.bin")
-    if pinned and _is_linphonec_cli(pinned):
+    if pinned and _is_linphonec_cli(pinned) and _voip_bin_runs(pinned):
         return pinned
     for p in (
         "/usr/bin/linphonec",
         "/usr/local/bin/linphonec",
         shutil.which("linphonec"),
     ):
-        if p and _is_linphonec_cli(p):
+        if p and _is_linphonec_cli(p) and _voip_bin_runs(p):
             return p
     hit = _dpkg_bin("/linphonec")
-    if hit and _is_linphonec_cli(hit):
+    if hit and _is_linphonec_cli(hit) and _voip_bin_runs(hit):
         return hit
-    return _find_via_find("linphonec")
+    hit = _find_via_find("linphonec")
+    if hit and _voip_bin_runs(hit):
+        return hit
+    return None
 
 
 def _discover_linphonec() -> Optional[str]:
@@ -1486,11 +1523,11 @@ def poll() -> CallInfo:
 def _sudo_ensure_linphone(timeout: float = 300.0) -> str:
     """Install/find real linphonecsh. Digivice has passwordless sudo for this."""
     cmds = (
-        ["sudo", "-n", "digivice-ensure-linphone"],
-        ["sudo", "-n", "/usr/local/bin/digivice-ensure-linphone"],
-        ["sudo", "-n", "bash", "/usr/local/bin/digivice-ensure-linphone"],
-        ["sudo", "-n", "/opt/esp-handset/session/ensure-linphone.sh"],
-        ["sudo", "-n", "bash", "/opt/esp-handset/session/ensure-linphone.sh"],
+        ["sudo", "-n", "digivice-ensure-linphone", "--debs"],
+        ["sudo", "-n", "/usr/local/bin/digivice-ensure-linphone", "--debs"],
+        ["sudo", "-n", "bash", "/usr/local/bin/digivice-ensure-linphone", "--debs"],
+        ["sudo", "-n", "/opt/esp-handset/session/ensure-linphone.sh", "--debs"],
+        ["sudo", "-n", "bash", "/opt/esp-handset/session/ensure-linphone.sh", "--debs"],
     )
     last = "ensure not available"
     for cmd in cmds:
@@ -1572,14 +1609,17 @@ def doctor(*, save_report: bool = True) -> str:
         f"linphonecsh: {csh or 'MISSING'}",
         f"sip: {user}@{server}",
     ]
-    if not csh and not lp:
-        threading.Thread(
-            target=_install_voip_bg, name="voip-apt", daemon=True
-        ).start()
-        lines.insert(0, "RESULT: INSTALLING VOIP")
-        lines.append("Installing linphone-cli in the background.")
+    broken = _broken_linphonec_msg()
+    if not lp:
+        _kick_voip_install(force=True)
+        if broken:
+            lines.insert(0, "RESULT: VOIP BROKEN")
+            lines.append(broken.replace("\n", " ")[:220])
+            lines.append("Repairing: Debian Trixie linphone (not sid).")
+        else:
+            lines.insert(0, "RESULT: INSTALLING VOIP")
+            lines.append("Installing linphone-cli in the background.")
         lines.append("Wait about a minute, then Test SIP again.")
-        lines.append("This is not the wrapper — the real CLI is missing.")
         lines.append("--- log ---")
         lines.append(recent_log(8))
         return "\n".join(lines)

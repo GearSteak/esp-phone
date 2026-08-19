@@ -38,6 +38,28 @@ have_bin() {
   return 1
 }
 
+# File on disk is not enough — Debian sid linphone needs libxml2.so.16;
+# Raspbian Trixie only has libxml2.so.2, so linphonec exits 127 immediately.
+voip_bin_runs() {
+  local b="$1" out
+  [[ -n "$b" && -x "$b" ]] || return 1
+  out="$("$b" -v 2>&1 || true)"
+  echo "$out" | grep -qiE 'error while loading shared libraries|cannot open shared object' \
+    && return 1
+  return 0
+}
+
+linphonec_ok() {
+  local p
+  for p in /usr/bin/linphonec /usr/local/bin/linphonec \
+    "$(command -v linphonec 2>/dev/null)"
+  do
+    [[ -z "$p" || "$p" == *digivice-linphonec* ]] && continue
+    voip_bin_runs "$p" && return 0
+  done
+  return 1
+}
+
 real_csh() {
   local p r
   for p in /usr/bin/linphonecsh /usr/local/bin/linphonecsh \
@@ -159,11 +181,13 @@ EOF
   apt-get update -qq 2>&1 | tee -a "$LOG" | tail -n 20
 }
 
-_pool_latest() {
-  local pool="$1" regex="$2" hit
-  hit="$(curl -fsSL "$pool" 2>/dev/null | grep -oE "$regex" | sort -V | tail -n1 || true)"
-  [[ -z "$hit" ]] && hit="$(wget -q -O - "$pool" 2>/dev/null | grep -oE "$regex" | sort -V | tail -n1 || true)"
-  [[ -n "$hit" ]] && echo "${pool%/}/$hit"
+_packages_filename() {
+  local idx="$1" pkg="$2"
+  awk -v pkg="$pkg" '
+    $1=="Package:" && $2==pkg {hit=1}
+    hit && $1=="Filename:" { print $2; exit }
+    $0=="" {hit=0}
+  ' "$idx"
 }
 
 _fetch_deb() {
@@ -176,54 +200,67 @@ _fetch_deb() {
 }
 
 download_debs_fallback() {
-  # Raspbian has no linphone-cli. Fetch the Debian armhf stack, including
-  # liblinphone12 (installing only linphone-cli.deb leaves it uninstallable).
-  local arch tmp pool url f
+  # Raspbian has no linphone-cli. Fetch the Debian *Trixie* armhf stack.
+  # Do NOT use pool "latest": sid's 5.3.105-6 needs libxml2.so.16, which
+  # Raspbian Trixie does not ship (it has libxml2.so.2). That made
+  # /usr/bin/linphonec exist but die with rc=127 on every Test SIP.
+  local arch tmp idx url fn pkg
   arch="$(os_arch)"
   tmp=/var/tmp/digivice-voip
   mkdir -p "$tmp"
-  log "Direct .deb fallback arch=$arch"
+  log "Debian Trixie .debs arch=$arch"
   cd "$tmp" || return 1
   rm -f ./*.deb 2>/dev/null || true
 
-  pool=http://deb.debian.org/debian/pool/main
-  _fetch_deb "$(_pool_latest "$pool/l/linphone" "linphone-common_[^\"<> ]+_all\\.deb")" \
-    "$tmp/linphone-common.deb" || return 1
-  _fetch_deb "$(_pool_latest "$pool/l/linphone" "liblinphone12_[^\"<> ]+_${arch}\\.deb")" \
-    "$tmp/liblinphone12.deb" || return 1
-  _fetch_deb "$(_pool_latest "$pool/l/linphone" "linphone-cli_[^\"<> ]+_${arch}\\.deb")" \
-    "$tmp/linphone-cli.deb" || return 1
-  for spec in \
-    "b/bctoolbox|libbctoolbox2_[^\"<> ]+_${arch}\\.deb" \
-    "b/belle-sip|libbellesip3_[^\"<> ]+_${arch}\\.deb" \
-    "b/belr|libbelr1_[^\"<> ]+_${arch}\\.deb" \
-    "b/belcard|libbelcard1_[^\"<> ]+_${arch}\\.deb" \
-    "l/lime|liblime1_[^\"<> ]+_${arch}\\.deb" \
-    "m/mediastreamer2|libmediastreamer2-14_[^\"<> ]+_${arch}\\.deb" \
-    "o/ortp|libortp16_[^\"<> ]+_${arch}\\.deb" \
-    "b/bcmatroska2|libbcmatroska2-5_[^\"<> ]+_${arch}\\.deb" \
-    "b/bcg729|libbcg729-0_[^\"<> ]+_${arch}\\.deb" \
-    "b/bzrtp|libbzrtp1_[^\"<> ]+_${arch}\\.deb"
+  idx="$tmp/Packages.trixie"
+  if ! curl -fL --retry 3 \
+      "http://deb.debian.org/debian/dists/trixie/main/binary-${arch}/Packages.gz" \
+      2>>"$LOG" | gzip -dc >"$idx" || [[ ! -s "$idx" ]]; then
+    log "FAILED: could not download Debian Trixie Packages.gz"
+    return 1
+  fi
+
+  for pkg in \
+    linphone-common linphone-cli liblinphone12 \
+    libbctoolbox2 libbellesip3 libbelr1 libbelcard1 \
+    liblime1 libmediastreamer2-14 libortp16 \
+    libbcmatroska2-5 libbcg729-0 libbzrtp1 \
+    belcard-data bellesip-data
   do
-    url="$(_pool_latest "$pool/${spec%%|*}" "${spec##*|}")"
-    f="$tmp/$(basename "${url:-x}")"
-    _fetch_deb "$url" "$f" || log "WARN: skip ${spec##*|}"
+    fn="$(_packages_filename "$idx" "$pkg")"
+    if [[ -z "$fn" ]]; then
+      log "WARN: $pkg not in Trixie $arch Packages"
+      continue
+    fi
+    url="http://deb.debian.org/debian/${fn}"
+    _fetch_deb "$url" "$tmp/$(basename "$fn")" || log "WARN: skip $pkg"
   done
 
-  log "apt-get install local linphone debs…"
-  apt-get install -y "$tmp"/*.deb 2>&1 | tee -a "$LOG"
-  if ! have_bin; then
-    dpkg -i "$tmp"/*.deb 2>&1 | tee -a "$LOG" || true
-    apt-get install -y -f 2>&1 | tee -a "$LOG" || true
+  if ! ls "$tmp"/*.deb >/dev/null 2>&1; then
+    log "FAILED: no Trixie debs downloaded"
+    return 1
   fi
+
+  log "remove sid linphone (broken libxml2.so.16) so Trixie can downgrade…"
+  dpkg --remove --force-depends \
+    linphone-cli liblinphone12 linphone-common \
+    liblime1 libmediastreamer2-14 libortp16 \
+    libbctoolbox2 libbellesip3 libbelr1 libbelcard1 \
+    libbcmatroska2-5 libbzrtp1 2>&1 | tee -a "$LOG" || true
+
+  log "dpkg install Trixie linphone…"
+  dpkg -i --force-depends "$tmp"/*.deb 2>&1 | tee -a "$LOG" || true
+  log "apt-get -f for Raspbian libs (mbedtls, avahi, …)…"
+  apt-get install -y -f --allow-downgrades 2>&1 | tee -a "$LOG" || true
+  dpkg --configure -a 2>&1 | tee -a "$LOG" || true
 }
 
 install_cli() {
   export DEBIAN_FRONTEND=noninteractive
+  rm -f /etc/apt/sources.list.d/digivice-voip-debian.list \
+    /etc/apt/sources.list.d/digivice-voip-debian.sources
   if [[ "$DEBS_ONLY" -eq 1 ]]; then
-    log "debs-only: skip apt repo (that hang) — fetch Debian .debs"
-    rm -f /etc/apt/sources.list.d/digivice-voip-debian.list \
-      /etc/apt/sources.list.d/digivice-voip-debian.sources
+    log "debs-only: Debian Trixie .debs (skip apt repo hang)"
     download_debs_fallback || true
     return 0
   fi
@@ -232,17 +269,12 @@ install_cli() {
 
   ensure_debian_voip_repo
 
-  log "apt-get install linphone-cli liblinphone12…"
-  apt-get install -y linphone-cli liblinphone12 linphone-common 2>&1 | tee -a "$LOG" || true
+  log "apt-get install linphone-cli=5.3.105-5 liblinphone12=5.3.105-5…"
+  apt-get install -y linphone-cli=5.3.105-5 liblinphone12=5.3.105-5 \
+    linphone-common=5.3.105-5 2>&1 | tee -a "$LOG" || true
 
-  if ! have_bin; then
-    log "searching apt for linphone packages…"
-    apt-cache policy linphone-cli liblinphone12 2>&1 | tee -a "$LOG" | head -n 40 || true
-    apt-cache search linphone 2>&1 | tee -a "$LOG" | head -n 40 || true
-    apt-get install -y linphone-nogtk 2>&1 | tee -a "$LOG" || true
-  fi
-
-  if ! have_bin; then
+  if ! linphonec_ok; then
+    log "apt repo did not yield a runnable linphonec — Trixie .debs"
     download_debs_fallback || true
   fi
 }
@@ -364,7 +396,19 @@ fi
 log "=== ensure start $(date -Is 2>/dev/null || date) ==="
 install_wrapper
 
-if have_bin; then
+NEED_INSTALL=0
+if [[ "$DEBS_ONLY" -eq 1 ]]; then
+  log "--debs: reinstall Debian Trixie linphone"
+  NEED_INSTALL=1
+elif ! have_bin; then
+  NEED_INSTALL=1
+elif ! linphonec_ok; then
+  log "linphonec present but will not start (missing .so) — reinstall Trixie"
+  NEED_INSTALL=1
+  DEBS_ONLY=1
+fi
+
+if [[ "$NEED_INSTALL" -eq 0 ]]; then
   BIN="$(real_csh)"
   log "already present: $BIN"
   pin_bin "$BIN"
@@ -374,12 +418,12 @@ if have_bin; then
 else
   if [[ "$LOCATE_ONLY" -eq 1 ]]; then
     BIN="$(real_csh || true)"
-    if [[ -n "$BIN" && -e "$BIN" ]]; then
+    if [[ -n "$BIN" && -e "$BIN" ]] && linphonec_ok; then
       pin_bin "$BIN"
       log "locate-only OK $BIN"
       exit 0
     fi
-    log "locate-only: not found"
+    log "locate-only: not found or broken"
     write_status "missing"
     exit 2
   fi
@@ -393,6 +437,19 @@ if ! have_bin; then
   echo ""
   echo "====================================================="
   echo " Digivice VoIP FAILED: linphonecsh not installed"
+  echo "====================================================="
+  exit 2
+fi
+
+if ! linphonec_ok; then
+  log "FAILED — linphonec will not start (shared library)"
+  /usr/bin/linphonec -v 2>&1 | tee -a "$LOG" || true
+  ldd /usr/bin/linphonec 2>&1 | grep 'not found' | tee -a "$LOG" || true
+  write_status "broken"
+  doctor | tee -a "$LOG"
+  echo ""
+  echo "====================================================="
+  echo " Digivice VoIP FAILED: linphonec missing libraries"
   echo "====================================================="
   exit 2
 fi
