@@ -1200,8 +1200,8 @@ class SolitaireBoard(QWidget):
             p.drawRoundedRect(rect.adjusted(0, 0, -1, -1), 3, 3)
 
 
-# ── Uno (simple) ─────────────────────────────────────────────────────────────
-_UNO_COLORS = ["R", "G", "B", "Y"]
+# ── Uno (108-card, 2-player official effects) ───────────────────────────────
+_UNO_COLORS = ("R", "G", "B", "Y")
 _UNO_HEX = {"R": "#ff5252", "G": "#3dff9a", "B": "#5ad1ff", "Y": "#ffd56a"}
 _UNO_BLOCK = {
     "R": "block_red.png",
@@ -1209,10 +1209,36 @@ _UNO_BLOCK = {
     "B": "block_blue.png",
     "Y": "block_yellow.png",
 }
+_UNO_FACE = {
+    "S": "SKIP",
+    "R": "REV",
+    "D": "+2",
+    "W": "WILD",
+    "F": "+4",
+}
+
+
+def _uno_deck():
+    """Standard 108-card Uno deck. Card is (color, face). Wilds use color W."""
+    cards = []
+    for c in _UNO_COLORS:
+        cards.append((c, "0"))
+        for n in "123456789":
+            cards.extend(((c, n), (c, n)))
+        for a in ("S", "R", "D"):
+            cards.extend(((c, a), (c, a)))
+    for _ in range(4):
+        cards.append(("W", "W"))
+        cards.append(("W", "F"))
+    return cards
+
+
+def _uno_label(face: str) -> str:
+    return _UNO_FACE.get(face, str(face))
 
 
 class UnoBoard(QWidget):
-    """You vs CPU. Confirm plays a match, or draws if you cannot."""
+    """Proper Uno vs CPU: 108 cards, Skip / Reverse / +2 / Wild / +4."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -1225,24 +1251,60 @@ class UnoBoard(QWidget):
 
     def reset(self):
         self._cpu_timer.stop()
-        deck = [(c, n) for c in _UNO_COLORS for n in range(10)] * 2
+        deck = _uno_deck()
         random.shuffle(deck)
         self.hand = [deck.pop() for _ in range(7)]
         self.cpu = [deck.pop() for _ in range(7)]
+        while deck and deck[-1][1] == "F":
+            random.shuffle(deck)
         self.pile = [deck.pop()]
         self.deck = deck
+        top_c, top_f = self.pile[-1]
+        self.color = top_c if top_c in _UNO_COLORS else "R"
         self.sel = 0
+        self.color_i = 0
+        self.picking = False
+        self.drew = None  # card drawn this turn (may play only that card)
         self.player_turn = True
         self.over = ""
-        self.message = "Match color or number · Confirm plays / draws"
+        self.message = ""
+        self._apply_upcard()
+        if not self.message:
+            self.message = "Match color / number / type"
         self.update()
+
+    def _apply_upcard(self):
+        """Opening card affects the first player (you), 2-player rules."""
+        _c, f = self.pile[-1]
+        if f == "W":
+            self.picking = True
+            self.player_turn = True
+            self.message = "Wild start · pick a color"
+            return
+        if f == "S" or f == "R":
+            self.player_turn = False
+            self.message = "Start SKIP/REV · CPU first"
+            self._cpu_timer.start(500)
+            return
+        if f == "D":
+            self._give(self.hand, 2)
+            self.player_turn = False
+            self.message = "Start +2 · you draw 2, CPU first"
+            self._cpu_timer.start(500)
 
     def _top(self):
         return self.pile[-1]
 
-    def _legal(self, card) -> bool:
-        top = self._top()
-        return card[0] == top[0] or card[1] == top[1]
+    def _legal(self, card, hand=None) -> bool:
+        hand = self.hand if hand is None else hand
+        c, f = card
+        if f == "W":
+            return True
+        if f == "F":
+            return not any(x[0] == self.color for x in hand if x[0] in _UNO_COLORS)
+        if c == self.color:
+            return True
+        return f == self._top()[1]
 
     def _refill(self) -> None:
         if self.deck:
@@ -1261,8 +1323,78 @@ class UnoBoard(QWidget):
             return None
         return self.deck.pop()
 
+    def _give(self, who: list, n: int) -> None:
+        for _ in range(n):
+            card = self._take()
+            if card is None:
+                break
+            who.append(card)
+
+    def _uno_check(self, who: list, name: str) -> None:
+        if len(who) == 1:
+            self.message = f"{name} UNO!"
+
+    def _win(self, text: str) -> None:
+        self.over = text
+        self.message = text
+        self.picking = False
+        self.player_turn = True
+        self.update()
+
+    def _after_you(self, again: bool) -> None:
+        if not self.hand:
+            self._win("YOU WIN!")
+            return
+        self._uno_check(self.hand, "You")
+        self.drew = None
+        if again:
+            self.player_turn = True
+            if "UNO" not in (self.message or ""):
+                self.message = "Play again (they skip)"
+            self.update()
+            return
+        self.player_turn = False
+        if "UNO" not in (self.message or ""):
+            self.message = "CPU thinking…"
+        self.update()
+        self._cpu_timer.start(500)
+
+    def _start_color_pick(self) -> None:
+        self.picking = True
+        self.color_i = max(0, _UNO_COLORS.index(self.color) if self.color in _UNO_COLORS else 0)
+        self.message = "Pick a color"
+        self.update()
+
+    def _finish_color_pick(self) -> None:
+        self.color = _UNO_COLORS[self.color_i]
+        self.picking = False
+        face = self._top()[1]
+        # Opening wild: choose color, then you still play a card
+        if len(self.pile) == 1 and face == "W":
+            self.player_turn = True
+            self.message = f"{_uno_color_name(self.color)} · your play"
+            self.update()
+            return
+        if face == "F":
+            self._give(self.cpu, 4)
+            self.message = f"{_uno_color_name(self.color)} · CPU draws 4"
+            self._after_you(True)
+            return
+        self.message = f"Color {_uno_color_name(self.color)}"
+        self._after_you(False)
+
     def draw_card(self):
-        if not self.player_turn or self.over:
+        if self.over or self.picking:
+            return
+        if not self.player_turn:
+            return
+        if self.drew is not None:
+            # Pass after a draw
+            self.message = "Passed · CPU's turn"
+            self.drew = None
+            self.player_turn = False
+            self.update()
+            self._cpu_timer.start(400)
             return
         card = self._take()
         if card is None:
@@ -1271,67 +1403,153 @@ class UnoBoard(QWidget):
             return
         self.hand.append(card)
         self.sel = len(self.hand) - 1
+        self.drew = card
         if self._legal(card):
-            self.message = "Drew a match — Confirm to play it"
+            self.message = "Drew — Confirm to play it, ↓ to pass"
+        else:
+            self.message = "Drew, no play · CPU's turn"
+            self.drew = None
+            self.player_turn = False
             self.update()
+            self._cpu_timer.start(400)
             return
-        self.message = "Drew · CPU's turn"
-        self.player_turn = False
         self.update()
-        self._cpu_timer.start(450)
 
     def play_index(self, idx: int):
-        if not self.player_turn or self.over:
+        if self.over or self.picking or not self.player_turn:
             return
         if idx < 0 or idx >= len(self.hand):
             return
         card = self.hand[idx]
+        if self.drew is not None and card is not self.drew:
+            self.message = "After a draw you may only play that card"
+            self.update()
+            return
         if not self._legal(card):
-            self.message = "Can't play that — Confirm draws"
+            self.message = "Illegal · match color/type or draw"
             self.update()
             return
-        self.pile.append(self.hand.pop(idx))
+        self.hand.pop(idx)
+        self.pile.append(card)
         self.sel = min(self.sel, max(0, len(self.hand) - 1))
+        self.drew = None
+        c, f = card
+        if c in _UNO_COLORS:
+            self.color = c
         if not self.hand:
-            self.over = "YOU WIN!"
-            self.message = self.over
-            self.update()
+            self._win("YOU WIN!")
             return
-        self.message = "CPU thinking…"
-        self.player_turn = False
-        self.update()
-        self._cpu_timer.start(450)
+        if f in ("W", "F"):
+            self._start_color_pick()
+            return
+        again = False
+        if f in ("S", "R"):
+            again = True
+            self.message = "SKIP / REV"
+        elif f == "D":
+            self._give(self.cpu, 2)
+            again = True
+            self.message = "CPU draws 2"
+        self._after_you(again)
+
+    def _cpu_color(self) -> str:
+        counts = {c: 0 for c in _UNO_COLORS}
+        for col, _f in self.cpu:
+            if col in counts:
+                counts[col] += 1
+        return max(counts, key=counts.get)
 
     def _cpu_play(self):
         if self.over or self.player_turn:
             return
-        playable = [i for i, c in enumerate(self.cpu) if self._legal(c)]
-        if playable:
-            i = playable[0]
-            self.pile.append(self.cpu.pop(i))
+        playable = [i for i, c in enumerate(self.cpu) if self._legal(c, self.cpu)]
+        # Prefer non-wild if any
+        ranked = sorted(
+            playable,
+            key=lambda i: (self.cpu[i][1] in ("W", "F"), self.cpu[i][1] == "F"),
+        )
+        if ranked:
+            i = ranked[0]
+            card = self.cpu.pop(i)
+            self.pile.append(card)
+            c, f = card
+            if c in _UNO_COLORS:
+                self.color = c
             if not self.cpu:
-                self.over = "CPU WINS"
-                self.message = self.over
+                self._win("CPU WINS")
+                return
+            self._uno_check(self.cpu, "CPU")
+            skip_you = False
+            if f in ("W", "F"):
+                self.color = self._cpu_color()
+                if f == "F":
+                    self._give(self.hand, 4)
+                    skip_you = True
+                    self.message = f"CPU +4 · {_uno_color_name(self.color)} · you draw 4"
+                else:
+                    self.message = f"CPU wild · {_uno_color_name(self.color)}"
+            elif f in ("S", "R"):
+                skip_you = True
+                self.message = "CPU SKIP/REV"
+            elif f == "D":
+                self._give(self.hand, 2)
+                skip_you = True
+                self.message = "CPU +2 · you draw 2"
+            else:
+                self.message = f"CPU played · {len(self.cpu)} left"
+            if skip_you:
+                self.update()
+                self._cpu_timer.start(550)
+                return
+            self.player_turn = True
+            self.update()
+            return
+        card = self._take()
+        if card is None:
+            self.message = "CPU can't draw — your turn"
+            self.player_turn = True
+            self.update()
+            return
+        if self._legal(card, self.cpu + [card]):
+            # May play drawn card immediately
+            self.cpu.append(card)  # so +4 legality sees full hand then pop
+            if card[1] == "F" and not self._legal(card, self.cpu):
+                self.message = f"CPU drew · {len(self.cpu)} left"
                 self.player_turn = True
                 self.update()
                 return
-            self.message = f"CPU played · {len(self.cpu)} left"
+            self.cpu.pop()
+            self.pile.append(card)
+            c, f = card
+            if c in _UNO_COLORS:
+                self.color = c
+            if f in ("W", "F"):
+                self.color = self._cpu_color()
+            skip_you = f in ("S", "R", "D", "F")
+            if f == "D":
+                self._give(self.hand, 2)
+            if f == "F":
+                self._give(self.hand, 4)
+            self.message = f"CPU drew and played · {len(self.cpu)} left"
+            if skip_you:
+                self.update()
+                self._cpu_timer.start(550)
+                return
         else:
-            card = self._take()
-            if card is None:
-                self.message = "CPU skips — your turn"
-            elif self._legal(card):
-                self.pile.append(card)
-                self.message = f"CPU drew+played · {len(self.cpu)} left"
-            else:
-                self.cpu.append(card)
-                self.message = f"CPU drew · {len(self.cpu)} left"
+            self.cpu.append(card)
+            self.message = f"CPU drew · {len(self.cpu)} left"
         self.player_turn = True
         self.update()
 
     def digi_nav(self, dx: int, dy: int) -> bool:
         if self.over:
             return bool(dx or dy)
+        if self.picking:
+            if dx:
+                self.color_i = (self.color_i + (1 if dx > 0 else -1)) % 4
+                self.update()
+                return True
+            return bool(dy)
         if dx and self.hand:
             self.sel = (self.sel + (1 if dx > 0 else -1)) % len(self.hand)
             self.update()
@@ -1345,12 +1563,16 @@ class UnoBoard(QWidget):
         if self.over:
             self.reset()
             return
+        if self.picking:
+            self._finish_color_pick()
+            return
         if not self.player_turn:
             return
         if self.hand and self._legal(self.hand[self.sel]):
-            self.play_index(self.sel)
-        else:
-            self.draw_card()
+            if self.drew is None or self.hand[self.sel] is self.drew:
+                self.play_index(self.sel)
+                return
+        self.message = "Can't play that · ↓ to draw"
 
     def paintEvent(self, _e):
         p = QPainter(self)
@@ -1360,25 +1582,43 @@ class UnoBoard(QWidget):
         accent = QColor("#ff6b6b")
         _fill_crt(p, r, accent)
         cw, ch = 42, 58
-        self._card(p, r.width() // 2 - cw // 2, 8, cw, ch, self._top(), big=True)
+        self._card(p, r.width() // 2 - cw // 2, 6, cw, ch, self._top(), big=True)
+        # current color pip
+        pip = QRect(r.width() // 2 + cw // 2 + 6, 22, 14, 14)
+        p.setBrush(QColor(_UNO_HEX.get(self.color, "#888")))
+        p.setPen(QPen(_INK, 1))
+        p.drawEllipse(pip)
         p.setPen(_MUTED)
         p.setFont(_font(9))
         p.drawText(
-            QRect(6, 8, r.width() // 2 - cw // 2 - 8, 36),
+            QRect(4, 6, r.width() // 2 - cw // 2 - 6, 40),
             Qt.AlignLeft | Qt.AlignVCenter,
             f"CPU {len(self.cpu)}",
         )
         p.drawText(
-            QRect(r.width() // 2 + cw // 2 + 4, 8, r.width() // 2 - cw // 2 - 8, 36),
-            Qt.AlignRight | Qt.AlignVCenter,
+            QRect(r.width() // 2 + cw // 2 + 24, 6, 80, 40),
+            Qt.AlignLeft | Qt.AlignVCenter,
             f"You {len(self.hand)}",
         )
         p.setPen(_INK if self.player_turn and not self.over else _GOLD)
         p.setFont(_font(9, True))
-        p.drawText(QRect(4, 68, r.width() - 8, 28), Qt.AlignCenter | Qt.TextWordWrap, self.message)
+        p.drawText(QRect(4, 66, r.width() - 8, 28), Qt.AlignCenter | Qt.TextWordWrap, self.message)
+
+        if self.picking:
+            box_w = 28
+            gap = 8
+            total = 4 * box_w + 3 * gap
+            x0 = (r.width() - total) // 2
+            y = r.height() // 2 + 8
+            for i, c in enumerate(_UNO_COLORS):
+                rr = QRect(x0 + i * (box_w + gap), y, box_w, box_w)
+                p.setBrush(QColor(_UNO_HEX[c]))
+                p.setPen(QPen(_GOLD if i == self.color_i else QColor("#101820"), 3 if i == self.color_i else 1))
+                p.drawRoundedRect(rr, 6, 6)
+            return
 
         n = max(1, len(self.hand))
-        slot = min(36, max(18, (r.width() - 10) // n))
+        slot = min(36, max(16, (r.width() - 10) // n))
         hw, hh = max(14, slot - 3), int(max(14, slot - 3) * 1.4)
         total = slot * n
         x0 = (r.width() - total) // 2
@@ -1396,21 +1636,34 @@ class UnoBoard(QWidget):
             )
 
     def _card(self, p, x, y, w, h, card, selected=False, big=False, legal=True):
-        col, num = card
+        col, face = card
         rect = QRect(x, y, w, h)
-        p.setOpacity(1.0 if legal or big else 0.45)
-        p.setBrush(QColor("#f4f7fb"))
+        p.setOpacity(1.0 if legal or big else 0.4)
+        if col == "W":
+            p.setBrush(QColor("#1a1a1a"))
+        else:
+            p.setBrush(QColor("#f4f7fb"))
         ring = QColor("#ffd56a") if selected else (
             QColor(_UNO_HEX.get(col, "#888")) if legal else QColor("#1a2030")
         )
         p.setPen(QPen(ring, 2 if selected else 1))
         p.drawRoundedRect(rect, 6, 6)
         inner = rect.adjusted(3, 8, -3, -8)
-        _draw_pm(p, _UNO_BLOCK.get(col, "block_red.png"), inner, fill=True)
-        p.setPen(QColor("#101820"))
-        p.setFont(_font(16 if big else 11, True))
-        p.drawText(rect, Qt.AlignCenter, str(num))
+        if col in _UNO_BLOCK:
+            _draw_pm(p, _UNO_BLOCK[col], inner, fill=True)
+        else:
+            p.setBrush(QColor("#111"))
+            p.setPen(Qt.NoPen)
+            p.drawRoundedRect(inner, 4, 4)
+        label = _uno_label(face)
+        p.setPen(QColor("#fff") if col == "W" else QColor("#101820"))
+        p.setFont(_font(12 if big else 8, True))
+        p.drawText(rect, Qt.AlignCenter, label)
         p.setOpacity(1.0)
+
+
+def _uno_color_name(c: str) -> str:
+    return {"R": "Red", "G": "Green", "B": "Blue", "Y": "Yellow"}.get(c, c)
 
 
 # ── Card game shell (menu + play, no score race) ─────────────────────────────
@@ -1599,10 +1852,11 @@ def make_uno(on_back):
     anew.clicked.connect(board.reset)
     shell = CardShell(
         "UNO",
-        "Match color or number",
+        "108 cards · Skip · Wild · +4",
         QColor("#ff6b6b"),
-        "←→ pick a card. Confirm plays it if it matches, otherwise you draw. "
-        "↓ also draws. Then the CPU takes a turn. Empty your hand to win.",
+        "UNO vs CPU. ←→ pick a card, Confirm plays. ↓ draws (you may play that card). "
+        "Skip / Reverse / +2 skip the other player (2-player). Wild and +4: pick a color. "
+        "+4 only if you have no card of the current color. Last card = UNO.",
         board,
         [draw, play, anew],
         on_back,
