@@ -574,6 +574,10 @@ SUBSYSTEM=="input", KERNEL=="event*", ATTRS{name}=="Digivice-Buttons", \
   MODE="0666", GROUP="input", \
   ENV{ID_INPUT}="1", ENV{ID_INPUT_KEYBOARD}="1", \
   ENV{ID_INPUT_KEY}="1", TAG+="uaccess", TAG+="seat"
+SUBSYSTEM=="input", KERNEL=="event*", ATTRS{name}=="Digivice-CardKB", \
+  MODE="0666", GROUP="input", \
+  ENV{ID_INPUT}="1", ENV{ID_INPUT_KEYBOARD}="1", \
+  ENV{ID_INPUT_KEY}="1", TAG+="uaccess", TAG+="seat"
 EOF
 udevadm control --reload-rules 2>/dev/null || true
 usermod -aG dialout,input,gpio,i2c "$USER_NAME" 2>/dev/null || true
@@ -628,7 +632,7 @@ EOF
 
 cat >/etc/systemd/system/cardkb-inputd.service <<EOF
 [Unit]
-Description=Digivice CardKB I2C → uinput + xdotool
+Description=Digivice CardKB I2C → Linux desktop keyboard (uinput)
 After=multi-user.target
 
 [Service]

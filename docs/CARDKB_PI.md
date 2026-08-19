@@ -39,7 +39,7 @@ sudo i2cdetect -y 1          # must show 5f
 
 **While Digivice is running**, CardKB is read **in-process** over I2C (no xdotool). That keeps typing instant in Accounts and other fields.
 
-`cardkb-inputd` is **stopped** during Digivice and restarted when you exit to Linux Desktop (for desktop typing).
+`cardkb-inputd` is **stopped** during Digivice and restarted when you exit to Linux Desktop. On Pi OS Trixie (Wayland) it types via a **uinput** keyboard, not xdotool.
 
 Confirm on a text field (yellow ring + “Typing · Back exits”), then type. **Back** leaves the field.
 

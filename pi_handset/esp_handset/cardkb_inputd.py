@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""M5Stack CardKB on Pi I2C → Digivice (uinput + xdotool).
+"""M5Stack CardKB on Pi I2C → Linux desktop keyboard (uinput).
 
 Wiring (Pi 40-pin):
   CardKB 5V  → Pin 2  (5V)   — not 3.3V
@@ -7,21 +7,21 @@ Wiring (Pi 40-pin):
   CardKB SDA → Pin 3  (GPIO 2 / SDA1)
   CardKB SCL → Pin 5  (GPIO 3 / SCL1)
 
-Poll /dev/i2c-1 @ 0x5F. Same dual inject as digi-buttons (uinput + xdotool)
-so keys reach Digivice on the SPI kiosk display.
-Prefer: dtparam=i2c_arm_baudrate=50000
+Poll /dev/i2c-1 @ 0x5F. Inject via uinput so keys work on Wayland
+(labwc / Pi OS Trixie) as well as X11. Do not use xdotool here —
+Xwayland "succeeds" then types into nothing native.
+
+Digivice itself reads CardKB in-process (cardkb_qt) and stops this daemon.
 """
 
 from __future__ import annotations
 
 import argparse
 import fcntl
-import os
 import subprocess
 import sys
 import time
-from pathlib import Path
-from typing import Any, List, Optional
+from typing import Any, Optional
 
 ADDR = 0x5F
 I2C_TIMEOUT = 0x0702  # linux/i2c-dev.h — units of 10 ms
@@ -69,114 +69,9 @@ PUNCT = {
 }
 NEEDS_SHIFT = set(':!@#$%^&*()<>?"_+{}|~')
 
-# xdotool key names for specials / arrows
-XDOTOOL_SPECIAL = {
-    "UP": "Up",
-    "DOWN": "Down",
-    "LEFT": "Left",
-    "RIGHT": "Right",
-    "ENTER": "Return",
-    "ESC": "Escape",
-    "BACKSPACE": "BackSpace",
-    "TAB": "Tab",
-    "SPACE": "space",
-}
-
 
 def log(msg: str) -> None:
     print(msg, flush=True)
-
-
-def _which(name: str) -> Optional[str]:
-    for d in os.environ.get("PATH", "/usr/bin:/bin").split(":"):
-        p = os.path.join(d, name)
-        if os.path.isfile(p) and os.access(p, os.X_OK):
-            return p
-    return None
-
-
-def _find_xauthority() -> Optional[str]:
-    for cand in (
-        os.environ.get("XAUTHORITY") or "",
-        "/home/pi/.Xauthority",
-        str(Path.home() / ".Xauthority"),
-    ):
-        if cand and os.path.isfile(cand):
-            return cand
-    # Common Digivice user homes
-    for home in Path("/home").glob("*/.Xauthority"):
-        return str(home)
-    return None
-
-
-class XInject:
-    """Fast X key inject — same idea as digi-buttons (no windowactivate)."""
-
-    def __init__(self) -> None:
-        self.display = os.environ.get("DISPLAY") or ":0"
-        self.auth = _find_xauthority()
-        self.xdotool = _which("xdotool")
-        self.ok = False
-        if self.xdotool:
-            try:
-                r = subprocess.run(
-                    [self.xdotool, "getactivewindow"],
-                    env=self._env(),
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                    timeout=0.8,
-                    check=False,
-                )
-                self.ok = r.returncode == 0
-            except Exception:
-                self.ok = False
-        if self.ok:
-            log(
-                f"X inject ON display={self.display} "
-                f"XAUTHORITY={self.auth or '(none)'}"
-            )
-        else:
-            log(
-                "X inject OFF/unreachable — falling back to uinput "
-                f"display={self.display} XAUTHORITY={self.auth or '(none)'}"
-            )
-
-    def _env(self) -> dict:
-        env = os.environ.copy()
-        env["DISPLAY"] = self.display
-        if self.auth:
-            env["XAUTHORITY"] = self.auth
-        return env
-
-    def _run(self, args: List[str]) -> None:
-        if not self.ok:
-            return
-        try:
-            subprocess.run(
-                [self.xdotool, *args],
-                env=self._env(),
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                timeout=0.25,
-                check=False,
-            )
-        except Exception:
-            pass
-
-    def key_named(self, name: str) -> None:
-        if name:
-            self._run(["key", "--clearmodifiers", name])
-
-    def type_char(self, ch: str) -> None:
-        if not ch:
-            return
-        if len(ch) == 1 and ch.isalnum():
-            self._run(["key", "--clearmodifiers", ch.lower() if ch.isalpha() else ch])
-            return
-        if ch == " ":
-            self._run(["key", "--clearmodifiers", "space"])
-            return
-        self._run(["type", "--clearmodifiers", "--delay", "0", "--", ch])
 
 
 def _open_bus(smbus_mod: Any, bus_id: int) -> Any:
@@ -214,7 +109,7 @@ def _probe(bus: Any) -> bool:
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="CardKB → Digivice (uinput + xdotool)")
+    ap = argparse.ArgumentParser(description="CardKB → Linux desktop (uinput keyboard)")
     ap.add_argument("bus", nargs="?", type=int, default=1, help="I2C bus (default 1)")
     ap.add_argument("--hz", type=float, default=50.0, help="Poll rate Hz")
     ap.add_argument("-v", "--verbose", action="store_true", help="Log every keycode")
@@ -269,8 +164,17 @@ def main() -> int:
         uinput.KEY_RIGHTBRACE,
         uinput.KEY_BACKSLASH,
     ]
-    device = uinput.Device(events, name="Digivice-CardKB")
-    xinj = XInject()
+    # USB bustype so labwc/libinput treat this as a real keyboard on Wayland
+    try:
+        device = uinput.Device(
+            events,
+            name="Digivice-CardKB",
+            bustype=0x03,
+            vendor=0x1D50,
+            product=0x6014,
+        )
+    except TypeError:
+        device = uinput.Device(events, name="Digivice-CardKB")
 
     bus: Optional[Any] = None
 
@@ -293,7 +197,7 @@ def main() -> int:
 
     log(
         f"cardkb-inputd ready bus={args.bus} addr=0x{ADDR:02X} "
-        f"(uinput+xdotool · arrows=nav Enter=confirm Esc=back)"
+        f"(uinput keyboard for Linux desktop)"
     )
 
     def tap_uinput(code: int) -> None:
@@ -302,11 +206,6 @@ def main() -> int:
         device.emit(code, 0)
 
     def emit_special(logical: str, u_code: int) -> None:
-        # Prefer xdotool (same path as digi-buttons into Digivice). Avoid
-        # dual-fire doubles that plagued Escape.
-        if xinj.ok:
-            xinj.key_named(XDOTOOL_SPECIAL.get(logical, ""))
-            return
         try:
             tap_uinput(u_code)
         except Exception as e:
@@ -316,10 +215,6 @@ def main() -> int:
         if ch in ("`", "~"):
             emit_special("ESC", uinput.KEY_ESC)
             return
-        if xinj.ok:
-            xinj.type_char(ch)
-            return
-        # Fallback: synthesize via uinput when X inject is unavailable
         need_shift = ch.isupper() or ch in NEEDS_SHIFT
         base = ch.lower() if ch.isalpha() else ch
         try:

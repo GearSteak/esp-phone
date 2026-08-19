@@ -28,8 +28,8 @@ doctor() {
   python3 -c "import uinput; print('uinput OK')" 2>&1 || true
   python3 -c "import smbus2; print('smbus2 OK')" 2>&1 \
     || python3 -c "import smbus; print('smbus OK')" 2>&1 || true
-  command -v xdotool >/dev/null && echo "xdotool OK" || echo "xdotool MISSING"
   command -v i2cdetect >/dev/null && echo "i2cdetect OK" || echo "i2c-tools MISSING"
+  echo "(desktop uses uinput, not xdotool)"
   echo "--- i2c ---"
   ls -l /dev/i2c-1 2>&1 || echo "no /dev/i2c-1 — enable I2C (raspi-config)"
   if command -v i2cdetect >/dev/null 2>&1 && [[ -e /dev/i2c-1 ]]; then
@@ -59,14 +59,25 @@ if [[ "${1:-}" == "--doctor" ]]; then
 fi
 
 echo "[ensure-cardkb] installing deps…"
-apt-get install -y python3-uinput python3-smbus i2c-tools xdotool >/dev/null 2>&1 \
-  || apt-get install -y python3-uinput python3-smbus2 i2c-tools xdotool >/dev/null 2>&1 \
+apt-get install -y python3-uinput python3-smbus2 i2c-tools >/dev/null 2>&1 \
+  || apt-get install -y python3-uinput python3-smbus i2c-tools >/dev/null 2>&1 \
   || true
 modprobe uinput 2>/dev/null || true
 modprobe i2c-dev 2>/dev/null || true
 if [[ ! -f /etc/modules-load.d/uinput.conf ]]; then
   echo uinput >/etc/modules-load.d/uinput.conf
 fi
+
+cat >/etc/udev/rules.d/99-digivice-cardkb.rules <<'EOF'
+# CardKB virtual keyboard — labwc/libinput must see it as a seat keyboard
+KERNEL=="uinput", GROUP="input", MODE="0660", OPTIONS+="static_node=uinput"
+SUBSYSTEM=="input", KERNEL=="event*", ATTRS{name}=="Digivice-CardKB", \
+  MODE="0666", GROUP="input", \
+  ENV{ID_INPUT}="1", ENV{ID_INPUT_KEYBOARD}="1", \
+  ENV{ID_INPUT_KEY}="1", TAG+="uaccess", TAG+="seat"
+EOF
+udevadm control --reload-rules 2>/dev/null || true
+udevadm trigger 2>/dev/null || true
 
 # Enable I2C if raspi-config available
 if command -v raspi-config >/dev/null 2>&1; then
@@ -90,7 +101,7 @@ usermod -aG i2c,input "$GUI_USER" 2>/dev/null || true
 
 cat >"$UNIT" <<EOF
 [Unit]
-Description=Digivice CardKB I2C → uinput + xdotool
+Description=Digivice CardKB I2C → Linux desktop keyboard (uinput)
 After=multi-user.target
 
 [Service]
