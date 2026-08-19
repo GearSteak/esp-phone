@@ -173,7 +173,23 @@ def write_sip_report(*, extra: str = "", run_doctor: bool = False) -> Path:
         except OSError:
             pass
     chunks.append("")
-    chunks.append("--- aplay -l ---")
+    chunks.append("--- network ---")
+    chunks.append(f"ipv4={_local_ipv4() or 'NONE'}")
+    chunks.append(_cmd_out(["ip", "-4", "addr"], timeout=3.0, cap=1200))
+    chunks.append(_cmd_out(["ip", "-4", "route"], timeout=3.0, cap=600))
+    chunks.append(
+        "dns sip.zadarma.com: "
+        + _cmd_out(["getent", "hosts", "sip.zadarma.com"], timeout=5.0, cap=300)
+    )
+    chunks.append(
+        "ping sip.zadarma.com: "
+        + _cmd_out(
+            ["ping", "-c", "1", "-W", "3", "sip.zadarma.com"],
+            timeout=6.0,
+            cap=400,
+        )
+    )
+    chunks.append("")
     chunks.append(_cmd_out(["aplay", "-l"], timeout=4.0, cap=1500))
     chunks.append("")
     chunks.append("--- linphone processes ---")
@@ -308,6 +324,25 @@ def _alsa_usb_label() -> str:
     return "ALSA: default"
 
 
+def _local_ipv4() -> str:
+    out = _cmd_out(["hostname", "-I"], timeout=2.0, cap=200)
+    for tok in (out or "").split():
+        if re.match(r"^\d+\.\d+\.\d+\.\d+$", tok) and not tok.startswith("127."):
+            return tok
+    return ""
+
+
+def _prepare_linphone_home() -> None:
+    for p in (
+        Path.home() / ".local" / "share" / "linphone",
+        Path.home() / ".config" / "linphone",
+    ):
+        try:
+            p.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            pass
+
+
 def _write_linphonerc(env: Dict[str, str]) -> Optional[Path]:
     user = (env.get("SIP_USER") or "").strip()
     server = (env.get("SIP_SERVER") or "").strip()
@@ -316,15 +351,18 @@ def _write_linphonerc(env: Dict[str, str]) -> Optional[Path]:
     if not user or not server or not password:
         return None
     sound = _alsa_usb_label()
+    _prepare_linphone_home()
     # firewall_policy: 0=none 1=manual NAT 2=STUN 3=ICE
-    # We used 1 for months (NAT with no address) — Zadarma calls died.
+    # Do not set guess_hostname — linphone then uses contact=sip:user@unknown-host
+    # and register_only_when_network_is_up skips REGISTER.
     body = (
         "[sip]\n"
         "sip_port=5060\n"
         "sip_tcp_port=0\n"
         "sip_tls_port=0\n"
         "use_info=0\n"
-        "guess_hostname=1\n"
+        "guess_hostname=0\n"
+        "register_only_when_network_is_up=0\n"
         "inc_timeout=45\n"
         "use_ipv6=0\n"
         "ipv6_enabled=0\n"
@@ -386,15 +424,6 @@ def _write_linphonerc(env: Dict[str, str]) -> Optional[Path]:
         "reg_sendregister=1\n"
         "publish=0\n"
         "dial_escape_plus=0\n"
-        "\n"
-        "[account_0]\n"
-        f"reg_identity=sip:{user}@{server}\n"
-        f"reg_proxy=<sip:{server};transport=udp>\n"
-        "reg_sendregister=1\n"
-        "expires=120\n"
-        "publish=0\n"
-        "dial_escape_plus=0\n"
-        "nat_policy_ref=nat_policy_0\n"
     )
     path = _linphonerc_path()
     try:
@@ -895,7 +924,8 @@ def _line_registered(line: str) -> Optional[bool]:
         r"(?i)registration (on\b.*)?(is )?(successful|sucessful|ok)|registered to|"
         r"LinphoneRegistrationOk|"
         r"now registered|is registered|"
-        r"registered\s*=\s*[1-9]|registered identity|^registered,",
+        r"registered\s*=\s*[1-9]|registered identity|^registered,|"
+        r"registered:\s*yes",
         s,
     ):
         if "not registered" not in low and "unregistered" not in low:
@@ -935,6 +965,12 @@ class LinphoneEngine:
     def _handle_line(self, line: str) -> None:
         line = _clean_cli(line)
         if not line:
+            return
+        # PTY echo of our own commands — not linphonec status
+        low = line.lower()
+        if low in ("status register", "status", "proxy list", "register") or low.startswith(
+            "register sip:"
+        ):
             return
         _log(f"linphonec | {line[:200]}")
         with self._lock:
@@ -1078,9 +1114,9 @@ class LinphoneEngine:
             return _set_error("linphonec not found")
         _kill_stray_linphone()
         attempts = (
+            [self.bin, "-S", "-c", str(rc)],
             [self.bin, "-c", str(rc)],
             [self.bin, f"--config={rc}"],
-            [self.bin, "--config", str(rc)],
         )
         last_err = ""
         started = False
@@ -1131,7 +1167,11 @@ class LinphoneEngine:
                     return err
                 with self._lock:
                     tail = " | ".join(list(self.lines)[-5:])
-                err = _set_error("SIP not registered — check Wi‑Fi / Accounts")
+                ip = _local_ipv4()
+                if not ip:
+                    err = _set_error("No IPv4 — Wi-Fi/cell is down")
+                else:
+                    err = _set_error("SIP not registered — check Wi‑Fi / Accounts")
                 extra = _redact(tail)[:180]
                 if extra:
                     err = _set_error(f"{err}\n{extra}")
@@ -1170,6 +1210,8 @@ class LinphoneEngine:
                 return False
             if n and n % 5 == 0:
                 self.cmd("status register")
+            if n == 6:
+                self.cmd("proxy list")
             n += 1
             time.sleep(0.35)
         with self._lock:
