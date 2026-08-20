@@ -1,18 +1,26 @@
 # Digivice wiring sheet (Pi Zero 2 W)
 
-Stack: **Pi → (optional tall header) → Waveshare 2″ on its SPI pins → passthrough** for buttons + CardKB.
+Stack: **Pi → (optional tall header) → Waveshare 2″ SPI → passthrough** for buttons + CardKB.
 
-**Buses (important):**
+## Bus ownership (power-safe Digivice)
 
-| Bus | Owner |
-|-----|--------|
-| **USB** | USB audio (headphones + mic). Optional **hub** also carries Heltec CDC. |
-| **GPIO UART** `/dev/serial0` (pins **8 / 10**) | **SIM7600** AT only — `sudo digivice-modem-uart` |
-| **Heltec notify** | USB-C `/dev/esp-bridge` (battery powered) — [`HELTEC_UART_NOTIFY.md`](HELTEC_UART_NOTIFY.md) |
+Pi USB **polyfuse** trips if the modem or Heltec draw on that port. Keep USB for audio only.
 
-Do **not** put the modem on USB if the audio stick needs that port. Do **not** put Heltec on GPIO UART while the modem owns `serial0`.
+| Bus | Owner | Notes |
+|-----|--------|--------|
+| **USB** | **USB audio** (headphones + mic) | Nothing else |
+| **GPIO UART** pins **8 / 10** (`/dev/serial0`) | **SIM7600** | `sudo digivice-modem-uart` |
+| **I2C** pins **3 / 5** | **CardKB** | Do not hang Heltec here |
+| **Soft-UART** pins **16 / 18** (BCM 23 / 24) | **Heltec** notify + battery % | Heltec on **LiPo**; common **GND** only — [`HELTEC_UART_NOTIFY.md`](HELTEC_UART_NOTIFY.md) |
 
-LCD electrical map is the [Waveshare 2inch](https://www.waveshare.com/wiki/2inch_LCD_Module) Pi table — same whether you use jumpers or a GPIO/passthrough adapter.
+```
+Pi USB ──────── audio dongle only
+SIM7600 ─────── UART 8/10
+CardKB ──────── I2C 3/5
+Heltec LiPo ─── soft-UART 16/18 + GND  (no USB to Pi)
+```
+
+LCD electrical map: [Waveshare 2inch](https://www.waveshare.com/wiki/2inch_LCD_Module).
 
 ## 1. Waveshare 2″ LCD (claims these pins)
 
@@ -45,7 +53,7 @@ Those eight pins are **owned by the LCD**. On a passthrough header, do not also 
 | Select | **40** | **21** | Tab / Select |
 | Common GND | **34** or **39** | GND | shared |
 
-Wire to the **top of the passthrough** (same pin numbers). Details: [`DIGI_BUTTONS.md`](DIGI_BUTTONS.md).
+Details: [`DIGI_BUTTONS.md`](DIGI_BUTTONS.md).
 
 ## 3. CardKB → passthrough (I2C)
 
@@ -56,54 +64,55 @@ Wire to the **top of the passthrough** (same pin numbers). Details: [`DIGI_BUTTO
 | SDA | **3** | **2** |
 | SCL | **5** | **3** |
 
-Enable: `sudo systemctl enable --now cardkb-inputd` — [`CARDKB_PI.md`](CARDKB_PI.md).
+[`CARDKB_PI.md`](CARDKB_PI.md).
 
 ## 4. Steps tilt + passive piezo (Pi GPIO)
 
-Heltec SW-520D path is gone. Wire a **tilt / vibration switch** (SW-520D or similar) and a **passive piezo** on free pins:
-
 | Device | Pi pin | BCM | Wiring |
 |--------|--------|-----|--------|
-| **Steps** (SW-520D) | **11** | **17** | One leg → GPIO, other → **GND** (internal pull-up) |
-| **Piezo** (passive) | **15** | **22** | **+** → GPIO (optional 100–220Ω series), **−** → **GND** |
+| **Steps** (SW-520D) | **11** | **17** | One leg → GPIO, other → **GND** |
+| **Piezo** (passive) | **15** | **22** | **+** → GPIO (optional 100–220Ω), **−** → **GND** |
 
-- Steps: walk / shake closes the switch; Digivice counts edges while the UI is running.
-- Piezo: software square-wave for alarms, timer, SMS/call chirps until USB speaker is sorted. Test: **Settings → Debug → Sound → PIEZO**.
-  Header **pin 15** (BCM **22**). Do **not** use header pin 22 — that is LCD DC.
-- Override pins: `DIGI_STEPS_BCM`, `DIGI_BUZZER_BCM` (set to `off` to disable).
+Override: `DIGI_STEPS_BCM`, `DIGI_BUZZER_BCM`. Test piezo: **Settings → Debug → Sound → PIEZO**.
 
-Active buzzers (with onboard oscillator) will only click on/off — use a **passive** element for tones.
+## 5. SIM7600 (GPIO UART only)
 
-## 5. USB + UART roles
+| Modem | Pi |
+|-------|-----|
+| RX | Pin **8** BCM14 TX |
+| TX | Pin **10** BCM15 RX |
+| GND | GND |
+| PWR | 3V3 (not BCM6) |
 
-| Device | Link |
-|--------|------|
-| **USB audio** | Pi USB (or hub) — headphones + mic |
-| **SIM7600G-H** | **GPIO UART** pins **8 / 10** → `/dev/serial0` ([`SIM7600_STACK.md`](SIM7600_STACK.md)) |
-| **Heltec Tracker** | USB-C notify + battery % via hub ([`HELTEC_UART_NOTIFY.md`](HELTEC_UART_NOTIFY.md)); **LiPo powered** |
+[`SIM7600_STACK.md`](SIM7600_STACK.md) · `echo uart \| sudo tee /etc/esp-handset/modem-backend`
 
-```
-Pi USB ── hub ──┬── audio dongle
-                └── Heltec USB-C (data)
-SIM7600 ── UART ── Pi pins 8 (TX) / 10 (RX) / GND
-```
+## 6. Heltec notify (soft-UART + LiPo)
 
-## 6. Optional speaker amp
+| Heltec | Pi |
+|--------|-----|
+| RX GPIO44 | Pin **16** BCM23 TX |
+| TX GPIO43 | Pin **18** BCM24 RX |
+| GND | GND |
+| Power | **LiPo** — flash over USB once, then unplug |
 
-Green USB jack → headphones. External **PAM8403** or **MAX98357** + **inline switch** on amp power: [`MAX98357_SPEAKER.md`](MAX98357_SPEAKER.md).
+`sudo bash pi_handset/session/digivice-heltec-softuart.sh` · [`HELTEC_UART_NOTIFY.md`](HELTEC_UART_NOTIFY.md)
+
+## 7. Optional speaker amp
+
+Green USB jack → headphones. **PAM8403** / **MAX98357** + inline switch: [`MAX98357_SPEAKER.md`](MAX98357_SPEAKER.md).
 
 ## Full 40-pin map (passthrough view)
 
 ```
          3V3 ★LCD VCC     [1]  [2]  5V  · CardKB 5V
          SDA · CardKB     [3]  [4]  5V
-         SCL · CardKB     [5]  [6]  GND · CardKB
+         SCL · CardKB     [5]  [6]  GND · CardKB / Heltec
          (free)           [7]  [8]  UART TX · SIM7600 RX  (BCM14)
          GND ★LCD         [9]  [10] UART RX · SIM7600 TX  (BCM15)
          STEPS BCM17     [11]  [12] ★LCD BL  (BCM18)
          ★LCD RST BCM27  [13]  [14] GND
-         PIEZO BCM22     [15]  [16] (free)
-         3V3             [17]  [18] (free)
+         PIEZO BCM22     [15]  [16] Heltec soft TX BCM23
+         3V3             [17]  [18] Heltec soft RX BCM24
          ★LCD DIN MOSI   [19]  [20] GND
          (free)          [21]  [22] ★LCD DC  (BCM25)
          ★LCD CLK        [23]  [24] ★LCD CS  (BCM8)
@@ -117,17 +126,16 @@ Green USB jack → headphones. External **PAM8403** or **MAX98357** + **inline s
          GND             [39]  [40] SELECT BCM21
 ```
 
-★ = Waveshare LCD · · = CardKB / buttons on passthrough · STEPS / PIEZO = new Digivice extras
-
 ## Pin ownership
 
 | Pins / bus | Owner |
 |------------|--------|
 | 1, 9, 12, 13, 19, 22, 23, 24 (+ BCM 8/10/11/18/25/27) | Waveshare 2″ |
 | 2, 3, 5, 6 | CardKB |
-| 11 (BCM17) | Steps tilt |
-| 15 (BCM22) | Passive piezo |
 | 8 / 10 (BCM 14 / 15) | SIM7600 UART |
+| 11 (BCM17) | Steps |
+| 15 (BCM22) | Piezo |
+| 16 / 18 (BCM 23 / 24) | Heltec soft-UART |
 | 29–36, 38, 40 (+ GND 34/39) | Buttons |
-| USB | Audio dongle (+ Heltec on hub) |
+| USB | Audio dongle only |
 | 27–28 ID EEPROM | Leave alone |

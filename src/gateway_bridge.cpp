@@ -24,6 +24,25 @@ void emitLine(const char*) {}
 #include <ctype.h>
 #include <stdlib.h>
 
+#if HELTEC_WIRELESS_TRACKER
+// Digivice soft-UART link (Pi bitbang ↔ Heltec UART0). Not USB, not Pi I2C, not serial0.
+#ifndef HELTEC_DIGI_SOFTUART
+#define HELTEC_DIGI_SOFTUART 1
+#endif
+#ifndef HELTEC_DIGI_UART_TX
+#define HELTEC_DIGI_UART_TX 43  // Heltec U0TXD → Pi RX
+#endif
+#ifndef HELTEC_DIGI_UART_RX
+#define HELTEC_DIGI_UART_RX 44  // Heltec U0RXD ← Pi TX
+#endif
+#ifndef HELTEC_DIGI_UART_BAUD
+#define HELTEC_DIGI_UART_BAUD 9600
+#endif
+#if HELTEC_DIGI_SOFTUART
+static HardwareSerial DigiUart(0);
+#endif
+#endif
+
 namespace GatewayBridge {
 
 static char s_line[256];
@@ -39,6 +58,9 @@ static const char* kVolNames[3] = {"VOL_UP", "VOL_DOWN", "MUTE"};
 void emitLine(const char* line) {
   if (!line) return;
   Serial.println(line);
+#if HELTEC_WIRELESS_TRACKER && HELTEC_DIGI_SOFTUART
+  DigiUart.println(line);
+#endif
 }
 
 static void emitf(const char* fmt, ...) {
@@ -238,17 +260,23 @@ static void handleCommand(char* line) {
 }
 
 static void pollSerial() {
-  while (Serial.available()) {
-    char c = (char)Serial.read();
-    if (c == '\r') continue;
-    if (c == '\n') {
-      s_line[s_lineLen] = 0;
-      if (s_lineLen) handleCommand(s_line);
-      s_lineLen = 0;
-      continue;
+  auto ingest = [](Stream& port) {
+    while (port.available()) {
+      char c = (char)port.read();
+      if (c == '\r') continue;
+      if (c == '\n') {
+        s_line[s_lineLen] = 0;
+        if (s_lineLen) handleCommand(s_line);
+        s_lineLen = 0;
+        continue;
+      }
+      if (s_lineLen + 1 < sizeof(s_line)) s_line[s_lineLen++] = c;
     }
-    if (s_lineLen + 1 < sizeof(s_line)) s_line[s_lineLen++] = c;
-  }
+  };
+  ingest(Serial);
+#if HELTEC_WIRELESS_TRACKER && HELTEC_DIGI_SOFTUART
+  ingest(DigiUart);
+#endif
 }
 
 static void pollVolumeKeys() {
@@ -327,6 +355,13 @@ bool begin() {
   pinMode(VOL_UP_PIN, INPUT_PULLUP);
   pinMode(VOL_DOWN_PIN, INPUT_PULLUP);
   pinMode(VOL_MUTE_PIN, INPUT_PULLUP);
+
+#if HELTEC_WIRELESS_TRACKER && HELTEC_DIGI_SOFTUART
+  DigiUart.begin(HELTEC_DIGI_UART_BAUD, SERIAL_8N1, HELTEC_DIGI_UART_RX,
+                 HELTEC_DIGI_UART_TX);
+  Serial.printf("[DigiUART] %d baud TX=%d RX=%d (Pi soft-UART, battery only)\n",
+                HELTEC_DIGI_UART_BAUD, HELTEC_DIGI_UART_TX, HELTEC_DIGI_UART_RX);
+#endif
 
 #if CARDKB_ENABLE
   CardKb::begin();

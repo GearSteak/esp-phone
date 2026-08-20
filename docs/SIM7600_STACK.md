@@ -7,7 +7,7 @@ Digivice talks AT to the modem on:
 
 Pi Zero has one USB data port. Digivice uses it for **USB audio**. Put the modem on UART.
 
-Heltec notify panel shares a **USB hub** with the audio stick (`/dev/esp-bridge`) — see [`HELTEC_UART_NOTIFY.md`](HELTEC_UART_NOTIFY.md). Do not put Heltec on GPIO UART while the modem owns `serial0`.
+Heltec notify panel uses **soft-UART on pins 16/18** (battery powered) — see [`HELTEC_UART_NOTIFY.md`](HELTEC_UART_NOTIFY.md). Do not put Heltec on GPIO UART (`serial0`) or on Pi USB.
 
 ## GPIO UART (recommended)
 

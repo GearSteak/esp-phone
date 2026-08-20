@@ -2,7 +2,7 @@
 
 Gateway firmware: `pio run -e heltec-wireless-tracker-gateway -t upload`
 
-USB-C to Pi (via hub with USB audio) = CDC serial (`/dev/esp-bridge`). Onboard **SX1262** LoRa; **ST7735 = notification panel**. Cellular is SIM7600 on **GPIO UART** (`/dev/serial0`) — see `docs/SIM7600_STACK.md`.
+USB-C is for **flashing only**. Day-to-day Digivice: Heltec on **LiPo** + **soft-UART** to Pi pins 16/18 (modem owns `serial0`, CardKB owns I2C, USB is audio). See `docs/HELTEC_UART_NOTIFY.md`. Cellular is SIM7600 on **GPIO UART**.
 
 ## Reserved onboard (do not wire)
 

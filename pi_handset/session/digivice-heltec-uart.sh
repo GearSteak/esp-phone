@@ -24,7 +24,8 @@ backend="$(tr -d '[:space:]' <"$MODEM_BACKEND" 2>/dev/null || true)"
 backend="${backend,,}"
 if [[ "$backend" == "uart" ]]; then
   log "ABORT: modem-backend=uart — /dev/serial0 belongs to SIM7600."
-  log "Use Heltec on USB-C via a hub with the audio stick (docs/HELTEC_UART_NOTIFY.md)."
+  log "Digivice: use soft-UART instead — sudo bash pi_handset/session/digivice-heltec-softuart.sh"
+  log "See docs/HELTEC_UART_NOTIFY.md (battery + pins 16/18; no USB power)."
   exit 1
 fi
 

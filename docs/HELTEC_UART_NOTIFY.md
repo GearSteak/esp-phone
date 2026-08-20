@@ -1,90 +1,66 @@
-# Heltec Wireless Tracker — Digivice notify panel
+# Heltec Wireless Tracker — Digivice notify (no USB power)
 
-Use the Tracker **ST7735** for alerts and report **LiPo %** to Digivice. Power the Heltec from its **own LiPo** so it does not drain the Pi UPS.
+## Why not USB / I2C / serial0
 
-Firmware: `heltec-wireless-tracker-gateway`
+| Bus | Digivice owner | Why Heltec is not here |
+|-----|----------------|------------------------|
+| **USB** | Headphones + mic | Modem **or** Heltec on USB trips the Pi **polyfuse** |
+| **I2C** pins 3/5 | **CardKB** | Leave that bus alone |
+| **UART** pins 8/10 `/dev/serial0` | **SIM7600** | Modem AT only |
+| **Soft-UART** pins **16 / 18** | **Heltec** | Battery powered, common GND only |
 
-## Digivice preferred stack (USB audio + UART modem)
-
-Pi Zero has **one** USB data port. Digivice needs it for the **USB headphones/mic** stick. The modem therefore stays on **GPIO UART**.
-
-| Role | Link | Notes |
-|------|------|--------|
-| **USB audio** | Pi USB (or hub) | Headphones green · mic pink — [`DIGIVICE_AUDIO.md`](DIGIVICE_AUDIO.md) |
-| **SIM7600** | GPIO UART `/dev/serial0` | Pins **8 / 10** (BCM 14/15) — `sudo digivice-modem-uart` |
-| **Heltec notify** | **USB-C CDC** `/dev/esp-bridge` | **Not** GPIO UART (that port is the modem) |
-| **Heltec power** | LiPo / battery | Common GND with Pi only if you also share UART; USB-C data alone is fine |
-
-### One USB port → use a hub
-
-```
-Pi USB OTG ── USB hub ──┬── USB audio (headphones + mic)
-                        └── Heltec USB-C (data; board on LiPo)
-```
-
-A **small powered hub** is ideal. An unpowered hub often works if the audio stick is low-draw and Heltec is on battery (data only on the USB-C cable).
-
-Flash Heltec once over USB, leave it plugged on the hub for Digivice:
-
-```bash
-pio run -e heltec-wireless-tracker-gateway -t upload
-# udev already makes /dev/esp-bridge (Espressif VID 303a)
-```
-
-Do **not** run `digivice-heltec-uart.sh` on this stack — it would steal `/dev/serial0` from the modem.
-
-Test:
-
-```bash
-python3 - <<'PY'
-from esp_handset.bridge import EspBridge
-b = EspBridge()  # finds /dev/esp-bridge
-b.open()
-b.notif("Test", "Heltec USB", "info")
-b.battery_query()
-b.close()
-PY
-```
-
-Digivice already forwards SMS / calls / alarms / timers / LoRa / email via `bridge.notif()`, and shows **`H78%`** from `BATTERY` lines.
-
-## Battery % on Digivice
-
-Onboard divider: **GPIO1** Vbat_Read, **GPIO2** ADC_CTRL.
-
-```
-BATTERY 78 3920
-STATUS … bat=78 mv=3920 …
-```
-
-Updates ~every 30s. Query: `echo BATTERY > /dev/esp-bridge`
-
-GPIO1/2 are also Vol+/Vol− pads — sampling is brief.
-
-## Alternate: Heltec on GPIO UART (modem must not use serial0)
-
-Only if the modem is **not** on `/dev/serial0` (rare for Digivice with USB audio).
+## Wiring (soft-UART)
 
 | Pi (40-pin) | BCM | Heltec | Notes |
 |-------------|-----|--------|--------|
-| Pin **8** | **14** TX | RX (GPIO **44**) | Pi TX → Heltec RX |
-| Pin **10** | **15** RX | TX (GPIO **43**) | Pi RX ← Heltec TX |
-| Pin **6** | GND | GND | Common ground |
-| — | — | LiPo | External power |
+| Pin **16** | **23** TX | **RX** GPIO **44** | Pi → Heltec |
+| Pin **18** | **24** RX | **TX** GPIO **43** | Heltec → Pi |
+| Pin **6** or **14** | GND | **GND** | Required |
+| — | — | **LiPo** | **No USB cable to the Pi in normal use** |
 
-```bash
-# DANGEROUS if modem-backend=uart — will conflict with SIM7600
-sudo bash pi_handset/session/digivice-heltec-uart.sh
+Cross TX/RX. Flash the Heltec over USB **once**, then **unplug USB** and run from LiPo.
+
+```
+Pi USB ──────── USB audio only
+SIM7600 ─────── GPIO UART pins 8/10
+CardKB ──────── I2C pins 3/5
+Heltec LiPo ─── soft-UART pins 16/18 + GND
 ```
 
-## Protocol (115200 8N1)
+## Pi setup
 
-| Line | Action |
-|------|--------|
-| `NOTIF kind\|title\|body` | Show on ST7735 |
-| `CLEAR` | Clear panel |
-| `PING` | `PONG` |
-| `STATUS` | LoRa / steps / **bat=N mv=N** |
-| `BATTERY` | `BATTERY pct mv` |
+```bash
+cd ~/esp-phone && git pull
+sudo bash pi_handset/session/digivice-heltec-softuart.sh
+sudo bash pi_handset/session/full-update.sh
+# flash Heltec while USB is plugged for programming only:
+pio run -e heltec-wireless-tracker-gateway -t upload
+# then disconnect Heltec USB from the Pi — leave LiPo connected
+```
 
-See also: [`HELTEC_TRACKER_PINOUT.md`](HELTEC_TRACKER_PINOUT.md), [`SIM7600_STACK.md`](SIM7600_STACK.md), [`DIGIVICE_WIRING.md`](DIGIVICE_WIRING.md).
+Env written to `/etc/esp-handset/env`:
+
+```
+ESP_BRIDGE_SOFTUART=1
+ESP_BRIDGE_SOFT_TX=23
+ESP_BRIDGE_SOFT_RX=24
+ESP_BRIDGE_SOFT_BAUD=9600
+```
+
+Needs `pigpiod` (bit-bang UART). The setup script enables it.
+
+## Protocol (same as before, 9600 8N1 on soft-UART)
+
+| Pi → Heltec | Heltec → Pi |
+|-------------|-------------|
+| `NOTIF kind\|title\|body` | `BATTERY pct mv` (~30s) |
+| `CLEAR` / `PING` / `STATUS` / `BATTERY` | `STATUS … bat=N mv=N` · `PONG` · `READY` |
+
+Digivice shows **`H78%`** in the status bar and pushes alerts to the ST7735.
+
+## Do not run
+
+- `digivice-heltec-uart.sh` — steals modem `serial0`
+- Heltec or modem on Pi USB for day-to-day use
+
+See [`DIGIVICE_WIRING.md`](DIGIVICE_WIRING.md), [`SIM7600_STACK.md`](SIM7600_STACK.md).

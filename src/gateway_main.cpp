@@ -13,6 +13,7 @@ void setup() {
   Serial.println();
 #if HELTEC_WIRELESS_TRACKER
   Serial.println("=== Heltec Tracker gateway + notify TFT ===");
+  Serial.println("DigiUART 9600 on GPIO43/44 → Pi soft-UART (battery; no USB power)");
   Serial.println("Keys/LoRa CDC; ST7735 shows Pi alerts");
   NotifyDisplay::begin();
 #else
