@@ -1,7 +1,16 @@
 # Digivice wiring sheet (Pi Zero 2 W)
 
-Stack: **Pi → (optional tall header) → Waveshare 2″ on its SPI pins → passthrough** for buttons + CardKB.  
-**SIM7600** is USB. Heltec is optional/legacy (no longer used for steps).
+Stack: **Pi → (optional tall header) → Waveshare 2″ on its SPI pins → passthrough** for buttons + CardKB.
+
+**Buses (important):**
+
+| Bus | Owner |
+|-----|--------|
+| **USB** | USB audio (headphones + mic). Optional **hub** also carries Heltec CDC. |
+| **GPIO UART** `/dev/serial0` (pins **8 / 10**) | **SIM7600** AT only — `sudo digivice-modem-uart` |
+| **Heltec notify** | USB-C `/dev/esp-bridge` (battery powered) — [`HELTEC_UART_NOTIFY.md`](HELTEC_UART_NOTIFY.md) |
+
+Do **not** put the modem on USB if the audio stick needs that port. Do **not** put Heltec on GPIO UART while the modem owns `serial0`.
 
 LCD electrical map is the [Waveshare 2inch](https://www.waveshare.com/wiki/2inch_LCD_Module) Pi table — same whether you use jumpers or a GPIO/passthrough adapter.
 
@@ -65,12 +74,19 @@ Heltec SW-520D path is gone. Wire a **tilt / vibration switch** (SW-520D or simi
 
 Active buzzers (with onboard oscillator) will only click on/off — use a **passive** element for tones.
 
-## 5. USB only
+## 5. USB + UART roles
 
 | Device | Link |
 |--------|------|
-| SIM7600G-H | USB → Pi (modem USB) |
-| Heltec Tracker | Optional notify panel — USB or **GPIO UART** ([`HELTEC_UART_NOTIFY.md`](HELTEC_UART_NOTIFY.md)); **battery powered** |
+| **USB audio** | Pi USB (or hub) — headphones + mic |
+| **SIM7600G-H** | **GPIO UART** pins **8 / 10** → `/dev/serial0` ([`SIM7600_STACK.md`](SIM7600_STACK.md)) |
+| **Heltec Tracker** | USB-C notify + battery % via hub ([`HELTEC_UART_NOTIFY.md`](HELTEC_UART_NOTIFY.md)); **LiPo powered** |
+
+```
+Pi USB ── hub ──┬── audio dongle
+                └── Heltec USB-C (data)
+SIM7600 ── UART ── Pi pins 8 (TX) / 10 (RX) / GND
+```
 
 ## 6. Optional speaker amp
 
@@ -82,8 +98,8 @@ Green USB jack → headphones. External **PAM8403** or **MAX98357** + **inline s
          3V3 ★LCD VCC     [1]  [2]  5V  · CardKB 5V
          SDA · CardKB     [3]  [4]  5V
          SCL · CardKB     [5]  [6]  GND · CardKB
-         (free)           [7]  [8]  (free)
-         GND ★LCD         [9]  [10] (free)
+         (free)           [7]  [8]  UART TX · SIM7600 RX  (BCM14)
+         GND ★LCD         [9]  [10] UART RX · SIM7600 TX  (BCM15)
          STEPS BCM17     [11]  [12] ★LCD BL  (BCM18)
          ★LCD RST BCM27  [13]  [14] GND
          PIEZO BCM22     [15]  [16] (free)
@@ -111,6 +127,7 @@ Green USB jack → headphones. External **PAM8403** or **MAX98357** + **inline s
 | 2, 3, 5, 6 | CardKB |
 | 11 (BCM17) | Steps tilt |
 | 15 (BCM22) | Passive piezo |
+| 8 / 10 (BCM 14 / 15) | SIM7600 UART |
 | 29–36, 38, 40 (+ GND 34/39) | Buttons |
-| USB | SIM7600 (+ optional Heltec) |
+| USB | Audio dongle (+ Heltec on hub) |
 | 27–28 ID EEPROM | Leave alone |

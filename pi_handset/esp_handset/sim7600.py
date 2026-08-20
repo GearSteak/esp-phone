@@ -2,7 +2,9 @@
 
 USB (SimTech 1e0e → /dev/sim7600-at / ttyUSB*) or HAT on the 40-pin header
 using /dev/serial0 (GPIO 14/15). Mode: /etc/esp-handset/modem-backend
-  usb | uart | auto   (default auto = USB first, then UART)
+  usb | uart | auto
+Digivice (USB audio owns the only USB port): set modem-backend=uart.
+auto = try USB first, then UART (legacy).
 
 Leave HAT PWR jumper on 3V3 (not D6) so GPIO 6 stays free for Digivice Down.
 """

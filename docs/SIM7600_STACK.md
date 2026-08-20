@@ -1,17 +1,21 @@
-# SIM7600G-H — Digivice (USB **or** GPIO UART)
+# SIM7600G-H — Digivice (GPIO UART preferred)
 
 Digivice talks AT to the modem on:
 
-- **USB** — `/dev/sim7600-at` / `ttyUSB*` (SimTech `1e0e`), or  
-- **GPIO UART** — HAT on the 40‑pin header → `/dev/serial0` (GPIO 14/15)
+- **GPIO UART** (Digivice default) — HAT on the 40‑pin header → `/dev/serial0` (GPIO 14/15, pins **8 / 10**)
+- **USB** — optional only if you are **not** using the Pi USB port for headphones/mic
 
-Heltec LoRa is a separate USB device (`/dev/esp-bridge`).
+Pi Zero has one USB data port. Digivice uses it for **USB audio**. Put the modem on UART.
 
-## GPIO UART (HAT on the header)
+Heltec notify panel shares a **USB hub** with the audio stick (`/dev/esp-bridge`) — see [`HELTEC_UART_NOTIFY.md`](HELTEC_UART_NOTIFY.md). Do not put Heltec on GPIO UART while the modem owns `serial0`.
+
+## GPIO UART (recommended)
 
 ```bash
 sudo digivice-modem-uart
 # reboot if it just enabled UART
+# ensure mode:
+echo uart | sudo tee /etc/esp-handset/modem-backend
 handset-phone
 # Digivice → Settings → Network → Reconnect  (or Use GPIO UART)
 ```
@@ -19,31 +23,34 @@ handset-phone
 | Item | Setting |
 |------|---------|
 | **PWR** | **PWR ↔ 3V3** (not D6 — Digivice Down uses BCM 6) |
-| **UART** | Pi `/dev/serial0` @ 115200 |
-| Mode file | `/etc/esp-handset/modem-backend` = `uart` |
+| **UART** | Pi TX pin **8** → modem RX · Pi RX pin **10** ← modem TX · GND |
+| Speed | 115200 |
+| Mode file | `/etc/esp-handset/modem-backend` = **`uart`** |
 
 ```bash
 ls -l /dev/serial0 /dev/sim7600-at
-# quick AT probe (may need dialout group)
 sudo timeout 1 cat /dev/serial0 &
 echo -ne 'AT\r' | sudo tee /dev/serial0 >/dev/null
 ```
 
-## USB (optional cable)
+## USB modem (only if USB is free)
+
+Skip this when the audio dongle needs the Pi USB port.
 
 1. Data Micro‑USB from HAT **USB** (modem) → Pi  
 2. Wait ~15–20s (NET LED)  
-3. `ls -l /dev/sim7600-at /dev/ttyUSB*`
+3. `ls -l /dev/sim7600-at /dev/ttyUSB*`  
+4. `echo usb | sudo tee /etc/esp-handset/modem-backend`
 
 ## Mode
 
 | File / env | Values |
 |------------|--------|
-| `/etc/esp-handset/modem-backend` | `usb` · `uart` · `auto` (default) |
+| `/etc/esp-handset/modem-backend` | **`uart`** (Digivice) · `usb` · `auto` |
 | `SIM7600_PORT` | force e.g. `/dev/serial0` |
 | `SIM7600_BACKEND` | same as modem-backend |
 
-`auto` tries USB first, then GPIO UART.
+`auto` still tries USB first — set **`uart`** explicitly when audio owns USB.
 
 ## Antennas
 
