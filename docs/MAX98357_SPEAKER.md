@@ -2,9 +2,53 @@
 
 The USB dongle **green jack** is headphone/line level. Passive speakers are quiet. An **inline switch** on the external amp path keeps the speaker off when you only want headphones.
 
-## Recommended for Digivice: PAM8403 + inline switch
+## If you have a MAX98357 on hand
 
-Easiest on this build: tap the **green jack** into a **PAM8403** (analog stereo amp). Headphones stay on the jack; the amp drives a separate speaker when the switch is on.
+It will work — but **Pi hardware I2S is fixed** on BCM **18 / 19 / 20 / 21**, which Digivice already uses:
+
+| I2S | BCM | Digivice today |
+|-----|-----|----------------|
+| BCLK | **18** | LCD backlight |
+| LRCLK | **19** | Back button |
+| DIN | **20** | free (header pin 38) |
+| — | **21** | Select button |
+
+### Option A — Remap pins (best use of your MAX98357)
+
+1. Move LCD **BL** from pin **12** (BCM18) → free pin **16** (BCM23).  
+2. Move **Back** from pin **35** (BCM19) → free pin **18** (BCM24).  
+3. Wire the MAX98357:
+
+| MAX98357 | Pi pin | BCM |
+|----------|--------|-----|
+| VIN | 2 | 5V through **inline SPEAKER switch** |
+| GND | 6 | GND |
+| BCLK | 12 | **18** |
+| LRC | 35 | **19** |
+| DIN | 38 | **20** |
+| SD | 3.3V or switch | amp enable |
+| GAIN | GND | ~9 dB |
+
+4. Point Digivice’s Back button env / map at BCM24, and LCD BL at BCM23.  
+5. Enable I2S and reboot:
+
+```bash
+echo 'dtparam=i2s=on' | sudo tee -a /boot/firmware/config.txt
+echo 'dtoverlay=hifiberry-dac' | sudo tee -a /boot/firmware/config.txt
+sudo reboot
+aplay -l
+speaker-test -D plughw:0,0 -c 2 -t sine -f 880 -l 1
+```
+
+### Option B — Keep current Digivice wiring
+
+Leave the MAX98357 for after remapping. Use a **PAM8403** on the green jack (below) for now.
+
+### Option C — Drive MAX98357 from Heltec
+
+Wire the amp to free Heltec GPIOs and play alert tones there; Pi USB headphones stay independent. More firmware work.
+
+## PAM8403 + inline switch (no pin remap)
 
 ```
 USB DAC green jack ──┬── headphones (always)
@@ -18,79 +62,25 @@ USB DAC green jack ──┬── headphones (always)
 | **IN+ / IN−** | Green jack tip/ring (or mono: tip + sleeve) |
 | **OUT+ / OUT−** | Speaker |
 
-Switch **open** = amp off (headphones only). Switch **closed** = speaker live.
-
 Test USB audio first: [`DIGIVICE_AUDIO.md`](DIGIVICE_AUDIO.md) · `sudo digivice-audio-fix.sh`
 
-## MAX98357A (I2S — pin conflict on Digivice)
+## Inline switch (both amps)
 
-The **MAX98357** is a **digital I2S** amp (better/louder than PAM8403) but Pi I2S lives on fixed pins:
-
-| I2S | BCM | Digivice use |
-|-----|-----|----------------|
-| BCLK | **18** | LCD backlight |
-| LRCLK | **19** | Back button |
-| DIN | **20** | (free on header pin 38) |
-| DOUT | **21** | Select button |
-
-So a stock MAX98357 on Pi I2S **fights the Waveshare LCD and buttons** on this passthrough layout.
-
-### If you still want MAX98357
-
-Pick one:
-
-1. **Move LCD BL off GPIO 18** (hardware mod) then wire MAX98357 to standard I2S:
-
-   | MAX98357 | Pi pin | BCM |
-   |----------|--------|-----|
-   | VIN | 2 | 5V (**inline switch**) |
-   | GND | 6 | GND |
-   | BCLK | 12 | 18 |
-   | LRC | 35 | 19 |
-   | DIN | 38 | 20 |
-   | SD | 3.3V | always on, or second switch |
-   | GAIN | GND | ~9 dB |
-
-   Then enable I2S:
-
-   ```bash
-   # Adds enable_uart + I2S — only after you resolved GPIO 18/19 conflicts
-   echo 'dtparam=i2s=on' | sudo tee -a /boot/firmware/config.txt
-   echo 'dtoverlay=hifiberry-dac' | sudo tee -a /boot/firmware/config.txt
-   sudo reboot
-   ```
-
-2. **Keep Digivice wiring** → use **PAM8403** on the green jack (above).
-
-3. **Separate USB-I2S dongle** feeding MAX98357 — rare, but avoids Pi GPIO.
-
-### Inline switch (both amp types)
-
-- **PAM8403:** switch in **5V** to VCC (recommended).  
-- **MAX98357:** switch **5V to VIN** or break **SD** (shutdown) so the amp is off; headphones on USB jack are unaffected.
-
-Label the switch **SPEAKER**.
+Put an **SPST on amp 5V (VIN/VCC)** labeled **SPEAKER**. Open = headphones only; closed = speaker live. Do not put the switch only on the headphone cable if you want independent paths.
 
 ## ALSA
 
-Digivice defaults to **USB** (`digivice-audio-usb`). PAM8403 shares that path automatically.
+Digivice defaults to **USB** (`digivice-audio-usb`). PAM8403 shares that path.
 
-MAX98357 on I2S appears as a second card:
-
-```bash
-aplay -l
-speaker-test -D plughw:max98357,0 -c 2 -t sine -f 880 -l 1
-```
-
-Use WirePlumber / `pactl` to pick USB (headphones) vs I2S (speaker) as default.
+MAX98357 on I2S is a second card — use WirePlumber / `pactl` to choose USB vs I2S as default.
 
 ## Troubleshooting
 
 | Symptom | Fix |
 |---------|-----|
-| Headphones OK, speaker dead | Switch on? Amp powered? PAM8403 volume pot? |
-| Both always loud | Add switch on amp **power**, not headphone cable |
+| Headphones OK, speaker dead | Switch on? Amp powered? |
+| Both always loud | Switch on amp **power**, not headphone cable |
 | USB LED solid, no sound | `sudo digivice-audio-fix.sh` |
-| MAX98357 clicks only | Wrong I2S pins or GPIO 18/19 still used by LCD/buttons |
+| MAX98357 silent / clicks | Still sharing BCM18/19 with LCD/Back — finish remap |
 
 See [`DIGIVICE_WIRING.md`](DIGIVICE_WIRING.md) for the full pin map.

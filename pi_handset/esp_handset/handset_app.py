@@ -672,7 +672,23 @@ def build_app(bridge: Optional[EspBridge], modem: Optional[Sim7600]) -> PhoneShe
                 if callable(refresh):
                     refresh()
             status(line[:48])
+        elif line.startswith("BATTERY"):
+            parts = line.split()
+            if len(parts) >= 2 and parts[1].lstrip("-").isdigit():
+                pct = int(parts[1])
+                mv = int(parts[2]) if len(parts) >= 3 and parts[2].isdigit() else 0
+                try:
+                    shell.set_heltec_battery(pct, mv=mv)
+                except Exception:
+                    pass
+            return
         elif line.startswith("STATUS") or line.startswith("READY"):
+            if "bat=" in line:
+                try:
+                    tok = [t for t in line.split() if t.startswith("bat=")][0]
+                    shell.set_heltec_battery(int(tok.split("=", 1)[1]))
+                except Exception:
+                    pass
             if "steps=" in line:
                 try:
                     tok = [t for t in line.split() if t.startswith("steps=")][0]

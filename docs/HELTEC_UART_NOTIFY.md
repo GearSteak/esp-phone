@@ -64,6 +64,29 @@ PY
 
 Digivice forwards **SMS, calls, alarms, timers, LoRa, email**, etc. to the panel via `store.push_notif()` → `bridge.notif()`.
 
+## Battery % on Digivice
+
+The Tracker has an onboard LiPo divider (**GPIO1** Vbat_Read, **GPIO2** ADC_CTRL). Gateway firmware reports:
+
+```
+BATTERY 78 3920          # percent, millivolts
+STATUS … bat=78 mv=3920 …
+```
+
+Digivice shows **`H78%`** in the status bar (green / yellow / red by level). Updates about every 30s, and on every `STATUS` / `BATTERY` query.
+
+```bash
+echo 'BATTERY' > /dev/esp-bridge-uart   # or USB /dev/esp-bridge
+```
+
+**Note:** GPIO1/2 are also the Vol+/Vol− pads. Battery sampling is brief; volume buttons still work between samples. For a pure notify panel you can leave those pads unwired.
+
+Flash after pull:
+
+```bash
+pio run -e heltec-wireless-tracker-gateway -t upload
+```
+
 ## Protocol (115200 8N1)
 
 Pi → Heltec (one line per command):
@@ -73,7 +96,8 @@ Pi → Heltec (one line per command):
 | `NOTIF kind\|title\|body` | Show on ST7735 |
 | `CLEAR` | Clear panel |
 | `PING` | Heltec replies `PONG` |
-| `STATUS` | Battery / LoRa summary |
+| `STATUS` | LoRa / steps / **bat=N mv=N** |
+| `BATTERY` | Heltec replies `BATTERY pct mv` |
 
 Heltec → Pi (optional): `KEY …`, `STEPS n`, LoRa lines — same as USB gateway.
 

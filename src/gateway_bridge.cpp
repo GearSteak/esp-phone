@@ -91,16 +91,58 @@ static void emitKey(const KeyEvent& ev) {
     emitf("KEY UP 0x%04X", (unsigned)ev.code);
 }
 
-void emitStatus() {
-#if CARDKB_ENABLE
-  emitf("STATUS role=cardkb+lora+notify+steps lora=%d id=%lu steps=%lu %s",
-        g_lora.isReady() ? 1 : 0, (unsigned long)g_lora.deviceId(),
-        (unsigned long)StepTilt::count(), g_lora.status());
-#else
-  emitf("STATUS role=keyboard+lora+notify+steps lora=%d id=%lu steps=%lu %s",
-        g_lora.isReady() ? 1 : 0, (unsigned long)g_lora.deviceId(),
-        (unsigned long)StepTilt::count(), g_lora.status());
+static uint32_t s_lastBatMs = 0;
+static int s_batPct = -1;
+static int s_batMv = 0;
+
+#if HELTEC_WIRELESS_TRACKER
+// Onboard divider: GPIO1 = Vbat_Read, GPIO2 = ADC_CTRL (also Vol+/Vol− pads).
+// VBAT ≈ ADC_mV × 4.9. Sample briefly, then restore pull-ups for volume keys.
+static bool readHeltecBattery(int& pctOut, int& mvOut) {
+  pinMode(2, OUTPUT);
+  digitalWrite(2, HIGH);  // enable divider (Heltec Tracker active-high)
+  delay(8);
+  analogSetPinAttenuation(1, ADC_11db);
+  int adcMv = analogReadMilliVolts(1);
+  pinMode(1, INPUT_PULLUP);
+  pinMode(2, INPUT_PULLUP);
+  if (adcMv <= 0) {
+    pctOut = -1;
+    mvOut = 0;
+    return false;
+  }
+  int batMv = (int)(adcMv * 4.9f + 0.5f);
+  // Clamp / map LiPo 3.3–4.2 V
+  if (batMv < 3000) batMv = 3000;
+  if (batMv > 4300) batMv = 4300;
+  int pct = map(batMv, 3300, 4200, 0, 100);
+  if (pct < 0) pct = 0;
+  if (pct > 100) pct = 100;
+  pctOut = pct;
+  mvOut = batMv;
+  return true;
+}
 #endif
+
+void emitStatus() {
+  int bat = s_batPct;
+  int mv = s_batMv;
+#if HELTEC_WIRELESS_TRACKER
+  readHeltecBattery(bat, mv);
+  s_batPct = bat;
+  s_batMv = mv;
+#endif
+#if CARDKB_ENABLE
+  emitf("STATUS role=cardkb+lora+notify+steps lora=%d id=%lu steps=%lu bat=%d mv=%d %s",
+        g_lora.isReady() ? 1 : 0, (unsigned long)g_lora.deviceId(),
+        (unsigned long)StepTilt::count(), bat, mv, g_lora.status());
+#else
+  emitf("STATUS role=keyboard+lora+notify+steps lora=%d id=%lu steps=%lu bat=%d mv=%d %s",
+        g_lora.isReady() ? 1 : 0, (unsigned long)g_lora.deviceId(),
+        (unsigned long)StepTilt::count(), bat, mv, g_lora.status());
+#endif
+  if (bat >= 0)
+    emitf("BATTERY %d %d", bat, mv);
 }
 
 static void handleNotifCmd(char* body) {
@@ -134,6 +176,21 @@ static void handleCommand(char* line) {
   }
   if (!strcasecmp(line, "STATUS")) {
     emitStatus();
+    return;
+  }
+  if (!strcasecmp(line, "BATTERY") || !strcasecmp(line, "BATTERY?")) {
+#if HELTEC_WIRELESS_TRACKER
+    int pct = -1, mv = 0;
+    if (readHeltecBattery(pct, mv)) {
+      s_batPct = pct;
+      s_batMv = mv;
+      emitf("BATTERY %d %d", pct, mv);
+    } else {
+      emitLine("ERR BATTERY");
+    }
+#else
+    emitLine("ERR BATTERY unsupported");
+#endif
     return;
   }
   if (!strcasecmp(line, "CLEAR") || !strcasecmp(line, "NOTIF CLEAR")) {
@@ -302,6 +359,18 @@ void loop() {
   StepTilt::poll();
   uint32_t steps = 0;
   if (StepTilt::takeDirty(&steps)) emitf("STEPS %lu", (unsigned long)steps);
+
+#if HELTEC_WIRELESS_TRACKER
+  if (millis() - s_lastBatMs > 30000) {
+    s_lastBatMs = millis();
+    int pct = -1, mv = 0;
+    if (readHeltecBattery(pct, mv)) {
+      s_batPct = pct;
+      s_batMv = mv;
+      emitf("BATTERY %d %d", pct, mv);
+    }
+  }
+#endif
 
   if (millis() - s_lastStatusMs > 60000) {
     s_lastStatusMs = millis();

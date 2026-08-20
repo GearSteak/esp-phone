@@ -47,6 +47,8 @@ Diode-OR matrix, same layout as Waveshare gateway. Rows driven LOW to scan; colu
 | Vol− | **2** | Also ADC control on Heltec — button to GND |
 | Mute | **46** | Input-only on S3 — button to GND |
 
+Gateway firmware samples **GPIO1/2** for LiPo % (`BATTERY pct mv` / `STATUS … bat=N`) about every 30s, then restores pull-ups so Vol+/− still work. Digivice shows **`H78%`** in the status bar when the bridge is connected.
+
 ## Header cheat sheet (free for keys)
 
 Use these for the matrix + volume only:

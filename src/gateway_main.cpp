@@ -18,7 +18,7 @@ void setup() {
 #else
   Serial.println("=== ESP Handset Bridge (keys + LoRa) ===");
 #endif
-  Serial.println("CDC: KEY / LORA / NOTIF / CLEAR / PING / STATUS");
+  Serial.println("CDC: KEY / LORA / NOTIF / CLEAR / PING / STATUS / BATTERY");
   Serial.println("Cellular is on Pi SIM7600 HAT");
   GatewayBridge::begin();
 }

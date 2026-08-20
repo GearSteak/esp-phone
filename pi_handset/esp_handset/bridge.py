@@ -140,6 +140,10 @@ class EspBridge:
     def notif_clear(self) -> None:
         self.send("CLEAR")
 
+    def battery_query(self) -> None:
+        """Ask Heltec for LiPo percent (expects BATTERY pct mv)."""
+        self.send("BATTERY")
+
     def steps_query(self) -> None:
         self.send("STEPS?")
 

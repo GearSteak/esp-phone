@@ -6,8 +6,8 @@
 // USB-CDC bridge for Pi handset: LoRa + notification panel.
 // Digivice UI is on the Pi LCD HAT; ESP ST7735 shows alerts only.
 //
-// ESP→Pi: KEY …, LORA RX …, READY, STATUS, ACK/ERR, PONG
-// Pi→ESP: PING, STATUS, LORA SEND/SOS, NOTIF kind|title|body, CLEAR
+// ESP→Pi: KEY …, LORA RX …, READY, STATUS, BATTERY pct mv, ACK/ERR, PONG
+// Pi→ESP: PING, STATUS, BATTERY, LORA SEND/SOS, NOTIF kind|title|body, CLEAR
 
 namespace GatewayBridge {
 

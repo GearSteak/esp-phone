@@ -141,12 +141,19 @@ class PhoneShell(QMainWindow):
 
         self.wifi_glyph = WifiGlyph()
         self.cell_glyph = CellGlyph()
+        self.heltec_bat_lab = QLabel("")
+        self.heltec_bat_lab.setStyleSheet(
+            "font-size:9px; font-weight:700; color:#9ab; font-family:monospace;"
+        )
+        self.heltec_bat_lab.setToolTip("Heltec Tracker battery")
+        self.heltec_bat_lab.hide()
         # Keep signal_lab as a hidden compatibility hook for old checks
         self.signal_lab = QLabel("")
         self.signal_lab.hide()
         right = QHBoxLayout()
         right.setSpacing(4)
         right.setContentsMargins(0, 0, 0, 0)
+        right.addWidget(self.heltec_bat_lab, 0, Qt.AlignVCenter)
         right.addWidget(self.wifi_glyph, 0, Qt.AlignVCenter)
         right.addWidget(self.cell_glyph, 0, Qt.AlignVCenter)
         s_lay.addLayout(right)
@@ -386,6 +393,24 @@ class PhoneShell(QMainWindow):
         self.signal_lab.setText(msg[:18])
         self.title_lab.setText(msg[:28])
         self._flash_timer.start(2200)
+
+    def set_heltec_battery(self, percent: int, *, mv: int = 0) -> None:
+        """Show Heltec LiPo % in the status bar (from BATTERY / STATUS lines)."""
+        del mv
+        try:
+            p = int(percent)
+        except (TypeError, ValueError):
+            return
+        if p < 0:
+            self.heltec_bat_lab.hide()
+            return
+        p = max(0, min(100, p))
+        color = "#5ec4a8" if p >= 40 else ("#e8c66a" if p >= 20 else "#e07070")
+        self.heltec_bat_lab.setStyleSheet(
+            f"font-size:9px; font-weight:700; color:{color}; font-family:monospace;"
+        )
+        self.heltec_bat_lab.setText(f"H{p}%")
+        self.heltec_bat_lab.show()
 
     def _restore_title(self) -> None:
         try:
