@@ -115,7 +115,8 @@ class CardKbPoller(QObject):
                 print(f"[cardkb] open i2c-{self._bus_id}: {e}", flush=True)
             return False
 
-    def _text_field(self):
+    def _typing_target(self):
+        """Focused field, digi-highlighted field, or any visible text box on the page."""
         w = QApplication.focusWidget()
         if isinstance(w, _TEXT_TYPES):
             return w
@@ -127,8 +128,12 @@ class CardKbPoller(QObject):
             if page is None:
                 return None
             cur = digi_nav.digi_current(page)
-            if isinstance(cur, _TEXT_TYPES) and cur.hasFocus():
+            if isinstance(cur, _TEXT_TYPES):
                 return cur
+            for cls in _TEXT_TYPES:
+                for child in page.findChildren(cls):
+                    if child.isVisible() and child.isEnabled():
+                        return child
         except Exception:
             pass
         return None
@@ -147,8 +152,17 @@ class CardKbPoller(QObject):
         except Exception:
             QApplication.sendEvent(self._shell, ev)
 
+    def _backspace(self, field) -> None:
+        if isinstance(field, QLineEdit):
+            field.backspace()
+            return
+        if isinstance(field, (QTextEdit, QPlainTextEdit)):
+            cursor = field.textCursor()
+            cursor.deletePreviousChar()
+            field.setTextCursor(cursor)
+
     def _handle(self, raw: int) -> None:
-        field = self._text_field()
+        field = self._typing_target()
 
         if raw in _ARROW:
             # In a focused field, Left/Right move the caret; Up/Down leave to nav
@@ -171,8 +185,8 @@ class CardKbPoller(QObject):
             self._nav_key(Qt.Key_Escape)
             return
         if raw in (0x08, 0x7F):
-            if field is not None and isinstance(field, QLineEdit):
-                field.backspace()
+            if field is not None:
+                self._backspace(field)
                 return
             self._nav_key(Qt.Key_Backspace, "\b")
             return
@@ -188,24 +202,10 @@ class CardKbPoller(QObject):
         if 32 <= raw < 127:
             ch = chr(raw)
             if field is not None:
+                if not field.hasFocus():
+                    field.setFocus(Qt.OtherFocusReason)
                 self._insert(field, ch)
                 return
-            # Not in a field — if digi highlight is a line edit, focus+type
-            try:
-                from esp_handset import digi_nav
-
-                key = self._shell._nav[-1] if getattr(self._shell, "_nav", None) else None
-                page = (getattr(self._shell, "pages", {}) or {}).get(key) if key else None
-                if page is not None:
-                    cur = digi_nav.digi_current(page)
-                    if isinstance(cur, QLineEdit):
-                        cur.setFocus(Qt.OtherFocusReason)
-                        digi_nav._highlight(cur, True)
-                        cur.insert(ch)
-                        return
-            except Exception:
-                pass
-            # else ignore printable (don't spam nav)
             return
 
     def _tick(self) -> None:

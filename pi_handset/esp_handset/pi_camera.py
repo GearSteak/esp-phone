@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Callable, Optional
 
 PHOTOS = Path.home() / "Pictures" / "phone"
+VIDEOS_DIR = Path.home() / "Videos" / "phone"
 
 
 def photos_dir() -> Path:
@@ -18,9 +19,15 @@ def photos_dir() -> Path:
     return PHOTOS
 
 
-def _stamp(prefix: str) -> Path:
+def videos_dir() -> Path:
+    VIDEOS_DIR.mkdir(parents=True, exist_ok=True)
+    return VIDEOS_DIR
+
+
+def _stamp(prefix: str, ext: str = "jpg") -> Path:
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    return photos_dir() / f"{prefix}_{ts}.jpg"
+    folder = videos_dir() if ext.lower() in ("mp4", "h264", "mkv") else photos_dir()
+    return folder / f"{prefix}_{ts}.{ext.lstrip('.')}"
 
 
 def capture_rear(width: int = 1280, height: int = 720) -> Path:
@@ -90,11 +97,39 @@ def capture_rear(width: int = 1280, height: int = 720) -> Path:
 def list_photos(limit: int = 200) -> list[Path]:
     d = photos_dir()
     files = sorted(
-        list(d.glob("*.jpg")) + list(d.glob("*.jpeg")) + list(d.glob("*.png")),
+        list(d.glob("*.jpg"))
+        + list(d.glob("*.jpeg"))
+        + list(d.glob("*.png"))
+        + list(videos_dir().glob("*.mp4")),
         key=lambda p: p.stat().st_mtime,
         reverse=True,
     )
     return files[:limit]
+
+
+def stitch_panorama(frames: list[Path], *, out: Optional[Path] = None) -> Path:
+    """Join stills side-by-side (simple horizontal pano)."""
+    if len(frames) < 2:
+        raise RuntimeError("Need at least 2 frames for a panorama")
+    try:
+        from PIL import Image  # type: ignore
+    except ImportError as e:
+        raise RuntimeError("Install python3-pil for panoramas") from e
+    imgs = [Image.open(p).convert("RGB") for p in frames]
+    h = min(im.height for im in imgs)
+    scaled = []
+    for im in imgs:
+        w = max(1, int(im.width * h / im.height))
+        scaled.append(im.resize((w, h), Image.LANCZOS))
+    total_w = sum(im.width for im in scaled)
+    pano = Image.new("RGB", (total_w, h))
+    x = 0
+    for im in scaled:
+        pano.paste(im, (x, 0))
+        x += im.width
+    dest = out or _stamp("pano")
+    pano.save(str(dest), quality=90)
+    return dest
 
 
 class LivePreview:
@@ -121,6 +156,10 @@ class LivePreview:
         self._on_frame: Optional[Callable[[bytes, int, int], None]] = None
         self._on_error: Optional[Callable[[str], None]] = None
         self._still_busy = False
+        self._recording = False
+        self._record_path: Optional[Path] = None
+        self._encoder = None
+        self._record_output = None
 
     @property
     def running(self) -> bool:
@@ -203,6 +242,49 @@ class LivePreview:
             elapsed = time.time() - t0
             time.sleep(max(0.0, interval - elapsed))
 
+    @property
+    def recording(self) -> bool:
+        return bool(self._recording)
+
+    def start_recording(self, path: Optional[Path] = None) -> Path:
+        """Start H.264 video while preview runs."""
+        if self._recording:
+            raise RuntimeError("Already recording")
+        out = path or _stamp("video", "mp4")
+        with self._lock:
+            picam = self._picam
+            if picam is None:
+                raise RuntimeError("Preview not running")
+            try:
+                from picamera2.encoders import H264Encoder  # type: ignore
+                from picamera2.outputs import FileOutput  # type: ignore
+            except ImportError as e:
+                raise RuntimeError("picamera2 encoder missing for video") from e
+            self._encoder = H264Encoder()
+            self._record_output = FileOutput(str(out))
+            picam.start_recording(self._encoder, self._record_output)
+            self._recording = True
+            self._record_path = out
+        return out
+
+    def stop_recording(self) -> Optional[Path]:
+        with self._lock:
+            picam = self._picam
+            path = self._record_path
+            if not self._recording or picam is None:
+                return None
+            try:
+                picam.stop_recording()
+            except Exception:
+                pass
+            self._recording = False
+            self._encoder = None
+            self._record_output = None
+            self._record_path = None
+        if path and path.exists():
+            return path
+        return path
+
     def capture_still(self, width: int = 1280, height: int = 720) -> Path:
         """Snap a full still while preview is running (or cold capture)."""
         out = _stamp("rear")
@@ -232,6 +314,16 @@ class LivePreview:
 
     def stop(self) -> None:
         self._stop.set()
+        with self._lock:
+            if self._recording and self._picam is not None:
+                try:
+                    self._picam.stop_recording()
+                except Exception:
+                    pass
+            self._recording = False
+            self._encoder = None
+            self._record_output = None
+            self._record_path = None
         t = self._thread
         if t is not None and t.is_alive():
             t.join(timeout=2.0)

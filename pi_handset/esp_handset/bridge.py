@@ -33,8 +33,24 @@ class EspBridge:
     def find_port(prefer: str = "/dev/esp-bridge") -> Optional[str]:
         import os
 
+        env = os.environ.get("ESP_BRIDGE_PORT", "").strip()
+        if env and os.path.exists(env):
+            return env
         if os.path.exists(prefer):
             return prefer
+        if os.environ.get("ESP_BRIDGE_UART", "").strip().lower() in (
+            "1",
+            "true",
+            "yes",
+        ):
+            for p in (
+                "/dev/esp-bridge-uart",
+                "/dev/ttyAMA0",
+                "/dev/serial0",
+                "/dev/ttyS0",
+            ):
+                if os.path.exists(p):
+                    return p
         if list_ports is None:
             return None
         for p in list_ports.comports():

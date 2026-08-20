@@ -293,6 +293,13 @@ def make_shadowdark_page(on_back: Callable[[], None]) -> QWidget:
         type_ed.setCursorPosition(len(type_ed.text()))
         stack.setCurrentWidget(type_page)
         type_ed.setFocus(Qt.OtherFocusReason)
+        try:
+            from esp_handset import digi_nav
+
+            digi_nav.clear_highlights(type_ed.window())
+            digi_nav._highlight(type_ed, True)
+        except Exception:
+            pass
 
     def save_type() -> None:
         text = type_ed.text().strip()

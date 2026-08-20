@@ -70,7 +70,11 @@ Active buzzers (with onboard oscillator) will only click on/off — use a **pass
 | Device | Link |
 |--------|------|
 | SIM7600G-H | USB → Pi (modem USB) |
-| Heltec Tracker | optional / unused for steps |
+| Heltec Tracker | Optional notify panel — USB or **GPIO UART** ([`HELTEC_UART_NOTIFY.md`](HELTEC_UART_NOTIFY.md)); **battery powered** |
+
+## 6. Optional speaker amp
+
+Green USB jack → headphones. External **PAM8403** or **MAX98357** + **inline switch** on amp power: [`MAX98357_SPEAKER.md`](MAX98357_SPEAKER.md).
 
 ## Full 40-pin map (passthrough view)
 

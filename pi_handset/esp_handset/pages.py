@@ -1207,12 +1207,21 @@ def make_call_log_page(on_back, on_redial=None) -> QWidget:
 
 
 def make_camera_page(on_back, on_status) -> QWidget:
-    """Full-frame live CSI preview. Confirm = take photo. Gallery is its own app."""
+    """Live CSI preview. ← → mode · Confirm = snap / record / pano step."""
     from PyQt5.QtCore import QTimer, pyqtSignal, QObject
     from PyQt5.QtGui import QImage, QPixmap
 
+    _MODES = (
+        ("photo", "Photo"),
+        ("timer3", "Timer 3s"),
+        ("timer10", "Timer 10s"),
+        ("video", "Video"),
+        ("pano", "Panorama"),
+    )
+    _PANO_SHOTS = 5
+
     class _FrameBridge(QObject):
-        frame = pyqtSignal(object, int, int)  # bytes, w, h
+        frame = pyqtSignal(object, int, int)
         err = pyqtSignal(str)
 
     body = QWidget()
@@ -1220,7 +1229,10 @@ def make_camera_page(on_back, on_status) -> QWidget:
     lay.setSpacing(2)
     lay.setContentsMargins(0, 0, 0, 0)
 
-    tip = QLabel("Confirm = snap · Gallery is separate")
+    mode_lab = QLabel("Photo")
+    mode_lab.setStyleSheet("color:#5ec4a8;font-size:11px;font-weight:700;")
+    mode_lab.setAlignment(Qt.AlignCenter)
+    tip = QLabel("← → mode · Confirm snap/record · Back exit")
     tip.setStyleSheet("color:#9ab;font-size:9px;")
     tip.setWordWrap(True)
     tip.setAlignment(Qt.AlignCenter)
@@ -1235,6 +1247,7 @@ def make_camera_page(on_back, on_status) -> QWidget:
     status.setAlignment(Qt.AlignCenter)
     status.setWordWrap(True)
 
+    lay.addWidget(mode_lab)
     lay.addWidget(tip)
     lay.addWidget(preview, 1)
     lay.addWidget(status)
@@ -1244,12 +1257,28 @@ def make_camera_page(on_back, on_status) -> QWidget:
     last_path: list[Optional[Path]] = [None]
     _started = [False]
     _busy = [False]
+    state = {"mode": 0, "countdown": 0, "pano": [], "pano_step": 0}
+
+    def mode_key() -> str:
+        return _MODES[state["mode"]][0]
+
+    def mode_label() -> str:
+        return _MODES[state["mode"]][1]
+
+    def paint_mode() -> None:
+        mk = mode_key()
+        extra = ""
+        if mk == "video" and live.recording:
+            extra = " · REC"
+        elif mk == "pano" and state["pano_step"]:
+            extra = f" · {state['pano_step']}/{_PANO_SHOTS}"
+        mode_lab.setText(f"[{mode_label()}]{extra}")
 
     def on_frame_bytes(rgb: bytes, w: int, h: int) -> None:
         bridge.frame.emit(rgb, w, h)
 
     def on_frame_ui(rgb, w: int, h: int) -> None:
-        if _busy[0]:
+        if _busy[0] and state["countdown"] <= 0:
             return
         try:
             img = QImage(rgb, w, h, w * 3, QImage.Format_RGB888)
@@ -1284,60 +1313,148 @@ def make_camera_page(on_back, on_status) -> QWidget:
             on_error=lambda m: bridge.err.emit(m),
         )
         _started[0] = ok
+        paint_mode()
         if ok:
-            status.setText("Live · Confirm to snap")
+            status.setText("Live · Confirm to capture")
         else:
-            status.setText("No preview — Confirm still snaps if camera works")
+            status.setText("No preview — Confirm still tries capture")
             preview.setText("Preview unavailable\nConfirm = capture")
 
     def stop_live() -> None:
+        if live.recording:
+            try:
+                live.stop_recording()
+            except Exception:
+                pass
         live.stop()
         _started[0] = False
 
-    def do_snap() -> bool:
-        """Take photo (Confirm). Returns True so digi_activate consumes the key."""
-        if _busy[0]:
-            status.setText("Already capturing…")
-            return True
-        _busy[0] = True
-        status.setText("Capturing…")
+    def show_saved(path: Path, msg: str) -> None:
+        last_path[0] = path
+        pix = QPixmap(str(path))
+        if not pix.isNull():
+            preview.setPixmap(
+                pix.scaled(
+                    max(preview.width(), 200),
+                    max(preview.height(), 160),
+                    Qt.KeepAspectRatio,
+                    Qt.SmoothTransformation,
+                )
+            )
+        status.setText(msg)
+        on_status(msg)
 
-        def work() -> None:
-            try:
+    def snap_still() -> None:
+        if live.running:
+            path = live.capture_still()
+        else:
+            path = pi_camera.capture_rear()
+        show_saved(path, f"Saved {path.name}")
+
+    def finish_pano() -> None:
+        frames = list(state["pano"])
+        state["pano"] = []
+        state["pano_step"] = 0
+        if len(frames) < 2:
+            status.setText("Need 2+ pano shots")
+            return
+        path = pi_camera.stitch_panorama(frames)
+        show_saved(path, f"Pano {path.name}")
+
+    def do_snap_work() -> None:
+        try:
+            mk = mode_key()
+            if mk == "video":
+                if live.recording:
+                    path = live.stop_recording()
+                    paint_mode()
+                    if path:
+                        show_saved(path, f"Video {path.name}")
+                    status.setText("Live · Confirm to record")
+                elif live.running:
+                    path = live.start_recording()
+                    paint_mode()
+                    status.setText(f"REC {path.name} · Confirm stop")
+                else:
+                    status.setText("Start preview first")
+                return
+            if mk == "pano":
                 if live.running:
                     path = live.capture_still()
                 else:
                     path = pi_camera.capture_rear()
-                last_path[0] = path
-                pix = QPixmap(str(path))
-                if not pix.isNull():
-                    preview.setPixmap(
-                        pix.scaled(
-                            max(preview.width(), 200),
-                            max(preview.height(), 160),
-                            Qt.KeepAspectRatio,
-                            Qt.SmoothTransformation,
-                        )
+                state["pano"].append(path)
+                state["pano_step"] = len(state["pano"])
+                paint_mode()
+                if len(state["pano"]) >= _PANO_SHOTS:
+                    finish_pano()
+                else:
+                    show_saved(
+                        path,
+                        f"Pano {state['pano_step']}/{_PANO_SHOTS} · rotate · Confirm",
                     )
-                status.setText(f"Saved {path.name}")
-                on_status(f"Photo {path.name}")
-                # Resume live after brief freeze-frame
-                QTimer.singleShot(700, lambda: status.setText("Live · Confirm to snap"))
-            except Exception as e:
-                status.setText(str(e)[:120])
-                on_status(f"Camera: {e}")
-            finally:
-                _busy[0] = False
+                return
+            snap_still()
+            QTimer.singleShot(700, lambda: status.setText("Live · Confirm to capture"))
+        except Exception as e:
+            status.setText(str(e)[:120])
+            on_status(f"Camera: {e}")
+        finally:
+            _busy[0] = False
+            paint_mode()
 
-        QTimer.singleShot(10, work)
+    _count_timer = QTimer(body)
+
+    def tick_countdown() -> None:
+        n = state["countdown"]
+        if n <= 0:
+            _count_timer.stop()
+            status.setText("Capturing…")
+            QTimer.singleShot(10, do_snap_work)
+            return
+        status.setText(f"{n}…")
+        state["countdown"] = n - 1
+
+    def do_snap() -> bool:
+        if _busy[0]:
+            return True
+        mk = mode_key()
+        if mk in ("timer3", "timer10") and state["countdown"] <= 0:
+            _busy[0] = True
+            state["countdown"] = 3 if mk == "timer3" else 10
+            status.setText(f"{state['countdown']}…")
+            _count_timer.start(1000)
+            return True
+        _busy[0] = True
+        status.setText("Capturing…")
+        QTimer.singleShot(10, do_snap_work)
         return True
 
-    # Start/stop preview when page is shown/hidden
-    def showEvent(e) -> None:  # noqa: N802
+    def cycle_mode(delta: int) -> None:
+        if live.recording:
+            status.setText("Stop video first (Confirm)")
+            return
+        state["mode"] = (state["mode"] + int(delta)) % len(_MODES)
+        if mode_key() != "pano":
+            state["pano"] = []
+            state["pano_step"] = 0
+        paint_mode()
+        hints = {
+            "photo": "Instant still",
+            "timer3": "3 second countdown",
+            "timer10": "10 second countdown",
+            "video": "Confirm start/stop recording",
+            "pano": f"{_PANO_SHOTS} shots · rotate between each",
+        }
+        status.setText(hints.get(mode_key(), ""))
+
+    _count_timer.timeout.connect(tick_countdown)
+
+    def showEvent(e) -> None:
         QWidget.showEvent(body, e)
         QTimer.singleShot(100, start_live)
 
-    def hideEvent(e) -> None:  # noqa: N802
+    def hideEvent(e) -> None:
         stop_live()
         QWidget.hideEvent(body, e)
 
@@ -1346,12 +1463,17 @@ def make_camera_page(on_back, on_status) -> QWidget:
     body.destroyed.connect(lambda *_: stop_live())
 
     chrome = page_chrome("Camera", body, on_back, scroll=False)
-    # Confirm always snaps — do not activate chrome Back ←
     chrome.digi_activate = do_snap  # type: ignore[attr-defined]
-    # Optional: de-emphasize Back from digi focus (hardware Back still works)
-    for b in chrome.findChildren(QPushButton):
-        if (b.text() or "").strip() in ("←", "← ", "<"):
-            b.setFocusPolicy(Qt.NoFocus)
+
+    def digi_move_h(delta: int) -> bool:
+        cycle_mode(delta)
+        return True
+
+    def digi_pad_active() -> bool:
+        return True
+
+    chrome.digi_move_h = digi_move_h  # type: ignore[attr-defined]
+    chrome.digi_pad_active = digi_pad_active  # type: ignore[attr-defined]
     return chrome
 
 

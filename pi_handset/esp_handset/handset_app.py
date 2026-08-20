@@ -83,9 +83,10 @@ class _KioskKeyFilter(QObject):
             cur = digi_nav.digi_current(page)
             if isinstance(cur, _TEXT_TYPES):
                 return cur
-            for child in page.findChildren(_TEXT_TYPES):
-                if child.isVisible() and child.isEnabled():
-                    return child
+            for cls in _TEXT_TYPES:
+                for child in page.findChildren(cls):
+                    if child.isVisible() and child.isEnabled():
+                        return child
         except Exception:
             pass
         return None
