@@ -51,6 +51,11 @@ def last_error() -> str:
     return _last_error
 
 
+def last_call_error() -> str:
+    """SIP/PSTN reject reason from the core log, if any."""
+    return _core_log_call_error()
+
+
 def last_register_raw() -> str:
     return _last_register_raw
 
@@ -923,8 +928,9 @@ def _phase_from_line(line: str, current: str) -> str:
     if re.search(
         r"(?i)LinphoneCallError|"
         r"\bCall failed\b|Unable to call|could not call|"
-        r"403 Forbidden|404 Not Found|486 Busy|603 Decline|"
-        r"408 Request Timeout|487 Request Terminated",
+        r"403 Forbidden|404 Not Found|402 Payment|486 Busy|603 Decline|"
+        r"408 Request Timeout|487 Request Terminated|"
+        r"480 Temporarily|Not Acceptable|Forbidden",
         s,
     ):
         return "error"
@@ -954,6 +960,48 @@ def _phase_from_line(line: str, current: str) -> str:
     ):
         return "dialing"
     return current
+
+
+def _core_log_tail(n_chars: int = 8000) -> str:
+    try:
+        if not _CORE_LOG.is_file():
+            return ""
+        return _CORE_LOG.read_text(encoding="utf-8", errors="replace")[-n_chars:]
+    except OSError:
+        return ""
+
+
+def _core_log_call_phase() -> Optional[str]:
+    """Best-effort call phase from linphone-core.log (PTY banners are often quiet)."""
+    text = _core_log_tail()
+    if not text:
+        return None
+    last: Optional[str] = None
+    for ln in text.splitlines():
+        flag = _phase_from_line(ln, "")
+        if flag in ("incoming", "error", "ending", "active", "ringing", "dialing"):
+            last = flag
+    return last
+
+
+def _core_log_call_error() -> str:
+    text = _core_log_tail(12000)
+    if not text:
+        return ""
+    patterns = (
+        (r"(?i)402 Payment Required", "Zadarma: add balance / enable outbound calls"),
+        (r"(?i)403 Forbidden", "Zadarma rejected the call (403)"),
+        (r"(?i)404 Not Found", "Number not found (404) — check digits"),
+        (r"(?i)480 Temporarily", "Callee unavailable (480)"),
+        (r"(?i)486 Busy", "Line busy"),
+        (r"(?i)603 Decline", "Call declined"),
+        (r"(?i)408 Request Timeout", "Call timed out (408)"),
+        (r"(?i)Unable to call|could not call|Call failed", "Linphone could not place the call"),
+    )
+    for pat, msg in patterns:
+        if re.search(pat, text):
+            return msg
+    return ""
 
 
 _ANSI = re.compile(r"\x1b\[[0-9;?=]*[A-Za-z]|\x1b\].*?(?:\x07|\x1b\\)")
@@ -1421,32 +1469,60 @@ class LinphoneEngine:
             self.phase = "idle"
             self.lines.clear()
 
-    def cmd(self, line: str) -> None:
+    def cmd(self, line: str, *, force: bool = False) -> bool:
+        """Send a linphonec command. Returns False if dropped (CLI not ready)."""
         if not self.alive():
-            return
+            return False
+        low = (line or "").strip().lower()
+        # Dial/hangup must never be silently dropped — that left Digivice
+        # showing "Ringing" with no INVITE on the wire.
+        critical = low.startswith(
+            ("call ", "terminate", "hangup", "answer", "decline")
+        )
         with self._lock:
-            if self._auth_prompt or not self._cli_ready:
-                return
+            if not force and not critical and (self._auth_prompt or not self._cli_ready):
+                _log(f"linphonec drop (not ready): {low.split()[0] if low else '?'}")
+                return False
+            if critical and not self._cli_ready:
+                self._cli_ready = True
+                self._auth_prompt = False
         try:
             shown = line.split(maxsplit=1)[0]
             _log(f"linphonec < {shown}")
-            # Readline on a PTY only submits on CR
             payload = (line + "\r\n").encode("utf-8")
             if self._pty is not None:
                 os.write(self._pty, payload)
-                return
+                return True
             proc = self.proc
             if proc is None or proc.stdin is None:
-                return
+                return False
             proc.stdin.write(line + "\n")
             proc.stdin.flush()
+            return True
         except Exception as e:
             _log(f"linphonec cmd failed: {e}")
+            return False
 
     def snapshot(self) -> CallInfo:
         with self._lock:
             raw = "\n".join(list(self.lines)[-8:])
             phase = self.phase
+        core = _core_log_call_phase()
+        # Prefer a more advanced core-log phase when PTY is quiet
+        rank = {
+            "idle": 0,
+            "ending": 1,
+            "error": 2,
+            "incoming": 3,
+            "dialing": 4,
+            "ringing": 5,
+            "active": 6,
+        }
+        if core and rank.get(core, 0) > rank.get(phase, 0):
+            phase = core
+            with self._lock:
+                if rank.get(core, 0) >= rank.get(self.phase, 0):
+                    self.phase = core
         return CallInfo(raw=raw, phase=phase, state=phase)
 
     def stop(self) -> None:
@@ -1709,8 +1785,14 @@ def _dial_ex_inner(number: str) -> Tuple[bool, str]:
             )
         _log(f"call {target}")
         eng.reset_call_state()
-        eng.cmd(f"call {target}")
-        deadline = time.time() + 10.0
+        # Mark log position so we don't treat an old INVITE as this dial
+        try:
+            log_mark = _CORE_LOG.stat().st_size if _CORE_LOG.is_file() else 0
+        except OSError:
+            log_mark = 0
+        if not eng.cmd(f"call {target}", force=True):
+            return False, _set_error("Could not dial — linphonec not ready")
+        deadline = time.time() + 12.0
         while time.time() < deadline:
             info = eng.snapshot()
             _last_register_raw = "registered"
@@ -1718,16 +1800,34 @@ def _dial_ex_inner(number: str) -> Tuple[bool, str]:
                 _set_error("")
                 return True, ""
             if info.phase == "error":
-                return False, _set_error("SIP rejected call")
+                why = _core_log_call_error() or "SIP rejected call"
+                return False, _set_error(why)
+            # Fresh core-log activity after our call command
+            try:
+                if _CORE_LOG.is_file() and _CORE_LOG.stat().st_size > log_mark + 40:
+                    core_ph = _core_log_call_phase()
+                    if core_ph in ("dialing", "ringing", "active"):
+                        with eng._lock:
+                            eng.phase = core_ph
+                        _set_error("")
+                        return True, ""
+                    if core_ph == "error":
+                        why = _core_log_call_error() or "SIP rejected call"
+                        return False, _set_error(why)
+            except OSError:
+                pass
             time.sleep(0.25)
         if not eng.alive():
             return False, _set_error("linphonec died after dial")
+        why = _core_log_call_error() or (
+            f"No call progress for {digits} — check Zadarma balance / number"
+        )
+        _log(f"dial timeout: {why}")
+        eng.cmd("terminate", force=True)
+        eng.cmd("hangup", force=True)
         with eng._lock:
-            if eng.phase == "idle":
-                eng.phase = "dialing"
-        _log("left outbound call up (no state banner yet)")
-        _set_error("")
-        return True, ""
+            eng.phase = "idle"
+        return False, _set_error(why)
 
     if _discover_csh():
         return _dial_via_csh(digits, server)

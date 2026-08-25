@@ -370,6 +370,7 @@ class CallController(QObject):
         self._ring_started = 0.0
         self._ring_timeout_s = 45.0
         self._saw_progress = False  # True once linphone reports dialing/ringing
+        self._saw_remote_ring = False  # True only on OutgoingRinging
         self._dial_gen = 0
         self._awaiting_dial = False
         self._poll = QTimer(self)
@@ -423,6 +424,7 @@ class CallController(QObject):
         self._talk_started = 0.0
         self._ring_started = time.time()
         self._saw_progress = False
+        self._saw_remote_ring = False
         self._phase = "dialing"
         self._awaiting_dial = True
         self._dial_gen += 1
@@ -438,7 +440,7 @@ class CallController(QObject):
         ov = getattr(self.shell, "_active_call", None)
         if ov is not None:
             ov.set_ringing_hint(
-                "Installing VoIP…" if not sip_call.available() else "Connecting…"
+                "Installing VoIP…" if not sip_call.available() else "Calling…"
             )
         self.on_status(f"Calling {num}")
         self.state_changed.emit("dialing")
@@ -475,10 +477,10 @@ class CallController(QObject):
             self.state_changed.emit("ended")
             return
         self._phase = "ringing"
-        clog.update(self._entry_id, status="ringing")
+        clog.update(self._entry_id, status="dialing")
         ov = getattr(self.shell, "_active_call", None)
         if ov is not None:
-            ov.set_ringing_hint("Ringing")
+            ov.set_ringing_hint("Calling…")
         self.on_status(f"Calling {self._number}")
         self.state_changed.emit("ringing")
 
@@ -581,6 +583,7 @@ class CallController(QObject):
         self._incoming_prompted = False
         self._inbound_entry_id = ""
         self._saw_progress = False
+        self._saw_remote_ring = False
         self._awaiting_dial = False
         self.state_changed.emit("idle")
 
@@ -623,6 +626,12 @@ class CallController(QObject):
             elapsed = time.time() - self._ring_started
             if info.phase in ("dialing", "ringing", "early", "active"):
                 self._saw_progress = True
+            if info.phase == "ringing":
+                self._saw_remote_ring = True
+                clog.update(self._entry_id, status="ringing")
+                ov = getattr(self.shell, "_active_call", None)
+                if ov is not None:
+                    ov.set_ringing_hint("Ringing")
             # Early media is still ringing — do not start the talk timer
             if info.phase == "active":
                 self._answered = True
@@ -642,6 +651,8 @@ class CallController(QObject):
                 else:
                     why = sip_call.last_error() or ""
                     if not why:
+                        why = sip_call.last_call_error()
+                    if not why:
                         lines = [ln.strip() for ln in (info.raw or "").splitlines() if ln.strip()]
                         why = lines[-1][:80] if lines else "SIP rejected call"
                     self._finish("failed", why)
@@ -651,20 +662,29 @@ class CallController(QObject):
                     return
                 # Quiet linphonec stdout is common — give INVITE time to ring
                 if not self._saw_progress and elapsed > 25.0:
-                    why = sip_call.last_error() or "No ringback — Test SIP"
+                    why = sip_call.last_error() or "No call progress — Test SIP / Zadarma balance"
                     self._finish("failed", why)
                     return
-                if self._saw_progress and elapsed > 5.0:
+                # Only say "didn't pick up" if we actually saw remote ringing
+                if self._saw_remote_ring and elapsed > 8.0:
                     self._finish("no_answer")
+                    return
+                if self._saw_progress and not self._saw_remote_ring and elapsed > 8.0:
+                    why = sip_call.last_error() or "Call dropped before ring — check number / Zadarma"
+                    self._finish("failed", why)
                     return
                 return
             # Still dialing/ringing according to linphone
             if elapsed >= self._ring_timeout_s:
                 sip_call.hangup()
-                self._finish("no_answer")
+                if self._saw_remote_ring:
+                    self._finish("no_answer")
+                else:
+                    self._finish(
+                        "failed",
+                        "No ringback — check number / Zadarma balance",
+                    )
                 return
-            if info.phase == "ringing":
-                clog.update(self._entry_id, status="ringing")
             return
 
         if self._phase == "active":
