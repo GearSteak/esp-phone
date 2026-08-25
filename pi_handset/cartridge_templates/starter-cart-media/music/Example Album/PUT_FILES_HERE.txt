@@ -1,0 +1,16 @@
+Drop album tracks here:
+
+  01-track.flac
+  02-track.flac
+  03-track.mp3
+  ...
+
+Or any supported audio format (.flac .mp3 .ogg .opus .wav .m4a)
+
+Optional menu/ subfolder:
+  menu/cover.png
+  menu/theme.ogg
+
+Rename "Example Album" and update cartridge.json.
+
+The "path" in json can be the folder (ends with /) — all tracks inside are the album.

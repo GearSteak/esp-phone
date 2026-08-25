@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "title": "Games Cart",
+  "kinds": ["games"],
+  "games": [
+    {
+      "title": "My Game",
+      "system": "gb",
+      "path": "roms/gb/game.gb"
+    }
+  ]
+}

@@ -782,6 +782,37 @@ def build_app(bridge: Optional[EspBridge], modem: Optional[Sim7600]) -> PhoneShe
     atimer.timeout.connect(_alarm_poll)
     atimer.start(2_000)
 
+    def _hw_poll() -> None:
+        try:
+            from esp_handset import ups_monitor
+
+            pct, charging, _v = ups_monitor.status_tuple()
+            if pct >= 0:
+                shell.set_ups_battery(pct, charging=charging)
+                if pct <= 20 and not getattr(_hw_poll, "_warned", False):
+                    store.push_notif(
+                        "Battery",
+                        f"UPS pack {pct}% — charge soon",
+                        "alarm",
+                    )
+                    _hw_poll._warned = True  # type: ignore[attr-defined]
+                if pct > 25:
+                    _hw_poll._warned = False  # type: ignore[attr-defined]
+        except Exception:
+            pass
+        try:
+            from esp_handset.cartridge import refresh, cart_label
+
+            refresh()
+            shell.set_cart_label(cart_label())
+        except Exception:
+            pass
+
+    hwtimer = QTimer(shell)
+    hwtimer.timeout.connect(_hw_poll)
+    hwtimer.start(5_000)
+    QTimer.singleShot(1200, _hw_poll)
+
     return shell
 
 

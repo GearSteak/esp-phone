@@ -1,0 +1,32 @@
+One folder per show. Example:
+
+  tv/
+    My Show/
+      menu/
+        bg.png
+        theme.ogg
+      s01/
+        e01.mkv
+        e02.mkv
+
+Add "tv" to "kinds". Example entry:
+
+  "tv": [
+    {
+      "title": "My Show",
+      "autoplay": true,
+      "menu": {
+        "background": "tv/My Show/menu/bg.png",
+        "music": "tv/My Show/menu/theme.ogg"
+      },
+      "seasons": [
+        {
+          "title": "Season 1",
+          "episodes": [
+            { "title": "Pilot", "path": "tv/My Show/s01/e01.mkv" },
+            { "title": "Episode 2", "path": "tv/My Show/s01/e02.mkv" }
+          ]
+        }
+      ]
+    }
+  ]

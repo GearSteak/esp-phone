@@ -1,0 +1,82 @@
+{
+  "version": 1,
+  "title": "My Media Cart",
+  "kinds": ["movies", "tv", "music"],
+  "menu": {
+    "background": "menu/bg.png",
+    "music": "menu/theme.ogg",
+    "select_sound": "menu/select.wav"
+  },
+  "movies": [
+    {
+      "title": "Example Film",
+      "path": "movies/Example Film/feature.mkv",
+      "menu": {
+        "background": "movies/Example Film/menu/bg.png",
+        "music": "movies/Example Film/menu/theme.ogg"
+      },
+      "extras": [
+        {
+          "title": "Trailer",
+          "path": "movies/Example Film/extras/trailer.mkv"
+        },
+        {
+          "title": "Behind the Scenes",
+          "path": "movies/Example Film/extras/behind_the_scenes.mkv"
+        }
+      ]
+    }
+  ],
+  "tv": [
+    {
+      "title": "Example Show",
+      "autoplay": true,
+      "menu": {
+        "background": "tv/Example Show/menu/bg.png",
+        "music": "tv/Example Show/menu/theme.ogg"
+      },
+      "seasons": [
+        {
+          "title": "Season 1",
+          "episodes": [
+            {
+              "title": "Pilot",
+              "path": "tv/Example Show/s01/e01.mkv"
+            },
+            {
+              "title": "Episode 2",
+              "path": "tv/Example Show/s01/e02.mkv"
+            },
+            {
+              "title": "Episode 3",
+              "path": "tv/Example Show/s01/e03.mkv"
+            }
+          ]
+        },
+        {
+          "title": "Season 2",
+          "episodes": [
+            {
+              "title": "Episode 1",
+              "path": "tv/Example Show/s02/e01.mkv"
+            },
+            {
+              "title": "Episode 2",
+              "path": "tv/Example Show/s02/e02.mkv"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "music": [
+    {
+      "title": "Example Album",
+      "path": "music/Example Album/",
+      "menu": {
+        "background": "music/Example Album/menu/cover.png",
+        "music": "music/Example Album/menu/theme.ogg"
+      }
+    }
+  ]
+}

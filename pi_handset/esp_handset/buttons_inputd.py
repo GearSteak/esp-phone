@@ -697,8 +697,21 @@ def main() -> int:
         log("FATAL: python3-uinput required")
         return 1
 
-    pins = pin_map()
-    gpio = open_gpio(pins)
+    use_mcp = False
+    try:
+        from esp_handset import mcp23017
+
+        use_mcp = mcp23017.backend_enabled()
+    except Exception:
+        use_mcp = False
+
+    if use_mcp:
+        pins = dict(DEFAULTS)
+        gpio = None
+        log("input backend: MCP23017 @ I2C 0x20")
+    else:
+        pins = pin_map()
+        gpio = open_gpio(pins)
 
     phone_map = {
         "UP": uinput.KEY_UP,
@@ -770,14 +783,24 @@ def main() -> int:
     mouse_step = read_mouse_step()
     log(
         f"ready mode={mode}  mouse_step={mouse_step}  "
-        + " ".join(f"{n}=BCM{p}" for n, p in pins.items())
+        + (
+            "backend=MCP23017"
+            if use_mcp
+            else " ".join(f"{n}=BCM{p}" for n, p in pins.items())
+        )
     )
     log(
         "  phone: keys · desktop: mouse · gb: A/B/Start/Select · "
         "exit GB = Confirm+Back+Home"
     )
 
-    levels = {n: gpio.read(p) for n, p in pins.items()}
+    if use_mcp:
+        from esp_handset import mcp23017
+
+        phone0 = mcp23017.read_phone_buttons()
+        levels = {n: (0 if phone0.get(n, False) else 1) for n in pins}
+    else:
+        levels = {n: gpio.read(p) for n, p in pins.items()}
     prev = {n: levels[n] for n in pins}
     raw = {n: levels[n] for n in pins}
     stable_since = {n: time.monotonic() for n in pins}
@@ -833,9 +856,16 @@ def main() -> int:
 
             for name, pin in pins.items():
                 try:
-                    level = gpio.read(pin)
+                    if use_mcp:
+                        from esp_handset import mcp23017
+
+                        phone_btns = mcp23017.read_phone_buttons()
+                        down_now = phone_btns.get(name, False)
+                        level = 0 if down_now else 1
+                    else:
+                        level = gpio.read(pin)
                 except Exception as e:
-                    log(f"read BCM{pin}: {e}")
+                    log(f"read {name}: {e}")
                     continue
                 if level != raw[name]:
                     raw[name] = level
@@ -986,7 +1016,8 @@ def main() -> int:
             gb_release_all()
         except Exception:
             pass
-        gpio.cleanup()
+        if gpio is not None:
+            gpio.cleanup()
         try:
             device.destroy()
         except Exception:

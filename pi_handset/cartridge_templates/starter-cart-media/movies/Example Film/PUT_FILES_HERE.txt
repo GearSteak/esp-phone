@@ -1,0 +1,15 @@
+PUT YOUR MAIN MOVIE FILE HERE — name it exactly:
+
+  feature.mkv
+
+(or .mp4 — then change "path" in cartridge.json to match)
+
+Also add (optional DVD-style menu):
+  menu/bg.png
+  menu/theme.ogg
+
+Extras (optional):
+  extras/trailer.mkv
+  extras/behind_the_scenes.mkv
+
+Rename folder "Example Film" to your movie title, then update cartridge.json paths.

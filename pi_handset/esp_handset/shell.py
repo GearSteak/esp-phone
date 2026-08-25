@@ -147,12 +147,26 @@ class PhoneShell(QMainWindow):
         )
         self.heltec_bat_lab.setToolTip("Heltec Tracker battery")
         self.heltec_bat_lab.hide()
+        self.ups_bat_lab = QLabel("")
+        self.ups_bat_lab.setStyleSheet(
+            "font-size:9px; font-weight:700; color:#9ab; font-family:monospace;"
+        )
+        self.ups_bat_lab.setToolTip("UPS pack (3S)")
+        self.ups_bat_lab.hide()
+        self.cart_lab = QLabel("")
+        self.cart_lab.setStyleSheet(
+            "font-size:9px; font-weight:700; color:#5ec4a8; font-family:monospace;"
+        )
+        self.cart_lab.setToolTip("USB cartridge inserted")
+        self.cart_lab.hide()
         # Keep signal_lab as a hidden compatibility hook for old checks
         self.signal_lab = QLabel("")
         self.signal_lab.hide()
         right = QHBoxLayout()
         right.setSpacing(4)
         right.setContentsMargins(0, 0, 0, 0)
+        right.addWidget(self.cart_lab, 0, Qt.AlignVCenter)
+        right.addWidget(self.ups_bat_lab, 0, Qt.AlignVCenter)
         right.addWidget(self.heltec_bat_lab, 0, Qt.AlignVCenter)
         right.addWidget(self.wifi_glyph, 0, Qt.AlignVCenter)
         right.addWidget(self.cell_glyph, 0, Qt.AlignVCenter)
@@ -411,6 +425,36 @@ class PhoneShell(QMainWindow):
         )
         self.heltec_bat_lab.setText(f"H{p}%")
         self.heltec_bat_lab.show()
+
+    def set_ups_battery(self, percent: int, *, charging: bool = False) -> None:
+        """Show UPS 3S pack % from INA219 (Pi I2C @ 0x41)."""
+        try:
+            p = int(percent)
+        except (TypeError, ValueError):
+            return
+        if p < 0:
+            self.ups_bat_lab.hide()
+            return
+        p = max(0, min(100, p))
+        color = "#5ec4a8" if p >= 40 else ("#e8c66a" if p >= 20 else "#e07070")
+        self.ups_bat_lab.setStyleSheet(
+            f"font-size:9px; font-weight:700; color:{color}; font-family:monospace;"
+        )
+        tag = f"P{p}%"
+        if charging:
+            tag = f"P{p}%+"
+        self.ups_bat_lab.setText(tag)
+        self.ups_bat_lab.show()
+
+    def set_cart_label(self, title: str) -> None:
+        t = (title or "").strip()
+        if not t:
+            self.cart_lab.hide()
+            return
+        short = t if len(t) <= 10 else t[:9] + "…"
+        self.cart_lab.setText(short)
+        self.cart_lab.setToolTip(f"USB cart: {t}")
+        self.cart_lab.show()
 
     def _restore_title(self) -> None:
         try:

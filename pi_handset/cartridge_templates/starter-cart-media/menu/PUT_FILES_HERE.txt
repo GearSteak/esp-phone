@@ -1,0 +1,8 @@
+Optional — main cart menu (when you pick Media on Digivice):
+
+  bg.png         — background image (e.g. 320x240 or larger)
+  theme.ogg      — looping menu music
+  select.wav     — cursor move / select sound
+
+Delete this file once you add real assets, or leave folder empty and remove
+the "menu" block from cartridge.json.

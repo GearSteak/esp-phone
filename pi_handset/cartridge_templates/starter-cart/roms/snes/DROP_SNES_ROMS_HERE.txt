@@ -1,0 +1,1 @@
+Drop .sfc or .smc ROMs here. In cartridge.json use "system": "snes"

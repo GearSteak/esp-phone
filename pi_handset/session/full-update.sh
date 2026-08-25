@@ -15,6 +15,7 @@
 #    • systemd: digi-buttons-inputd, esp-keyd, cardkb-inputd (enable + start)
 #    • udev + uinput + software mouse cursor conf
 #    • passwordless digivice-update / full-update / power for Settings
+#    • Ollama + llama3.2:1b model for Tools → AI (background pull)
 #    • FIX SCREENS: kill broken HDMI hotplug, restore userspace ST7789 SPI,
 #      wake panel, restart Digivice (so the 2" works again from this one command)
 #
@@ -340,6 +341,12 @@ if [[ -f "$ROOT/session/ensure-libretro-cores.sh" ]]; then
   log "libretro cores (in-UI NES/SMS/Genesis/GBA/GB)…"
   timeout 240 bash "$ROOT/session/ensure-libretro-cores.sh" 2>&1 | tee -a "$LOG" | tail -n 30 || true
 fi
+if [[ -f "$ROOT/session/ensure-ollama.sh" ]]; then
+  install -m 755 "$ROOT/session/ensure-ollama.sh" "$PREFIX/session/ensure-ollama.sh"
+  install -m 755 "$ROOT/session/ensure-ollama.sh" /usr/local/bin/digivice-ensure-ollama
+  log "Ollama + AI model (Tools → AI)…"
+  bash "$ROOT/session/ensure-ollama.sh" 2>&1 | tee -a "$LOG" | tail -n 20 || true
+fi
 # Kill switch: external GB emu blanked SPI — keep off until in-UI emu
 touch "$USER_HOME/.esp-handset/gb-disabled" 2>/dev/null || true
 touch /etc/esp-handset/gb-disabled 2>/dev/null || true
@@ -531,6 +538,7 @@ $USER_NAME ALL=(root) NOPASSWD: /bin/systemctl stop cardkb-inputd.service
 $USER_NAME ALL=(root) NOPASSWD: /bin/systemctl start cardkb-inputd
 $USER_NAME ALL=(root) NOPASSWD: /bin/systemctl start cardkb-inputd.service
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-ensure-linphone
+$USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-ensure-ollama
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-libretro-cores
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-ensure-gb
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-stop-gb
@@ -548,6 +556,7 @@ $USER_NAME ALL=(root) NOPASSWD: $PREFIX/session/power.sh
 $USER_NAME ALL=(root) NOPASSWD: $PREFIX/session/ensure-buttons.sh
 $USER_NAME ALL=(root) NOPASSWD: $PREFIX/session/ensure-cardkb.sh
 $USER_NAME ALL=(root) NOPASSWD: $PREFIX/session/ensure-linphone.sh
+$USER_NAME ALL=(root) NOPASSWD: $PREFIX/session/ensure-ollama.sh
 $USER_NAME ALL=(root) NOPASSWD: $PREFIX/session/ensure-libretro-cores.sh
 $USER_NAME ALL=(root) NOPASSWD: $PREFIX/session/ensure-gb-wrappers.sh
 $USER_NAME ALL=(root) NOPASSWD: /usr/bin/bash $PREFIX/session/gui-update.sh
@@ -855,6 +864,13 @@ else
   echo "VoIP: FAILED — linphonecsh missing"
   echo "  sudo digivice-ensure-linphone"
   echo "  sudo digivice-ensure-linphone --doctor"
+fi
+if command -v ollama >/dev/null 2>&1; then
+  st="$(cat /etc/esp-handset/ollama.status 2>/dev/null || echo unknown)"
+  echo "AI (Ollama): $(command -v ollama) · $st"
+  echo "  pull log: ~/.esp-handset/ollama-pull.log"
+else
+  echo "AI (Ollama): not installed — sudo digivice-ensure-ollama"
 fi
 echo "If Digivice blank:  digivice-start"
 echo "If 2\" still static:  tail -50 ~/.esp-handset/handset.log"

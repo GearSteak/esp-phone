@@ -1,0 +1,16 @@
+TV SHOW LAYOUT
+==============
+
+  menu/           bg.png, theme.ogg (show menu)
+  s01/            season 1 episodes
+    e01.mkv
+    e02.mkv
+  s02/
+    e01.mkv
+    e02.mkv
+
+"autoplay": true in cartridge.json → plays next episode automatically.
+
+Rename "Example Show" folder and update paths in cartridge.json.
+
+Episode titles in json are what Digivice shows in the list.

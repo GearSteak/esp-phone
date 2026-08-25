@@ -1,0 +1,26 @@
+One folder per movie. Example layout:
+
+  movies/
+    My Movie/
+      feature.mkv
+      menu/
+        bg.png
+        theme.ogg
+      extras/
+        trailer.mkv
+
+Add "movies" to "kinds" in cartridge.json. Example entry:
+
+  "movies": [
+    {
+      "title": "My Movie",
+      "path": "movies/My Movie/feature.mkv",
+      "menu": {
+        "background": "movies/My Movie/menu/bg.png",
+        "music": "movies/My Movie/menu/theme.ogg"
+      },
+      "extras": [
+        { "title": "Trailer", "path": "movies/My Movie/extras/trailer.mkv" }
+      ]
+    }
+  ]

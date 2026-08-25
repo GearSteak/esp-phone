@@ -50,7 +50,7 @@ TIME_APPS = CLOCK_APPS
 TOOLS_APPS = [
     AppEntry("wifi_transfer", "Transfer", "Send & get · Wi‑Fi", "⇅"),
     AppEntry("calc", "Calculator", "", "+"),
-    AppEntry("ai", "AI", "Ollama · DeepSeek", "✦"),
+    AppEntry("ai", "AI", "Ollama · llama3.2", "✦"),
     AppEntry("convert", "Converter", "", "⇄"),
     AppEntry("weather", "Weather", "GPS · Wi‑Fi locate", "☁"),
     AppEntry("steps", "Steps", "Pi tilt · pin 11", "👟"),
@@ -105,6 +105,10 @@ GAMES_APPS = [
     AppEntry("nes", "NES", "Famicom ROMs", "◆"),
     # Key must not be "sms" — that is the home Messages folder.
     AppEntry("smsgg", "SMS / GG", "Master System · Game Gear", "◎"),
+    AppEntry("gba", "GBA", "Game Boy Advance", "▣"),
+    AppEntry("snes", "SNES", "Super Nintendo", "◈"),
+    AppEntry("genesis", "Genesis", "Mega Drive", "◉"),
+    AppEntry("ps1", "PlayStation", "PS1 · digital pad", "◇"),
     AppEntry("snake", "Snake", "Arcade · high score", "◆"),
     AppEntry("pong", "Pong", "Arcade · vs AI", "○"),
     AppEntry("tetris", "Tetris", "Arcade · stack", "▣"),
@@ -118,7 +122,7 @@ APPS_APPS = [
     AppEntry("shadowdark", "Shadowdark", "Dice · torch timer", "⚔"),
 ]
 
-EMU_PAGE_KEYS = ("gb", "nes", "smsgg")
+EMU_PAGE_KEYS = ("gb", "nes", "smsgg", "gba", "snes", "genesis", "ps1")
 
 # Settings → Debug hub
 DEBUG_APPS = [

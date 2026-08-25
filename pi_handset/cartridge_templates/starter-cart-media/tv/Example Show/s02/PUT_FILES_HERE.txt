@@ -1,0 +1,6 @@
+Season 2 episodes:
+
+  e01.mkv
+  e02.mkv
+
+Add s03/, s04/ folders and new seasons in cartridge.json as needed.

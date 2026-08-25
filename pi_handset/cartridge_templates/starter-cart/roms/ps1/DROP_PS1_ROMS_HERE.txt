@@ -1,0 +1,1 @@
+Drop .bin .cue .pbp or .chd here. In cartridge.json use "system": "ps1"

@@ -1,0 +1,6 @@
+Optional special features:
+  trailer.mkv
+  behind_the_scenes.mkv
+  deleted_scenes.mkv
+
+Add matching entries under "extras" in cartridge.json for each file.

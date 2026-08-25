@@ -1,0 +1,3 @@
+Album cover + menu music (optional):
+  cover.png
+  theme.ogg

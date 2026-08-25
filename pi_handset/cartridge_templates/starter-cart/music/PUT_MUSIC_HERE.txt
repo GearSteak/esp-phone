@@ -1,0 +1,22 @@
+One folder per album. Example:
+
+  music/
+    My Album/
+      01-track.flac
+      02-track.flac
+      menu/
+        cover.png
+        theme.ogg
+
+Add "music" to "kinds". Example entry:
+
+  "music": [
+    {
+      "title": "My Album",
+      "path": "music/My Album/",
+      "menu": {
+        "background": "music/My Album/menu/cover.png",
+        "music": "music/My Album/menu/theme.ogg"
+      }
+    }
+  ]

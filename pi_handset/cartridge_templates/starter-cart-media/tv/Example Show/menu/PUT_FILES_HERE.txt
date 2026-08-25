@@ -1,0 +1,3 @@
+Show menu background + music:
+  bg.png
+  theme.ogg

@@ -2,28 +2,46 @@
 
 Digivice app: **Tools → AI** talks to a local [Ollama](https://ollama.com) server.
 
-Default model: `deepseek-r1:1.5b` (override anytime).
+Default model: `llama3.2:1b` on Pi 4 2GB (set in `/etc/esp-handset/ollama.env` by `digivice-full-update`).
 
-## Install (when you want it)
+## Install (automatic)
 
-On a Pi with enough RAM (Pi 4/5 recommended; Zero 2 W is often too tight for LLMs):
+`sudo digivice-full-update` runs **`digivice-ensure-ollama`**, which:
+
+1. Installs [Ollama](https://ollama.com) (official install script)
+2. Starts the `ollama` service
+3. Writes `/etc/esp-handset/ollama.env` if missing
+4. Pulls a small model in the **background** (log: `~/.esp-handset/ollama-pull.log`)
+
+Manual:
+
+```bash
+sudo digivice-ensure-ollama
+sudo digivice-ensure-ollama --foreground-pull   # wait until download finishes
+```
+
+### Model picked by RAM
+
+| RAM | Model |
+|-----|--------|
+| Pi 4 **2 GB** | `llama3.2:1b` |
+| Pi 4 **4 GB+** | `llama3.2:3b` |
+| &lt; 1.5 GB (Pi Zero class) | install skipped |
+
+Override before install: `sudo DIGIVICE_OLLAMA_MODEL=deepseek-r1:1.5b digivice-ensure-ollama`
+
+## Install (manual, if needed)
 
 ```bash
 curl -fsSL https://ollama.com/install.sh | sh
-# or: sudo apt install ollama   # if packaged
-
-# small DeepSeek
-ollama pull deepseek-r1:1.5b
-
-# start server (service may auto-start after install)
-ollama serve   # if not already a systemd unit
+ollama pull llama3.2:1b
 ```
 
 Verify:
 
 ```bash
 curl -s http://127.0.0.1:11434/api/tags
-ollama run deepseek-r1:1.5b "hi"
+ollama run llama3.2:1b "hi"
 ```
 
 ## Digivice config
@@ -32,13 +50,13 @@ Optional `/etc/esp-handset/ollama.env` or `~/.esp-handset/ollama.env`:
 
 ```bash
 OLLAMA_HOST=http://127.0.0.1:11434
-OLLAMA_MODEL=deepseek-r1:1.5b
+OLLAMA_MODEL=llama3.2:1b
 ```
 
 Or env for one session:
 
 ```bash
-export ESP_OLLAMA_MODEL=deepseek-r1:1.5b
+export ESP_OLLAMA_MODEL=llama3.2:1b
 export ESP_OLLAMA_HOST=http://127.0.0.1:11434
 handset-phone
 ```

@@ -1,0 +1,7 @@
+Season 1 episodes — name files to match cartridge.json:
+
+  e01.mkv   → Pilot
+  e02.mkv   → Episode 2
+  e03.mkv   → Episode 3
+
+Or edit episode "path" entries in cartridge.json to match your filenames.

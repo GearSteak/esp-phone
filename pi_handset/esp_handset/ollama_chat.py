@@ -1,13 +1,13 @@
-"""Ollama chat — local DeepSeek (or other) via Ollama HTTP API.
+"""Ollama chat — local LLM via Ollama HTTP API (installed by digivice-full-update).
 
-Optional: Ollama must be installed and a model pulled. Defaults:
+Defaults:
 
   ESP_OLLAMA_HOST  (default http://127.0.0.1:11434)
-  ESP_OLLAMA_MODEL (default deepseek-r1:1.5b)
+  ESP_OLLAMA_MODEL (default llama3.2:1b)
 
 Also: /etc/esp-handset/ollama.env  or  ~/.esp-handset/ollama.env
   OLLAMA_HOST=http://127.0.0.1:11434
-  OLLAMA_MODEL=deepseek-r1:1.5b
+  OLLAMA_MODEL=llama3.2:1b
 """
 
 from __future__ import annotations
@@ -70,7 +70,7 @@ def apply_config() -> Tuple[str, str]:
     model = (
         os.environ.get("ESP_OLLAMA_MODEL")
         or os.environ.get("OLLAMA_MODEL")
-        or str(cfg.get("model") or "deepseek-r1:1.5b")
+        or str(cfg.get("model") or "llama3.2:1b")
     )
     return host, model
 

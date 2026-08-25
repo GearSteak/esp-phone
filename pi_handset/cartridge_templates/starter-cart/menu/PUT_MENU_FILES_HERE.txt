@@ -1,0 +1,13 @@
+Optional — shared menu for the whole cart (DVD-style):
+
+  bg.png         background image
+  theme.ogg      looping menu music
+  select.wav     sound when you move the cursor
+
+In cartridge.json add:
+
+  "menu": {
+    "background": "menu/bg.png",
+    "music": "menu/theme.ogg",
+    "select_sound": "menu/select.wav"
+  }

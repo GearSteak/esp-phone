@@ -1,0 +1,1 @@
+Drop .md or .bin ROMs here. In cartridge.json use "system": "genesis"

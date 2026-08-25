@@ -117,6 +117,47 @@ SYSTEMS: Dict[str, EmuSystem] = {
         ("genesis_plus_gx_libretro.so",),
         (256, 192),
     ),
+    "gba": EmuSystem(
+        "gba",
+        "GBA",
+        "Game Boy Advance · mgba",
+        "▣",
+        "gba",
+        (".gba",),
+        ("mgba_libretro.so",),
+        (240, 160),
+    ),
+    "snes": EmuSystem(
+        "snes",
+        "SNES",
+        "Super Nintendo · snes9x",
+        "◈",
+        "snes",
+        (".sfc", ".smc", ".swc", ".fig"),
+        ("snes9x_libretro.so",),
+        (256, 224),
+    ),
+    "genesis": EmuSystem(
+        "genesis",
+        "Genesis",
+        "Mega Drive · genesis_plus_gx",
+        "◉",
+        "genesis",
+        (".md", ".bin", ".gen", ".smd"),
+        ("genesis_plus_gx_libretro.so",),
+        (320, 224),
+    ),
+    "ps1": EmuSystem(
+        "ps1",
+        "PlayStation",
+        "PS1 · pcsx_rearmed · digital pad",
+        "◇",
+        "ps1",
+        (".bin", ".cue", ".pbp", ".chd"),
+        ("pcsx_rearmed_libretro.so",),
+        (256, 240),
+        "Digital pad only — no analog sticks",
+    ),
 }
 
 EMU_PAGE_KEYS = tuple(SYSTEMS.keys())
@@ -169,7 +210,29 @@ def _bios_dir(sys: EmuSystem) -> Path:
     return user
 
 
+def _cart_games_for_system(sys: EmuSystem) -> List[Tuple[str, Path]]:
+    """Cart takeover: (display title, rom path) from cartridge.json."""
+    try:
+        from esp_handset.cartridge import current, takeover_games
+
+        if not takeover_games():
+            return []
+        cart = current()
+        if cart is None:
+            return []
+        out: List[Tuple[str, Path]] = []
+        for g in cart.games_for_system(sys.key):
+            if g.path.is_file():
+                out.append((g.title, g.path))
+        return out
+    except Exception:
+        return []
+
+
 def list_roms(sys: EmuSystem) -> List[Path]:
+    cart_entries = _cart_games_for_system(sys)
+    if cart_entries:
+        return [p for _, p in cart_entries]
     found: List[Path] = []
     seen = set()
     ensure_rom_dir(sys)
@@ -1143,11 +1206,22 @@ def make_emu_page(
 
     def refresh_list() -> None:
         lst.clear()
+        cart_entries = _cart_games_for_system(system)
         roms = list_roms(system)
         ok, msg = backend_status(system)
         play.setEnabled(bool(roms))
         folder = ensure_rom_dir(system)
-        status.setText(f"{msg}\n{len(roms)} ROM(s) · {folder.name}/")
+        if cart_entries:
+            try:
+                from esp_handset.cartridge import current
+
+                c = current()
+                cart_name = c.title if c else "Cart"
+            except Exception:
+                cart_name = "Cart"
+            status.setText(f"{msg}\n{len(roms)} from cart · {cart_name}")
+        else:
+            status.setText(f"{msg}\n{len(roms)} ROM(s) · {folder.name}/")
         if not ok and not system.builtin:
             _kick_libretro_cores()
         if not roms:
@@ -1155,10 +1229,16 @@ def make_emu_page(
             empty.setFlags(Qt.NoItemFlags)
             lst.addItem(empty)
             return
-        for p in roms:
-            item = QListWidgetItem(p.name)
-            item.setData(Qt.UserRole, str(p))
-            lst.addItem(item)
+        if cart_entries:
+            for title, p in cart_entries:
+                item = QListWidgetItem(title)
+                item.setData(Qt.UserRole, str(p))
+                lst.addItem(item)
+        else:
+            for p in roms:
+                item = QListWidgetItem(p.name)
+                item.setData(Qt.UserRole, str(p))
+                lst.addItem(item)
         if lst.currentRow() < 0:
             lst.setCurrentRow(0)
 

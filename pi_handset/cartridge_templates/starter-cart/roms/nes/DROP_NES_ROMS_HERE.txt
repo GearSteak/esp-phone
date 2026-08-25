@@ -1,0 +1,1 @@
+Drop .nes ROMs here. In cartridge.json use "system": "nes" and "path": "roms/nes/yourfile.nes"

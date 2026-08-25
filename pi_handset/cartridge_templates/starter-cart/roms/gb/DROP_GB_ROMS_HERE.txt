@@ -1,0 +1,13 @@
+Drop .gb or .gbc ROM files here.
+
+Then edit cartridge.json on the USB root:
+
+  "games": [
+    {
+      "title": "Pokemon Red",
+      "system": "gb",
+      "path": "roms/gb/pokemon_red.gb"
+    }
+  ]
+
+Use the exact filename you copied here.

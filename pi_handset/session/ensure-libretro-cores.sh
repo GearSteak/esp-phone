@@ -117,7 +117,7 @@ case "$ARCH" in
     ;;
 esac
 
-NEED_CORES="gambatte fceumm nestopia genesis_plus_gx"
+NEED_CORES="gambatte fceumm nestopia genesis_plus_gx mgba snes9x pcsx_rearmed"
 
 if [[ -n "$RL_ARCH" ]]; then
   BASE="https://buildbot.libretro.com/nightly/linux/${RL_ARCH}/latest"
@@ -185,11 +185,11 @@ if [[ "$(id -u)" -eq 0 ]]; then
 fi
 
 MISSING=""
-for stem in gambatte fceumm nestopia genesis_plus_gx; do
+for stem in gambatte fceumm nestopia genesis_plus_gx mgba snes9x pcsx_rearmed; do
   have_core "$stem" || MISSING="$MISSING $stem"
 done
 if [[ -z "$MISSING" ]]; then
-  write_status "ok gambatte fceumm nestopia genesis_plus_gx"
+  write_status "ok gambatte fceumm nestopia genesis_plus_gx mgba snes9x pcsx_rearmed"
 else
   write_status "missing$MISSING"
 fi
