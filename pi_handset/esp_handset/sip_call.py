@@ -1030,9 +1030,11 @@ def _zadarma_block_reason() -> str:
         return ""
     if re.search(r"(?i)Blocked for incorrect passwords", text):
         return (
-            "Zadarma blocked this SIP login (too many wrong passwords). "
-            "Set a new SIP password in Zadarma, save it in Settings → Accounts, "
-            "then wait before Test SIP again."
+            "Zadarma LOCKED this SIP extension (403 Blocked). "
+            "This is a server lockout from earlier failed logins — your current "
+            "password may already be correct but will not work until Zadarma clears "
+            "the block. Contact Zadarma support to unlock, or wait several hours "
+            "without tapping Test SIP."
         )
     if re.search(r"(?i)403 Forbidden", text) and re.search(
         r"(?i)LinphoneRegistrationFailed", text
@@ -1343,6 +1345,7 @@ class LinphoneEngine:
                 ip = _local_ipv4()
                 if blocked:
                     err = _set_error(blocked)
+                    self.stop()
                 elif not ip:
                     err = _set_error("No IPv4 — Wi-Fi/cell is down")
                 else:
@@ -1381,6 +1384,11 @@ class LinphoneEngine:
                     self._cli_ready = True
                 _log("linphonec registered")
                 return True
+            blocked = _zadarma_block_reason()
+            if blocked:
+                _log("Zadarma lockout — stopping linphonec")
+                self.stop()
+                return False
             if not self.alive():
                 return False
             elapsed = time.time() - started
@@ -1394,7 +1402,10 @@ class LinphoneEngine:
                     self._cli_ready = True
                 ready = True
             if send_register and not sent and ready and self._user and self._server:
-                if _zadarma_block_reason():
+                blocked = _zadarma_block_reason()
+                if blocked:
+                    _log("Zadarma lockout — stopping linphonec")
+                    self.stop()
                     return False
                 self.cmd(
                     f"register sip:{self._user}@{self._server} "
@@ -1913,17 +1924,26 @@ def doctor(*, save_report: bool = True) -> str:
             result = "NOT REGISTERED"
 
     if result == "NOT REGISTERED" and blocked:
-        result = "ZADARMA BLOCKED"
+        result = "ZADARMA LOCKED"
     elif result == "NOT REGISTERED" and not blocked:
         try:
             core = _CORE_LOG.read_text(encoding="utf-8", errors="replace")[-4000:]
-            if re.search(r"(?i)403 Forbidden|Unauthorized|incorrect password", core):
+            if re.search(r"(?i)Blocked for incorrect passwords", core):
+                result = "ZADARMA LOCKED"
                 lines.append(
-                    "Zadarma rejected the password. Set a new SIP password in Zadarma, "
-                    "enter it above, Save SIP, wait 15 min if blocked, Test SIP again."
+                    "Zadarma server lockout — not a wrong-password error on this attempt. "
+                    "Contact Zadarma support to unlock extension, then Test SIP once."
+                )
+            elif re.search(r"(?i)403 Forbidden|Unauthorized", core):
+                lines.append(
+                    "Zadarma rejected the login. Check SIP extension password in Zadarma, "
+                    "enter it in Settings, Save SIP, then Test SIP."
                 )
         except OSError:
             pass
+    if blocked and result != "REGISTERED":
+        result = "ZADARMA LOCKED"
+        eng.stop()
     lines.insert(0, f"RESULT: {result}")
     lines.append("--- log ---")
     lines.append(recent_log(10))
