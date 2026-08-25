@@ -99,6 +99,16 @@ def _read_sip() -> dict:
         "SIP_PASS": "",
         "SIP_DISPLAY": "",
     }
+    try:
+        from esp_handset import sip_call
+
+        env = sip_call._sip_env()
+        for k in vals:
+            if k in env:
+                vals[k] = env[k]
+        return vals
+    except Exception:
+        pass
     path = CONFIG
     try:
         if not path.is_file() or not os.access(path, os.R_OK):
@@ -219,12 +229,33 @@ def make_sip_account_page(on_back: Callable[[], None]) -> QWidget:
     def _on_report(text: str) -> None:
         testing["on"] = False
         test.setEnabled(True)
-        _show(text)
         summary = "SIP test done"
+        show = text or ""
         for line in (text or "").splitlines():
             if line.startswith("RESULT:"):
                 summary = line.replace("RESULT:", "").strip()
                 break
+        # Keep the status box readable on the small screen.
+        keep: list[str] = []
+        for line in (text or "").splitlines():
+            if line.startswith("RESULT:") or line.startswith("core:"):
+                keep.append(line)
+            elif any(
+                x in line
+                for x in (
+                    "Zadarma",
+                    "password",
+                    "NEED PASSWORD",
+                    "BLOCKED",
+                    "Wi‑Fi",
+                    "env-from",
+                    "pass-len",
+                )
+            ):
+                keep.append(line)
+        if keep:
+            show = "\n".join(keep[:8])
+        _show(show or text)
         try:
             store.push_notif("SIP", summary, "settings")
         except Exception:
@@ -234,10 +265,14 @@ def make_sip_account_page(on_back: Callable[[], None]) -> QWidget:
     bridge.done.connect(_on_report, Qt.QueuedConnection)
 
     def do_save() -> None:
+        pw = password.text().strip()
+        if not pw or pw.startswith("YOUR_") or pw == "YOUR_SIP_PASSWORD":
+            status.setText("Enter your Zadarma SIP extension password first.")
+            return
         where = _write_sip(
             server.text(), user.text(), password.text(), display.text()
         )
-        status.setText(f"Saved · {where}\nRegistering…")
+        status.setText(f"Saved · pass {len(pw)} chars · {where}\nRegistering…")
         store.push_notif("SIP", "Account saved", "settings")
 
         def work() -> None:
@@ -256,10 +291,14 @@ def make_sip_account_page(on_back: Callable[[], None]) -> QWidget:
         if testing["on"]:
             _show("Test already running…")
             return
+        pw = password.text().strip()
+        if not pw or pw.startswith("YOUR_") or pw == "YOUR_SIP_PASSWORD":
+            _show("Enter your Zadarma SIP extension password, then Test SIP.")
+            return
         testing["on"] = True
         testing["gen"] += 1
         gen = testing["gen"]
-        _show("Testing SIP…")
+        _show("Saving + testing SIP…")
         test.setEnabled(False)
         try:
             store.push_notif("SIP", "Testing…", "settings")
@@ -272,6 +311,9 @@ def make_sip_account_page(on_back: Callable[[], None]) -> QWidget:
             try:
                 from esp_handset import sip_call
 
+                _write_sip(
+                    server.text(), user.text(), password.text(), display.text()
+                )
                 bridge.progress.emit("Installing VoIP if needed…")
                 sip_call.prepare_voip(300.0)
                 bridge.progress.emit("Registering with SIP…")

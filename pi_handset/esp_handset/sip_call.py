@@ -284,31 +284,88 @@ def _read_pin(name: str) -> Optional[str]:
     return None
 
 
-def _sip_env() -> Dict[str, str]:
-    vals: Dict[str, str] = {}
-    candidates = [
+_last_sip_env_source = ""
+
+
+def _sip_env_paths() -> List[Path]:
+    seen: set = set()
+    paths: List[Path] = []
+    for p in (
         Path.home() / ".esp-handset" / "sip.env",
         Path("/etc/esp-handset/sip.env"),
-    ]
-    try:
-        from esp_handset import store
-
-        candidates.insert(0, store.DATA / "sip.env")
-    except Exception:
-        pass
-    for path in candidates:
+    ):
         try:
-            if not path.is_file() or not os.access(path, os.R_OK):
-                continue
-            for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
-                if "=" in line and not line.strip().startswith("#"):
-                    k, v = line.split("=", 1)
-                    vals[k.strip()] = v.strip()
-            if vals.get("SIP_USER") and vals.get("SIP_SERVER"):
-                break
+            key = str(p.resolve())
         except OSError:
+            key = str(p)
+        if key in seen:
             continue
+        seen.add(key)
+        paths.append(p)
+    return paths
+
+
+def _read_sip_file(path: Path) -> Dict[str, str]:
+    vals: Dict[str, str] = {}
+    try:
+        if not path.is_file() or not os.access(path, os.R_OK):
+            return vals
+        for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+            if "=" in line and not line.strip().startswith("#"):
+                k, v = line.split("=", 1)
+                vals[k.strip()] = v.strip()
+    except OSError:
+        pass
     return vals
+
+
+def _is_placeholder_sip_pass(password: str) -> bool:
+    p = (password or "").strip()
+    if not p:
+        return True
+    if p in ("YOUR_SIP_PASSWORD", "Ping927Ld"):
+        return True
+    if p.startswith("YOUR_") or p.startswith("CHANGE_ME"):
+        return True
+    return False
+
+
+def _sip_env_score(vals: Dict[str, str]) -> int:
+    if not (vals.get("SIP_USER") or "").strip():
+        return 0
+    if not (vals.get("SIP_SERVER") or "").strip():
+        return 0
+    if _is_placeholder_sip_pass(vals.get("SIP_PASS") or ""):
+        return 1
+    return 10
+
+
+def sip_env_source() -> str:
+    return _last_sip_env_source
+
+
+def _sip_env() -> Dict[str, str]:
+    global _last_sip_env_source
+    best: Dict[str, str] = {}
+    best_score = 0
+    best_path = ""
+    home = Path.home() / ".esp-handset" / "sip.env"
+    for path in _sip_env_paths():
+        vals = _read_sip_file(path)
+        score = _sip_env_score(vals)
+        if score > best_score:
+            best_score = score
+            best = vals
+            best_path = str(path)
+        elif (
+            score == best_score
+            and score >= 10
+            and path.resolve() == home.resolve()
+        ):
+            best = vals
+            best_path = str(path)
+    _last_sip_env_source = best_path
+    return dict(best)
 
 
 def _linphonerc_path() -> Path:
@@ -1341,7 +1398,7 @@ class LinphoneEngine:
                     return False
                 self.cmd(
                     f"register sip:{self._user}@{self._server} "
-                    f"sip:{self._server} {self._password}"
+                    f"{self._server} {self._password}"
                 )
                 sent = True
             time.sleep(0.35)
@@ -1769,7 +1826,24 @@ def doctor(*, save_report: bool = True) -> str:
     env = _sip_env()
     user = (env.get("SIP_USER") or "").strip() or "?"
     server = (env.get("SIP_SERVER") or "").strip() or "?"
+    password = (env.get("SIP_PASS") or "").strip()
     _bust_voip_cache()
+    if _is_placeholder_sip_pass(password):
+        lines = [
+            "RESULT: NEED PASSWORD",
+            f"sip: {user}@{server}",
+            "Enter your Zadarma SIP extension password above, then Save SIP.",
+            "Use the password from Zadarma → SIP extension — not the website login.",
+            f"env-from: {sip_env_source() or '?'}",
+            f"pass-len: {len(password)}",
+        ]
+        text = "\n".join(lines)
+        if save_report:
+            try:
+                write_sip_report(extra=text)
+            except Exception:
+                pass
+        return text
     csh = _discover_csh_uncached()
     lp = _discover_linphonec_uncached()
     if not csh:
@@ -1780,11 +1854,16 @@ def doctor(*, save_report: bool = True) -> str:
         lp = _dpkg_bin("/linphonec")
         if lp and not _is_linphonec_cli(lp):
             lp = None
+    blocked = _zadarma_block_reason()
     lines = [
         f"linphonec: {lp or 'MISSING'}",
         f"linphonecsh: {csh or 'MISSING'}",
         f"sip: {user}@{server}",
+        f"env-from: {sip_env_source() or '?'}",
+        f"pass-len: {len(password)}",
     ]
+    if blocked:
+        lines.append(blocked)
     broken = _broken_linphonec_msg()
     if not lp:
         _kick_voip_install(force=True)
@@ -1833,9 +1912,33 @@ def doctor(*, save_report: bool = True) -> str:
         else:
             result = "NOT REGISTERED"
 
+    if result == "NOT REGISTERED" and blocked:
+        result = "ZADARMA BLOCKED"
+    elif result == "NOT REGISTERED" and not blocked:
+        try:
+            core = _CORE_LOG.read_text(encoding="utf-8", errors="replace")[-4000:]
+            if re.search(r"(?i)403 Forbidden|Unauthorized|incorrect password", core):
+                lines.append(
+                    "Zadarma rejected the password. Set a new SIP password in Zadarma, "
+                    "enter it above, Save SIP, wait 15 min if blocked, Test SIP again."
+                )
+        except OSError:
+            pass
     lines.insert(0, f"RESULT: {result}")
     lines.append("--- log ---")
     lines.append(recent_log(10))
+    try:
+        if _CORE_LOG.is_file():
+            core_tail = _CORE_LOG.read_text(encoding="utf-8", errors="replace")[-2500:]
+            core_tail = _redact(core_tail)
+            for ln in core_tail.splitlines()[-8:]:
+                if re.search(
+                    r"(?i)register|403|401|blocked|forbidden|unauthorized|registration",
+                    ln,
+                ):
+                    lines.append(f"core: {ln[:160]}")
+    except OSError:
+        pass
     text = "\n".join(lines)
     if save_report:
         try:
