@@ -198,21 +198,26 @@ if [[ -f "$ROOT/session/digivice-audio-usb.sh" ]]; then
   install -m 755 "$ROOT/session/digivice-audio-usb.sh" /usr/local/bin/digivice-audio-usb
 fi
 
-if [[ -f "$ROOT/sip.env" ]]; then
-  install -m 600 "$ROOT/sip.env" /etc/esp-handset/sip.env
-else
-  cat >/etc/esp-handset/sip.env <<'EOF'
+mkdir -p "$USER_HOME/.esp-handset"
+if [[ -f "$ROOT/session/digivice-sip-sync.sh" ]]; then
+  DIGIVICE_SIP_SEED="$ROOT/sip.env" bash "$ROOT/session/digivice-sip-sync.sh" --files-only \
+    >>"$USER_HOME/.esp-handset/sip-sync.log" 2>&1 || true
+elif [[ ! -f /etc/esp-handset/sip.env && ! -f "$USER_HOME/.esp-handset/sip.env" ]]; then
+  cat >"$USER_HOME/.esp-handset/sip.env" <<'EOF'
 SIP_SERVER=sip.zadarma.com
 SIP_USER=440892
-SIP_PASS=Ping927Ld
-SIP_DISPLAY=SIP
-SIP_DID=+17788000889
+SIP_PASS=YOUR_SIP_PASSWORD
+SIP_DISPLAY=Digivice
+SIP_DID=
 EOF
-  chmod 600 /etc/esp-handset/sip.env
+  chmod 600 "$USER_HOME/.esp-handset/sip.env"
+  install -m 600 "$USER_HOME/.esp-handset/sip.env" /etc/esp-handset/sip.env 2>/dev/null || true
 fi
-install -m 600 /etc/esp-handset/sip.env "$USER_HOME/.esp-handset/sip.env" 2>/dev/null || true
 chown "$USER_NAME:$USER_NAME" /etc/esp-handset/sip.env "$USER_HOME/.esp-handset/sip.env" 2>/dev/null || true
 chown -R "$USER_NAME:$USER_NAME" "$USER_HOME/.esp-handset" 2>/dev/null || true
+if [[ -f "$ROOT/session/digivice-sip-sync.sh" ]]; then
+  install -m 755 "$ROOT/session/digivice-sip-sync.sh" /usr/local/bin/digivice-sip-sync
+fi
 
 # SPI 2" as optional second panel — HDMI stays ON
 cp -a "$ROOT/display" "$PREFIX/display"

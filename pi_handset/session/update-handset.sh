@@ -183,6 +183,7 @@ install_tree() {
       "ensure-gb-roms.sh:digivice-gb-roms-dir" \
       "ensure-libretro-cores.sh:digivice-libretro-cores" \
       "ensure-linphone.sh:digivice-ensure-linphone" \
+      "digivice-sip-sync.sh:digivice-sip-sync" \
       "digivice-linphonecsh.sh:digivice-linphonecsh" \
       "digivice-linphonec.sh:digivice-linphonec" \
       "digivice-sip-dial.sh:digivice-sip-dial" \
@@ -216,6 +217,7 @@ install_tree() {
       "ensure-cardkb.sh:digivice-ensure-cardkb" \
       "digivice-cardkb-ctl.sh:digivice-cardkb-ctl" \
       "ensure-linphone.sh:digivice-ensure-linphone" \
+      "digivice-sip-sync.sh:digivice-sip-sync" \
       "digivice-linphonecsh.sh:digivice-linphonecsh" \
       "digivice-linphonec.sh:digivice-linphonec" \
       "digivice-sip-dial.sh:digivice-sip-dial" \

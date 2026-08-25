@@ -125,15 +125,29 @@ def _write_sip(server: str, user: str, password: str, display: str) -> str:
         f"SIP_PASS={password.strip()}\n"
         f"SIP_DISPLAY={(display.strip() or 'ESP Handset')}\n"
     )
-    dest = Path("/etc/esp-handset/sip.env")
+    saved: list[str] = []
+    home = store.DATA / "sip.env"
     try:
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        dest.write_text(content)
-        return str(dest)
-    except PermissionError:
-        alt = store.DATA / "sip.env"
-        alt.write_text(content)
-        return str(alt)
+        home.write_text(content)
+        os.chmod(home, 0o600)
+        saved.append(str(home))
+    except OSError:
+        pass
+    etc = Path("/etc/esp-handset/sip.env")
+    try:
+        etc.parent.mkdir(parents=True, exist_ok=True)
+        etc.write_text(content)
+        os.chmod(etc, 0o600)
+        saved.append(str(etc))
+    except (PermissionError, OSError):
+        pass
+    try:
+        from esp_handset import sip_call
+
+        sip_call._write_linphonerc(sip_call._sip_env())
+    except Exception:
+        pass
+    return " + ".join(saved) if saved else str(home)
 
 
 def make_sip_account_page(on_back: Callable[[], None]) -> QWidget:
@@ -170,6 +184,14 @@ def make_sip_account_page(on_back: Callable[[], None]) -> QWidget:
     user.setText(vals.get("SIP_USER", ""))
     password.setText(vals.get("SIP_PASS", ""))
     display.setText(vals.get("SIP_DISPLAY", ""))
+    sync_hint = store.DATA / "sip-sync.status"
+    if sync_hint.is_file():
+        try:
+            hint = sync_hint.read_text(encoding="utf-8", errors="replace").strip()
+            if hint:
+                status.setText(hint)
+        except OSError:
+            pass
     for lab, w in (
         ("Server", server),
         ("User", user),

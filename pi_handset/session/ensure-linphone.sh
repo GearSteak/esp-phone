@@ -474,10 +474,10 @@ if [[ -n "$RUN_AS" && "$RUN_AS" != "root" ]]; then
   [[ -f "$SIP_ENV" ]] && . "$SIP_ENV"
   set +a
   sudo -u "$RUN_AS" env HOME="$HOME_AS" "$BIN" init >/dev/null 2>&1 || true
-  if [[ -n "${SIP_USER:-}" && -n "${SIP_SERVER:-}" && -n "${SIP_PASS:-}" ]]; then
-    sudo -u "$RUN_AS" env HOME="$HOME_AS" \
-      "$BIN" register "sip:${SIP_USER}@${SIP_SERVER}" "$SIP_SERVER" "$SIP_PASS" \
-      >/dev/null 2>&1 || log "WARN: register failed (Digivice will retry)"
+  log "SIP register skipped here — use Settings → Accounts → Save SIP / Test SIP"
+  if [[ -x /usr/local/bin/digivice-sip-sync ]]; then
+    sudo -u "$RUN_AS" env HOME="$HOME_AS" ESP_HANDSET_PREFIX="${ESP_HANDSET_PREFIX:-/opt/esp-handset}" \
+      /usr/local/bin/digivice-sip-sync >>"$HOME_AS/.esp-handset/sip-sync.log" 2>&1 || true
   fi
 fi
 

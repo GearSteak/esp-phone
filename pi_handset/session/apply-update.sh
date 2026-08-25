@@ -113,6 +113,7 @@ install_live_from_repo() {
     "ensure-cardkb.sh:digivice-ensure-cardkb" \
     "digivice-cardkb-ctl.sh:digivice-cardkb-ctl" \
     "ensure-linphone.sh:digivice-ensure-linphone" \
+    "digivice-sip-sync.sh:digivice-sip-sync" \
     "ensure-libretro-cores.sh:digivice-libretro-cores" \
     "digivice-linphonecsh.sh:digivice-linphonecsh" \
     "digivice-linphonec.sh:digivice-linphonec" \
@@ -383,6 +384,10 @@ if [[ -f "$PREFIX/session/ensure-linphone.sh" ]]; then
   SUDO_USER="$USER_NAME" DIGIVICE_USER="$USER_NAME" \
     bash /usr/local/bin/digivice-ensure-linphone >>"$LOG" 2>&1 \
     || log "WARN: digivice-ensure-linphone failed — check $LOG"
+  if [[ -x /usr/local/bin/digivice-sip-sync ]]; then
+    sudo -u "$USER_NAME" env HOME="$USER_HOME" ESP_HANDSET_PREFIX="$PREFIX" \
+      /usr/local/bin/digivice-sip-sync >>"$LOG" 2>&1 || true
+  fi
 elif ! command -v linphonecsh >/dev/null 2>&1 && [[ ! -x /usr/bin/linphonecsh ]]; then
   log "Installing linphone-cli (no ensure script yet)…"
   apt-get update -qq >>"$LOG" 2>&1 || true

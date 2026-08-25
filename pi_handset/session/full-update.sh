@@ -189,44 +189,15 @@ echo "$REPO" >/etc/esp-handset/repo.path
 echo "$REPO" >"$USER_HOME/.esp-handset/repo.path" 2>/dev/null || true
 chown "$USER_NAME:$USER_NAME" "$USER_HOME/.esp-handset/repo.path" 2>/dev/null || true
 
-# SIP credentials → /etc (always refresh so old YOUR_USER placeholders get replaced)
+# SIP — keep saved password; never reinstall repo seed over /etc or ~/.esp-handset
 mkdir -p "$USER_HOME/.esp-handset"
-if [[ -f "$ROOT/sip.env" ]]; then
-  install -m 600 "$ROOT/sip.env" /etc/esp-handset/sip.env
-  log "SIP: installed /etc/esp-handset/sip.env from repo seed"
-else
-  cat >/etc/esp-handset/sip.env <<'EOF'
-SIP_SERVER=sip.zadarma.com
-SIP_USER=440892
-SIP_PASS=Ping927Ld
-SIP_DISPLAY=SIP
-SIP_DID=+17788000889
-EOF
-  chmod 600 /etc/esp-handset/sip.env
-  log "SIP: wrote Zadarma defaults to /etc/esp-handset/sip.env"
-fi
-install -m 600 /etc/esp-handset/sip.env "$USER_HOME/.esp-handset/sip.env" 2>/dev/null || true
-# Digivice runs as the desktop user — root-only 600 on /etc caused PermissionError
-chown "$USER_NAME:$USER_NAME" "$USER_HOME/.esp-handset/sip.env" 2>/dev/null || true
-chown "$USER_NAME:$USER_NAME" /etc/esp-handset/sip.env 2>/dev/null || true
-chmod 600 /etc/esp-handset/sip.env "$USER_HOME/.esp-handset/sip.env" 2>/dev/null || true
-# Ensure log/dir are writable by Digivice (full-update as root can leave them root-owned)
 chown -R "$USER_NAME:$USER_NAME" "$USER_HOME/.esp-handset" 2>/dev/null || true
-if command -v linphonecsh >/dev/null 2>&1; then
-  # shellcheck disable=SC1091
-  set -a
-  # shellcheck source=/dev/null
-  . /etc/esp-handset/sip.env
-  set +a
-  # Daemon pipe is per-user — never init as root (Digivice can't talk to it)
-  sudo -u "$USER_NAME" env HOME="$USER_HOME" linphonecsh init >/dev/null 2>&1 || true
-  if [[ -n "${SIP_USER:-}" && -n "${SIP_SERVER:-}" && -n "${SIP_PASS:-}" ]]; then
-    sudo -u "$USER_NAME" env HOME="$USER_HOME" \
-      linphonecsh register "sip:${SIP_USER}@${SIP_SERVER}" "$SIP_SERVER" "$SIP_PASS" \
-      >/dev/null 2>&1 || log "WARN: linphonecsh register failed (Digivice will retry on call)"
-  fi
+if [[ -f "$ROOT/session/digivice-sip-sync.sh" ]]; then
+  DIGIVICE_SIP_SEED="$ROOT/sip.env" bash "$ROOT/session/digivice-sip-sync.sh" --files-only \
+    >>"$USER_HOME/.esp-handset/sip-sync.log" 2>&1 || true
+  log "SIP: preserved user credentials (digivice-sip-sync --files-only)"
 else
-  log "WARN: skip SIP register — install linphone-cli"
+  log "WARN: digivice-sip-sync.sh missing — skip SIP preserve"
 fi
 
 # --- install tree (same core as install-handset, no mystery bits) ---
@@ -280,6 +251,10 @@ install -m 755 "$ROOT/session/digivice-cardkb-ctl.sh" /usr/local/bin/digivice-ca
 if [[ -f "$ROOT/session/ensure-linphone.sh" ]]; then
   install -m 755 "$ROOT/session/ensure-linphone.sh" "$PREFIX/session/ensure-linphone.sh"
   install -m 755 "$ROOT/session/ensure-linphone.sh" /usr/local/bin/digivice-ensure-linphone
+  if [[ -f "$ROOT/session/digivice-sip-sync.sh" ]]; then
+    install -m 755 "$ROOT/session/digivice-sip-sync.sh" "$PREFIX/session/digivice-sip-sync.sh"
+    install -m 755 "$ROOT/session/digivice-sip-sync.sh" /usr/local/bin/digivice-sip-sync
+  fi
   if [[ -f "$ROOT/session/digivice-linphonecsh.sh" ]]; then
     install -m 755 "$ROOT/session/digivice-linphonecsh.sh" "$PREFIX/session/digivice-linphonecsh.sh"
     install -m 755 "$ROOT/session/digivice-linphonecsh.sh" /usr/local/bin/digivice-linphonecsh
@@ -856,10 +831,23 @@ if [[ "$DO_RESTART" -eq 1 ]]; then
   fi
 fi
 
+if [[ -x /usr/local/bin/digivice-sip-sync ]]; then
+  sudo -u "$USER_NAME" env HOME="$USER_HOME" ESP_HANDSET_PREFIX="$PREFIX" \
+    /usr/local/bin/digivice-sip-sync >>"$USER_HOME/.esp-handset/sip-sync.log" 2>&1 || true
+  SIP_ST="$(cat "$USER_HOME/.esp-handset/sip-sync.status" 2>/dev/null || true)"
+  [[ -n "$SIP_ST" ]] && log "SIP: $SIP_ST"
+fi
+
 echo ""
 echo "Done.  sudo digivice-full-update"
 if command -v linphonecsh >/dev/null 2>&1 || [[ -x /usr/bin/linphonecsh ]]; then
   echo "VoIP: OK ($(command -v linphonecsh 2>/dev/null || echo /usr/bin/linphonecsh))"
+  SIP_MSG="$(cat "$USER_HOME/.esp-handset/sip-sync.status" 2>/dev/null || true)"
+  if [[ -n "$SIP_MSG" ]]; then
+    echo "SIP: $SIP_MSG"
+  else
+    echo "SIP: Settings → Accounts → enter SIP password → Save SIP → Test SIP"
+  fi
 else
   echo "VoIP: FAILED — linphonecsh missing"
   echo "  sudo digivice-ensure-linphone"
