@@ -198,33 +198,71 @@ class BatGlyph(QWidget):
             p.drawLine(3, 2, 15, 10)
 
 
+def _btctl(*args: str, timeout: float = 1.5) -> str:
+    try:
+        r = subprocess.run(
+            ["bluetoothctl", *args],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
+        )
+        return r.stdout or ""
+    except Exception:
+        return ""
+
+
+def _bt_macs_from_devices(out: str) -> list:
+    macs: list = []
+    for line in (out or "").splitlines():
+        parts = line.split()
+        # "Device AA:BB:CC:DD:EE:FF Name…"
+        if len(parts) >= 2 and parts[0] == "Device":
+            macs.append(parts[1])
+    return macs
+
+
+def _bt_hid_input_present() -> bool:
+    """True if a Bluetooth HID input device is attached (Bus=0005)."""
+    try:
+        text = Path("/proc/bus/input/devices").read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return False
+    blocks = text.split("\n\n")
+    for block in blocks:
+        # Bus=0005 → Bluetooth; ignore empty name stubs
+        if "Bus=0005" in block and "Name=" in block:
+            return True
+    return False
+
+
 def bluetooth_connected() -> bool:
-    """True if bluetoothctl reports a connected device."""
-    try:
-        r = subprocess.run(
-            ["bluetoothctl", "devices", "Connected"],
-            capture_output=True,
-            text=True,
-            timeout=1.2,
-            check=False,
-        )
-        out = (r.stdout or "").strip()
-        if out and "Device " in out:
-            return True
-    except Exception:
-        pass
-    try:
-        r = subprocess.run(
-            ["bluetoothctl", "info"],
-            capture_output=True,
-            text=True,
-            timeout=1.2,
-            check=False,
-        )
-        if "Connected: yes" in (r.stdout or ""):
-            return True
-    except Exception:
-        pass
+    """True if any Bluetooth device is connected (keyboard, headset, etc.)."""
+    # BlueZ ≥ 5.65: filtered list
+    out = _btctl("devices", "Connected")
+    if _bt_macs_from_devices(out):
+        return True
+
+    # Older bluetoothctl: walk known/paired devices and check Connected
+    macs: list = []
+    for cmd in (("devices",), ("paired-devices",)):
+        macs.extend(_bt_macs_from_devices(_btctl(*cmd)))
+    seen = set()
+    for mac in macs:
+        if mac in seen:
+            continue
+        seen.add(mac)
+        if len(seen) > 12:
+            break
+        info = _btctl("info", mac, timeout=0.8)
+        for line in info.splitlines():
+            if line.strip().lower() == "connected: yes":
+                return True
+
+    # HID keyboards/mice often show as Bus=0005 even when bluetoothctl is slow
+    if _bt_hid_input_present():
+        return True
+
     return False
 
 

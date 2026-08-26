@@ -177,7 +177,8 @@ class PhoneShell(QMainWindow):
 
         self._net_timer = QTimer(self)
         self._net_timer.timeout.connect(self._tick_network)
-        self._net_timer.start(20_000)
+        # Wi‑Fi / cell / BT — keep BT icon responsive after connect/disconnect
+        self._net_timer.start(5_000)
         self._modem_signal_fn = None  # optional Callable[[], Optional[str]]
         QTimer.singleShot(800, self._tick_network)
 
