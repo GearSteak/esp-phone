@@ -1664,6 +1664,10 @@ def _csh_phase(hook: str, calls: str) -> str:
         return "active"
     if re.search(r"(?i)OutgoingRinging|Remote ringing|LinphoneCallOutgoingRinging", raw):
         return "ringing"
+    # Outbound in progress (PSTN may already be ringing the cell)
+    m = re.search(r"(?i)duration=(\d+)", raw)
+    if re.search(r"(?i)Call out|hook=sip:", raw) and m and int(m.group(1)) >= 2:
+        return "ringing"
     if re.search(
         r"(?i)OutgoingProgress|OutgoingInit|Calling |Establishing call|"
         r"Call out|hook=sip:|hook=dialing|hook=offhook|in progress|duration=\d+",
@@ -1731,35 +1735,33 @@ def _dial_via_csh(digits: str, server: str) -> Tuple[bool, str]:
         _csh_warmup()
         st = _csh_cmd("status", "register")
         _last_register_raw = st[:200]
-    target = _call_uri(digits, server)
-    # Zadarma PSTN: try E.164 (+1…) first, then plain sip:digits@host
-    target_e164 = f"sip:+{digits}@{server}" if digits.isdigit() else target
-    _log(f"csh dial {target_e164}")
-    dial_out = _csh_cmd("dial", target_e164)
-    time.sleep(0.5)
-    if not re.search(r"(?i)Establishing call|in progress|assigned id", dial_out or ""):
-        _log(f"csh dial fallback {target}")
-        dial_out2 = _csh_cmd("dial", target)
-        dial_out = f"{dial_out}\n{dial_out2}"
-        time.sleep(0.5)
-    if not re.search(r"(?i)Establishing call|in progress|assigned id", dial_out or ""):
-        dial_out3 = _csh_cmd("dial", digits)
-        dial_out = f"{dial_out}\n{dial_out3}"
-        time.sleep(0.5)
-    hook = _csh_cmd("status", "hook", timeout=3.0)
-    calls = _csh_calls()
-    phase = _csh_phase(hook, calls)
+    # Kill any leftover call so we never stack INVITEs (multi-ring on the cell).
+    _csh_cmd("generic", "terminate", timeout=2.0, quiet=True)
+    _csh_cmd("hangup", timeout=2.0, quiet=True)
+    time.sleep(0.35)
+    # ONE dial only. E.164 for Zadarma PSTN. Fallbacks used to place 2–3 calls.
+    target = f"sip:+{digits}@{server}" if digits.isdigit() else _call_uri(digits, server)
+    _log(f"csh dial once {target}")
+    dial_out = _csh_cmd("dial", target)
+    time.sleep(0.8)
+    hook = _csh_cmd("status", "hook", timeout=2.0, quiet=True)
+    # If first form didn't start, hangup then try plain sip:digits@host once
+    if _csh_no_call(hook) and not re.search(
+        r"(?i)Establishing call|in progress|assigned id|Call out", dial_out or ""
+    ):
+        target2 = _call_uri(digits, server)
+        if target2 != target:
+            _log(f"csh dial once fallback {target2}")
+            _csh_cmd("generic", "terminate", timeout=2.0, quiet=True)
+            dial_out = _csh_cmd("dial", target2)
+            time.sleep(0.8)
+            hook = _csh_cmd("status", "hook", timeout=2.0, quiet=True)
+    phase = _csh_phase(hook, "")
     if phase == "idle":
         phase = _phase_from_line(dial_out or "", "idle")
-    if phase == "idle" and _csh_no_call(hook) and _csh_no_call(calls):
-        _csh_cmd("generic", f"call {target}")
-        time.sleep(0.7)
-        hook = _csh_cmd("status", "hook", timeout=3.0)
-        calls = _csh_calls()
-        phase = _csh_phase(hook, calls)
-    blob = f"{dial_out}\n{hook}\n{calls}"
+    blob = f"{dial_out}\n{hook}"
     if phase in ("dialing", "ringing", "active") or re.search(
-        r"(?i)Establishing call|in progress|assigned id|hook=dialing|hook=offhook",
+        r"(?i)Establishing call|in progress|assigned id|Call out|hook=sip:",
         blob,
     ):
         _active_backend = "csh"
@@ -1767,7 +1769,7 @@ def _dial_via_csh(digits: str, server: str) -> Tuple[bool, str]:
             _csh_poll_info = CallInfo(phase="dialing", state="dialing", raw=blob[:200])
         _ensure_csh_poller()
         _set_error("")
-        _log("csh outbound call started")
+        _log("csh outbound call started (single INVITE)")
         return True, ""
     _log(f"csh: no outbound call (hook={hook[:80]!r})")
     return False, _set_error("Call did not start — try Test SIP")

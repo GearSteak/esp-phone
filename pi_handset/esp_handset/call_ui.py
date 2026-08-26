@@ -359,12 +359,14 @@ class CallOverlay(QWidget):
         if self._mode != "ringing":
             return
         self._pulse_n = (self._pulse_n + 1) % 3
-        # Keep "Connecting…" while SIP register/dial is still running
         cur = (self.timer_lab.text() or "")
-        if cur.startswith("Connecting"):
-            self.timer_lab.setText("Connecting" + "." * (self._pulse_n + 1))
-        else:
+        # Don't overwrite Calling… with Ringing — that caused the flicker.
+        if cur.startswith("Connecting") or cur.startswith("Calling"):
+            base = "Calling" if cur.startswith("Calling") else "Connecting"
+            self.timer_lab.setText(base + "." * (self._pulse_n + 1))
+        elif cur.startswith("Ringing") or not cur.strip():
             self.timer_lab.setText("Ringing" + "." * (self._pulse_n + 1))
+        # else leave a custom status alone
 
     def keyPressEvent(self, event) -> None:  # noqa: N802
         key = event.key()
@@ -668,6 +670,7 @@ class CallController(QObject):
                 self._saw_progress = True
             if info.phase == "ringing":
                 self._saw_remote_ring = True
+                self._phase = "ringing"
                 clog.update(self._entry_id, status="ringing")
                 ov = getattr(self.shell, "_active_call", None)
                 if ov is not None:
@@ -685,8 +688,12 @@ class CallController(QObject):
                 return
             if info.phase == "dialing":
                 ov = getattr(self.shell, "_active_call", None)
-                if ov is not None and not self._saw_remote_ring:
-                    ov.set_ringing_hint("Calling…")
+                # Latch: once we've been ringing, don't flicker back to Calling
+                if ov is not None:
+                    if self._saw_remote_ring:
+                        ov.set_ringing_hint("Ringing")
+                    else:
+                        ov.set_ringing_hint("Calling…")
             if info.phase == "error":
                 raw = (info.raw or "").lower()
                 self._awaiting_dial = False
@@ -704,7 +711,9 @@ class CallController(QObject):
             if info.phase in ("ending", "idle"):
                 if self._user_hangup:
                     return
-                # Quiet linphonec stdout is common — give INVITE time to ring
+                # Ignore brief idle blips while a call is still negotiating
+                if elapsed < 12.0:
+                    return
                 if not self._saw_progress and elapsed > 25.0:
                     why = _screen_detail(
                         sip_call.last_error()
@@ -713,15 +722,14 @@ class CallController(QObject):
                     )
                     self._finish("failed", why)
                     return
-                # Only say "didn't pick up" if we actually saw remote ringing
-                if self._saw_remote_ring and elapsed > 8.0:
+                if self._saw_remote_ring:
                     self._finish("no_answer")
                     return
-                if self._saw_progress and not self._saw_remote_ring and elapsed > 8.0:
+                if self._saw_progress:
                     why = _screen_detail(
                         sip_call.last_error()
                         or sip_call.last_call_error()
-                        or "Dropped before ring"
+                        or "Call ended"
                     )
                     self._finish("failed", why)
                     return
@@ -740,7 +748,6 @@ class CallController(QObject):
                     )
                 return
             return
-
         if self._phase == "active":
             ov = getattr(self.shell, "_active_call", None)
             if ov is not None and ov.mode == "active" and self._talk_started:
