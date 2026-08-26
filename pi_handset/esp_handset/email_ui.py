@@ -284,7 +284,7 @@ def _collapse_ws(text: str) -> str:
 
 
 def _snippet_text(text: str, limit: int = 90) -> str:
-    s = _collapse_ws(text)
+    s = _collapse_ws(_fix_qp_text(text or ""))
     if not s:
         return ""
     if len(s) <= limit:
@@ -307,26 +307,84 @@ def _strip_html_preview(raw: str) -> str:
     return _collapse_ws(s)
 
 
-def _decode_part_bytes(payload: bytes, charset: Optional[str]) -> str:
+_QP_BYTE = re.compile(rb"(?:=[0-9A-Fa-f]{2}|=[\r\n])")
+_QP_TEXT = re.compile(r"(?:=[0-9A-Fa-f]{2}|=[\r\n])")
+
+
+def _looks_like_qp_bytes(raw: bytes) -> bool:
+    if not raw or b"=" not in raw:
+        return False
+    # Newlines encoded as QP (Uber etc.) — hex is case-insensitive
+    if re.search(rb"=(?:0[Aa]|0[Dd])", raw):
+        return True
+    if b"=\n" in raw or b"=\r\n" in raw:
+        return True
+    return len(_QP_BYTE.findall(raw)) >= 3
+
+
+def _looks_like_qp_text(text: str) -> bool:
+    if not text or "=" not in text:
+        return False
+    if re.search(r"=(?:0[Aa]|0[Dd])", text):
+        return True
+    if re.search(r"=\r?\n", text):
+        return True
+    return len(_QP_TEXT.findall(text)) >= 3
+
+
+def _quopri_bytes(raw: bytes) -> bytes:
     import quopri
 
+    try:
+        return quopri.decodestring(raw)
+    except Exception:
+        return raw
+
+
+def _fix_qp_text(text: str) -> str:
+    """Decode leftover quoted-printable in a unicode body/snippet (cached mail too)."""
+    if not _looks_like_qp_text(text):
+        return text
+    import quopri
+
+    def _hex_sub(s: str) -> str:
+        s = re.sub(r"=\r?\n", "", s)
+
+        def _hex(m: re.Match) -> str:
+            try:
+                return bytes.fromhex(m.group(1)).decode("latin-1")
+            except Exception:
+                return m.group(0)
+
+        return re.sub(r"=([0-9A-Fa-f]{2})", _hex, s)
+
+    try:
+        fixed = quopri.decodestring(text.encode("utf-8", errors="surrogateescape"))
+        out = fixed.decode("utf-8", errors="replace")
+        if _looks_like_qp_text(out):
+            out = _hex_sub(out)
+        return out
+    except Exception:
+        return _hex_sub(text)
+
+
+def _decode_part_bytes(payload: bytes, charset: Optional[str]) -> str:
     raw = payload or b""
-    # Quoted-printable left as text shows literal "=0A" (Uber etc.)
-    if b"=" in raw[:800] and (
-        b"=0A" in raw or b"=0D" in raw or b"=\n" in raw or b"=\r\n" in raw
-    ):
-        try:
-            raw = quopri.decodestring(raw)
-        except Exception:
-            pass
+    # Quoted-printable left as text shows literal "=0A" / "=0a" (Uber etc.)
+    if _looks_like_qp_bytes(raw):
+        raw = _quopri_bytes(raw)
+    text = ""
     for enc in ((charset or "").strip(), "utf-8", "latin-1"):
         if not enc:
             continue
         try:
-            return raw.decode(enc, errors="replace")
+            text = raw.decode(enc, errors="replace")
+            break
         except Exception:
             continue
-    return raw.decode("utf-8", errors="replace")
+    if not text:
+        text = raw.decode("utf-8", errors="replace")
+    return _fix_qp_text(text)
 
 
 def _extract_text(msg) -> str:
@@ -343,6 +401,13 @@ def _extract_text(msg) -> str:
             except Exception:
                 continue
             if not payload:
+                pl = part.get_payload(decode=False)
+                if isinstance(pl, str) and pl.strip():
+                    text = _fix_qp_text(pl).strip()
+                    if ctype == "text/plain":
+                        return text
+                    if ctype == "text/html" and not html_fallback:
+                        html_fallback = _strip_html_preview(text)
                 continue
             charset = part.get_content_charset() or "utf-8"
             if ctype == "text/plain":
@@ -355,12 +420,16 @@ def _extract_text(msg) -> str:
     try:
         payload = msg.get_payload(decode=True) or b""
         charset = msg.get_content_charset() or "utf-8"
-        text = _decode_part_bytes(payload, charset).strip()
+        if payload:
+            text = _decode_part_bytes(payload, charset).strip()
+        else:
+            pl = msg.get_payload(decode=False)
+            text = _fix_qp_text(str(pl or "")).strip()
         if (msg.get_content_type() or "").lower() == "text/html":
             return _strip_html_preview(text)
         return text
     except Exception:
-        return str(msg.get_payload())[:2000]
+        return _fix_qp_text(str(msg.get_payload())[:2000])
 
 
 def _fetch_payload_parts(msg_data) -> List[bytes]:
@@ -765,9 +834,24 @@ def make_email_page(on_back: Callable[[], None]) -> QWidget:
             acct.setText("No account")
 
     def _fill_list(messages: List[dict]) -> None:
-        state["messages"] = list(messages)
+        cleaned: List[dict] = []
+        dirty_cache = False
+        for msg in messages:
+            m = dict(msg)
+            body = str(m.get("body") or "")
+            snip = str(m.get("snippet") or "")
+            if body and _looks_like_qp_text(body):
+                m["body"] = _fix_qp_text(body)[:4000]
+                dirty_cache = True
+            if snip and _looks_like_qp_text(snip):
+                m["snippet"] = _snippet_text(snip)
+                dirty_cache = True
+            cleaned.append(m)
+        state["messages"] = cleaned
+        if dirty_cache:
+            _cache_set(cleaned, state["panel"])
         lst.clear()
-        if not messages:
+        if not cleaned:
             lst.hide()
             empty.show()
             status.setText("")
@@ -775,26 +859,26 @@ def make_email_page(on_back: Callable[[], None]) -> QWidget:
             return
         empty.hide()
         lst.show()
-        unread_n = sum(1 for m in messages if m.get("unread"))
-        status.setText(f"{unread_n} unread" if unread_n else f"{len(messages)} mail")
-        for msg in messages:
+        unread_n = sum(1 for m in cleaned if m.get("unread"))
+        status.setText(f"{unread_n} unread" if unread_n else f"{len(cleaned)} mail")
+        for msg in cleaned:
             item = QListWidgetItem(lst)
             row = MailRow(msg)
             item.setSizeHint(row.sizeHint())
             lst.addItem(item)
             lst.setItemWidget(item, row)
         lst.setCurrentRow(0)
-        _show_preview(messages[0])
+        _show_preview(cleaned[0])
 
     def _show_inbox() -> None:
         stack.setCurrentWidget(inbox)
         lst.setFocus(Qt.OtherFocusReason)
 
     def _reader_preview(msg: dict) -> str:
-        body = str(msg.get("body") or "").strip()
+        body = _fix_qp_text(str(msg.get("body") or "")).strip()
         if body:
             return body
-        snip = str(msg.get("snippet") or "").strip()
+        snip = _fix_qp_text(str(msg.get("snippet") or "")).strip()
         if snip.casefold() in _PLACEHOLDER_SNIPS:
             snip = ""
         if snip:
@@ -819,8 +903,11 @@ def make_email_page(on_back: Callable[[], None]) -> QWidget:
             r_body.setText(_reader_preview(msg))
             stack.setCurrentWidget(reader)
             r_back.setFocus(Qt.OtherFocusReason)
-            # Lazy body fetch via stable IMAP UID
-            if not str(msg.get("body") or "").strip() and msg.get("uid"):
+            # Lazy body fetch — also re-fetch if cache still has raw QP (=0A)
+            raw_body = str(msg.get("body") or "")
+            if msg.get("uid") and (
+                not raw_body.strip() or _looks_like_qp_text(raw_body)
+            ):
                 QTimer.singleShot(50, lambda m=msg: _fetch_body(m))
         except Exception as e:
             try:
@@ -830,6 +917,7 @@ def make_email_page(on_back: Callable[[], None]) -> QWidget:
                 pass
 
     def _apply_body(uid: str, text: str, err: str) -> None:
+        text = _fix_qp_text(text or "")
         snip = ""
         if text:
             snip = _snippet_text(text)
@@ -880,37 +968,35 @@ def make_email_page(on_back: Callable[[], None]) -> QWidget:
                 M = imaplib.IMAP4_SSL(host, 993)
                 M.login(user, password)
                 M.select(mailbox)
-                for spec in ("(BODY.PEEK[1])", "(BODY.PEEK[TEXT])"):
-                    typ, data = M.uid("fetch", uid_b, spec)
-                    payloads = _fetch_payload_parts(data)
-                    if typ != "OK" or not payloads:
-                        continue
-                    blob = payloads[0][:12000]
-                    if not blob or blob.strip().upper() == b"NIL":
-                        continue
-                    decoded = _decode_part_bytes(blob, "utf-8").strip()
-                    if not decoded:
-                        continue
-                    if re.search(r"(?i)<html|</p>|<br\s*/?>", decoded[:600]):
-                        decoded = _strip_html_preview(decoded)
-                    if decoded.lstrip().startswith("--") and "Content-Type:" in decoded[:200]:
-                        continue
-                    text = decoded
-                    if text:
-                        break
-                if not text:
-                    typ, data = M.uid("fetch", uid_b, "(RFC822)")
-                    payloads = _fetch_payload_parts(data)
-                    if typ == "OK" and payloads:
-                        raw = payloads[0][:200_000]
-                        text = _extract_text(email_lib.message_from_bytes(raw))
-                # Prefer full RFC822 parse when peek left QP artifacts
-                if text and ("=0A" in text or "=0D" in text or "=\n" in text):
-                    typ, data = M.uid("fetch", uid_b, "(RFC822)")
-                    payloads = _fetch_payload_parts(data)
-                    if typ == "OK" and payloads:
-                        raw = payloads[0][:200_000]
-                        text = _extract_text(email_lib.message_from_bytes(raw))
+                # Prefer full RFC822 parse — BODY.PEEK[1] often leaves raw QP
+                typ, data = M.uid("fetch", uid_b, "(RFC822)")
+                payloads = _fetch_payload_parts(data)
+                if typ == "OK" and payloads:
+                    raw = payloads[0][:200_000]
+                    text = _extract_text(email_lib.message_from_bytes(raw))
+                if not text or _looks_like_qp_text(text):
+                    for spec in ("(BODY.PEEK[1])", "(BODY.PEEK[TEXT])"):
+                        typ, data = M.uid("fetch", uid_b, spec)
+                        payloads = _fetch_payload_parts(data)
+                        if typ != "OK" or not payloads:
+                            continue
+                        blob = payloads[0][:12000]
+                        if not blob or blob.strip().upper() == b"NIL":
+                            continue
+                        decoded = _decode_part_bytes(blob, "utf-8").strip()
+                        if not decoded:
+                            continue
+                        if re.search(r"(?i)<html|</p>|<br\s*/?>", decoded[:600]):
+                            decoded = _strip_html_preview(decoded)
+                        if (
+                            decoded.lstrip().startswith("--")
+                            and "Content-Type:" in decoded[:200]
+                        ):
+                            continue
+                        text = decoded
+                        if text and not _looks_like_qp_text(text):
+                            break
+                text = _fix_qp_text(text or "")
                 try:
                     M.logout()
                 except Exception:

@@ -267,6 +267,7 @@ from esp_handset.shell import (  # noqa: E402
     APPS_APPS,
     ACCOUNTS_APPS,
     CALLS_APPS,
+    CAMERA_APPS,
     CLOCK_APPS,
     DEBUG_APPS,
     GAMES_APPS,
@@ -373,6 +374,10 @@ def build_app(bridge: Optional[EspBridge], modem: Optional[Sim7600]) -> PhoneShe
         shell.build_folder_keyed("folder_time", "Time", CLOCK_APPS),
     )
     shell.register_page(
+        "folder_camera",
+        shell.build_folder_keyed("folder_camera", "Camera", CAMERA_APPS),
+    )
+    shell.register_page(
         "folder_tools",
         shell.build_folder_keyed("folder_tools", "Tools", TOOLS_APPS),
     )
@@ -416,22 +421,11 @@ def build_app(bridge: Optional[EspBridge], modem: Optional[Sim7600]) -> PhoneShe
     from PyQt5.QtWidgets import QLineEdit, QPushButton, QVBoxLayout, QWidget
 
     def open_dial(number: str) -> None:
-        shell.go("phone")
-        page = shell.pages.get("phone")
-        if page is None:
+        """Contacts → Call: place the call immediately (same as redial)."""
+        num = str(number or "").strip()
+        if not num:
             return
-        setter = getattr(page, "set_dial_number", None)
-        if callable(setter):
-            setter(number)
-            return
-        for child in page.findChildren(QLineEdit):
-            if child.objectName() == "dialDisplay":
-                child.setText(number)
-                break
-        else:
-            for child in page.findChildren(QLineEdit):
-                child.setText(number)
-                break
+        calls.start_outbound(num)
 
     def open_sms_to(number: str) -> None:
         shell.go("messages")
@@ -480,6 +474,38 @@ def build_app(bridge: Optional[EspBridge], modem: Optional[Sim7600]) -> PhoneShe
         call_ui.make_call_log_page(back, on_redial=calls.start_outbound),
     )
     shell.register_page("camera", pages.make_camera_page(back, status))
+
+    # Radial Camera → mode trampolines (set mode, then replace with live page)
+    _CAM_MODE_KEYS = (
+        ("cam_photo", 0),
+        ("cam_timer3", 1),
+        ("cam_timer10", 2),
+        ("cam_video", 3),
+        ("cam_pano", 4),
+    )
+
+    def _camera_mode_trampoline(mode_i: int) -> QWidget:
+        from PyQt5.QtCore import QTimer
+
+        w = QWidget()
+
+        def _go() -> None:
+            page = shell.pages.get("camera")
+            setter = getattr(page, "set_camera_mode", None)
+            if callable(setter):
+                setter(mode_i)
+            shell.go("camera", replace=True)
+
+        def showEvent(e) -> None:  # noqa: N802
+            QWidget.showEvent(w, e)
+            QTimer.singleShot(0, _go)
+
+        w.showEvent = showEvent  # type: ignore[method-assign]
+        return w
+
+    for _ck, _mi in _CAM_MODE_KEYS:
+        shell.register_page(_ck, _camera_mode_trampoline(_mi))
+
     shell.register_page("gallery", pages.make_gallery_page(back, status))
     shell.register_page("gps", pages.make_gps_page(modem, back, status, get_modem=get_modem))
     shell.register_page("notes", pages.make_notes_page(back))
@@ -545,6 +571,7 @@ def build_app(bridge: Optional[EspBridge], modem: Optional[Sim7600]) -> PhoneShe
             pages.stub_page(
                 "Browser",
                 "Could not load in-Digivice browser.\n"
+                "Run Settings → Update, or:\n"
                 "sudo apt install python3-pyqt5.qtwebengine",
                 back,
             ),

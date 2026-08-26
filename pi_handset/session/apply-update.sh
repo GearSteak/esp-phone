@@ -395,6 +395,13 @@ elif ! command -v linphonecsh >/dev/null 2>&1 && [[ ! -x /usr/bin/linphonecsh ]]
     || log "WARN: apt install linphone-cli failed"
 fi
 
+# In-Digivice Browser (Qt WebEngine) — Settings→Update used to skip this
+log "Ensuring python3-pyqt5.qtwebengine (Browser)…"
+export DEBIAN_FRONTEND=noninteractive
+apt-get update -qq >>"$LOG" 2>&1 || true
+apt-get install -y python3-pyqt5.qtwebengine >>"$LOG" 2>&1 \
+  || log "WARN: apt install python3-pyqt5.qtwebengine failed — Browser needs it"
+
 # In-UI NES/GB/… cores — Settings→Update never fetched these before
 if [[ -f "$PREFIX/session/ensure-libretro-cores.sh" ]]; then
   install -m 755 "$PREFIX/session/ensure-libretro-cores.sh" /usr/local/bin/digivice-libretro-cores

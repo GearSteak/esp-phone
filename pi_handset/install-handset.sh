@@ -21,7 +21,7 @@ fi
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
 apt-get install -y \
-  python3 python3-pip python3-pyqt5 python3-serial \
+  python3 python3-pip python3-pyqt5 python3-pyqt5.qtwebengine python3-serial \
   python3-uinput \
   python3-smbus \
   i2c-tools \

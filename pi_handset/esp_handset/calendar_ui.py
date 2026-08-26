@@ -139,11 +139,12 @@ class GCalMonth(QWidget):
                 evs = self._by_day.get(day, [])
 
                 cx = x + cell_w / 2
-                cy = y + 10
+                cy = y + min(10.0, cell_h * 0.35)
+                disc_r = min(9.0, max(6.0, cell_w * 0.42))
 
                 # Today / selected disc (Google style)
                 if is_today or sel:
-                    disc = QRectF(cx - 9, cy - 9, 18, 18)
+                    disc = QRectF(cx - disc_r, cy - disc_r, disc_r * 2, disc_r * 2)
                     if is_today and sel:
                         p.setBrush(QColor(_BLUE))
                         p.setPen(Qt.NoPen)
@@ -162,27 +163,27 @@ class GCalMonth(QWidget):
                 else:
                     p.setPen(QColor(_TEXT))
 
-                p.setFont(QFont("DejaVu Sans", 8, QFont.DemiBold))
+                p.setFont(QFont("DejaVu Sans", 7 if cell_w < 22 else 8, QFont.DemiBold))
                 p.drawText(
                     int(x),
                     int(y),
                     int(cell_w),
-                    20,
+                    int(min(20.0, cell_h * 0.55)),
                     Qt.AlignHCenter | Qt.AlignVCenter,
                     str(day),
                 )
 
                 # Event dots under the number
                 if evs:
-                    dot_y = y + min(cell_h - 6, 24)
+                    dot_y = y + min(cell_h - 6, max(18.0, cell_h * 0.7))
                     n = min(3, len(evs))
-                    total = n * 6 + (n - 1) * 2
+                    total = n * 5 + (n - 1) * 2
                     start = cx - total / 2
                     for i in range(n):
                         col = QColor(_color_for(str(evs[i].get("title", ""))))
                         p.setBrush(col)
                         p.setPen(Qt.NoPen)
-                        p.drawEllipse(QRectF(start + i * 8, dot_y, 5, 5))
+                        p.drawEllipse(QRectF(start + i * 7, dot_y, 4, 4))
 
 
 def make_calendar_page(on_back: Callable[[], None]) -> QWidget:
@@ -213,6 +214,10 @@ def make_calendar_page(on_back: Callable[[], None]) -> QWidget:
     grid = GCalMonth()
     from PyQt5.QtWidgets import QScrollArea
 
+    # Month (left) + events sideboard (right) — events never cover the dates
+    split = QHBoxLayout()
+    split.setSpacing(4)
+
     grid_scroll = QScrollArea()
     grid_scroll.setWidgetResizable(False)
     grid_scroll.setFrameShape(QFrame.NoFrame)
@@ -220,55 +225,93 @@ def make_calendar_page(on_back: Callable[[], None]) -> QWidget:
     grid_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
     grid_scroll.setStyleSheet(
         "QScrollArea { background: transparent; border: none; }"
-        "QScrollBar:vertical { width: 10px; background: #202124; }"
+        "QScrollBar:vertical { width: 8px; background: #202124; }"
         "QScrollBar::handle:vertical { background: #5a6570; min-height: 24px; border-radius: 3px; }"
     )
-    grid.setFixedWidth(220)
-    grid.setMinimumHeight(168)
+    grid.setFixedWidth(124)
+    grid.setMinimumHeight(120)
     grid_scroll.setWidget(grid)
-    grid_scroll.setFixedHeight(150)
-    root.addWidget(grid_scroll, 0)
 
-    # Agenda header (selected day)
-    agenda_head = QLabel("")
-    agenda_head.setStyleSheet(
-        f"font-size:11px; font-weight:700; color:{_BLUE}; padding:2px 2px 0 2px;"
+    def _fit_grid() -> None:
+        # Never force taller than the viewport — that pushes the bottom bar off-screen
+        h = max(120, grid_scroll.viewport().height())
+        if grid.height() != h:
+            grid.setFixedHeight(h)
+
+    def _on_scroll_resize(ev) -> None:  # noqa: ANN001
+        QScrollArea.resizeEvent(grid_scroll, ev)
+        _fit_grid()
+
+    grid_scroll.resizeEvent = _on_scroll_resize  # type: ignore[method-assign]
+    split.addWidget(grid_scroll, 1)
+
+    right = QWidget()
+    right.setFixedWidth(108)
+    right_lay = QVBoxLayout(right)
+    right_lay.setContentsMargins(0, 0, 0, 0)
+    right_lay.setSpacing(0)
+
+    side = QFrame()
+    side.setStyleSheet(
+        f"QFrame {{ background:{_SURFACE}; border-radius:8px; }}"
     )
-    root.addWidget(agenda_head)
+    side_lay = QVBoxLayout(side)
+    side_lay.setContentsMargins(4, 4, 4, 4)
+    side_lay.setSpacing(2)
+
+    agenda_head = QLabel("")
+    agenda_head.setWordWrap(True)
+    agenda_head.setStyleSheet(
+        f"font-size:10px; font-weight:700; color:{_BLUE}; padding:0 1px 2px 1px;"
+    )
+    side_lay.addWidget(agenda_head)
 
     lst = QListWidget()
     lst.setFocusPolicy(Qt.StrongFocus)
+    lst.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+    lst.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+    lst.setTextElideMode(Qt.ElideRight)
+    lst.setWordWrap(True)
     lst.setStyleSheet(
-        f"QListWidget {{ background:{_SURFACE}; border:none; border-radius:8px;"
-        f" font-size:11px; outline:none; color:{_TEXT}; }}"
-        "QListWidget::item { padding:6px 8px; border-bottom:1px solid #3c4043; }"
+        f"QListWidget {{ background:transparent; border:none;"
+        f" font-size:10px; outline:none; color:{_TEXT}; }}"
+        "QListWidget::item { padding:5px 4px; border-bottom:1px solid #3c4043; }"
         f"QListWidget::item:selected {{ background:{_BLUE_DIM}; color:{_TEXT}; }}"
-        'QListWidget[digiFocus="1"] { border:2px solid #FFE600; }'
+        'QListWidget[digiFocus="1"] { border:2px solid #FFE600; border-radius:6px; }'
+        "QScrollBar:horizontal { height: 0px; }"
+        "QScrollBar:vertical { width: 8px; background: #202124; }"
+        "QScrollBar::handle:vertical { background: #5a6570; min-height: 20px; border-radius: 3px; }"
     )
-    root.addWidget(lst, 1)
+    side_lay.addWidget(lst, 1)
+    right_lay.addWidget(side, 1)
 
     editor = QFrame()
     editor.setStyleSheet(
         f"QFrame {{ background:{_SURFACE}; border-radius:8px; }}"
     )
     e_lay = QVBoxLayout(editor)
-    e_lay.setContentsMargins(8, 6, 8, 6)
+    e_lay.setContentsMargins(6, 6, 6, 6)
     e_lay.setSpacing(4)
     title_in = QLineEdit()
     title_in.setPlaceholderText("Add title")
     title_in.setStyleSheet(
-        f"font-size:12px; padding:6px; background:#3c4043; color:{_TEXT};"
+        f"font-size:11px; padding:5px; background:#3c4043; color:{_TEXT};"
         " border:none; border-radius:6px;"
     )
     e_lay.addWidget(title_in)
     e_row = QHBoxLayout()
+    e_row.setSpacing(4)
     save_btn = _btn("Save", primary=True)
     cancel_btn = _btn("Cancel")
     e_row.addWidget(save_btn)
     e_row.addWidget(cancel_btn)
     e_lay.addLayout(e_row)
+    e_lay.addStretch(1)
     editor.hide()
-    root.addWidget(editor)
+    right_lay.addWidget(editor, 1)
+
+    split.addWidget(right, 0)
+    root.addLayout(split, 1)
 
     # Bottom bar: day step + actions (Google-ish)
     bar = QHBoxLayout()
@@ -324,7 +367,7 @@ def make_calendar_page(on_back: Callable[[], None]) -> QWidget:
             if str(e.get("date", ""))[:10] != key:
                 continue
             title = e.get("title") or "Event"
-            item = QListWidgetItem(f"  {title}")
+            item = QListWidgetItem(str(title))
             item.setData(Qt.UserRole, e)
             item.setForeground(QColor(_color_for(title)))
             lst.addItem(item)
@@ -339,8 +382,7 @@ def make_calendar_page(on_back: Callable[[], None]) -> QWidget:
     def show_editor(show: bool) -> None:
         state["edit"] = show
         editor.setVisible(show)
-        lst.setVisible(not show)
-        agenda_head.setVisible(not show)
+        side.setVisible(not show)
         for w in (day_prev, day_next, today_btn, del_btn, sync_btn, add_btn):
             w.setVisible(not show)
         if show:
@@ -435,26 +477,27 @@ def make_calendar_page(on_back: Callable[[], None]) -> QWidget:
 
     page = page_chrome("Calendar", body, None, scroll=False)
 
-    def digi_move_h(delta: int) -> bool:
+    # Stick on the month grid: L/R change day, Up scrolls/week-back.
+    # Down returns False so focus can leave the grid → events list → bottom buttons.
+    def grid_move_h(delta: int) -> bool:
         nudge(delta)
         return True
 
-    def digi_move_v(delta: int) -> bool:
+    def grid_move_v(delta: int) -> bool:
+        if delta > 0:
+            return False
         bar = grid_scroll.verticalScrollBar()
         if bar.maximum() > bar.minimum():
             step = max(18, bar.singleStep() * 2)
             bar.setValue(bar.value() + int(delta) * step)
             return True
-        # No overflow — step a week of days
-        nudge(7 if delta > 0 else -7)
+        nudge(-7)
         return True
 
-    def digi_pad_active() -> bool:
-        return not state["edit"]
-
-    page.digi_move_h = digi_move_h  # type: ignore[attr-defined]
-    page.digi_move_v = digi_move_v  # type: ignore[attr-defined]
-    page.digi_pad_active = digi_pad_active  # type: ignore[attr-defined]
+    grid.move_h = grid_move_h  # type: ignore[attr-defined]
+    grid.move_v = grid_move_v  # type: ignore[attr-defined]
+    # Do NOT set page digi_pad_active / digi_move_* — those trapped focus on the grid
+    # and made Today / Del / Sync / ＋ unreachable.
     page.digi_seek = lambda _d: False  # type: ignore[attr-defined]
     page.digi_seek_active = lambda: False  # type: ignore[attr-defined]
     refresh()

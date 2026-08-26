@@ -204,9 +204,10 @@ def ensure_rom_dir(sys: EmuSystem) -> Path:
         tip = covers / "README.txt"
         if not tip.is_file():
             tip.write_text(
-                f"Drop cover art here as <rom-stem>.png or .jpg\n"
-                f"Example: SuperMario.sfc → SuperMario.png\n"
-                f"Also accepted beside the ROM file.\n",
+                f"Cover art for {sys.title}.\n"
+                f"Digivice: open this emulator → Covers (libretro download).\n"
+                f"Or drop <rom-stem>.png / .jpg here (same name as the ROM).\n"
+                f"Example: SuperMario.sfc → SuperMario.png\n",
                 encoding="utf-8",
             )
     except OSError:
@@ -1156,7 +1157,7 @@ def make_emu_page(
     status.setWordWrap(True)
     status.setStyleSheet("color:#ffe66d;font-size:10px;font-weight:700;")
     tip = QLabel(
-        "←→ covers · Confirm play · ↑↓ buttons\n"
+        "←→ covers · Confirm play · Covers=box art sync\n"
         "In-game: Confirm=A Back=B · hold all three to quit"
         if ok_be
         else f"{be_msg}\nROMs work after Settings → Update"
@@ -1181,6 +1182,9 @@ def make_emu_page(
     recv = QPushButton("Wi‑Fi")
     recv.setFixedHeight(26)
     recv.setToolTip("Receive ROMs over Wi‑Fi")
+    covers_btn = QPushButton("Covers")
+    covers_btn.setFixedHeight(26)
+    covers_btn.setToolTip("Download box art from libretro (needs Wi‑Fi)")
     refresh = QPushButton("↻")
     refresh.setFixedHeight(26)
     refresh.setFixedWidth(32)
@@ -1189,7 +1193,8 @@ def make_emu_page(
     row = QHBoxLayout()
     row.setSpacing(3)
     row.addWidget(play, 2)
-    row.addWidget(delete_btn, 2)
+    row.addWidget(delete_btn, 1)
+    row.addWidget(covers_btn, 1)
     row.addWidget(recv, 1)
     row.addWidget(refresh, 0)
 
@@ -1203,7 +1208,7 @@ def make_emu_page(
     stack.addWidget(list_page)
     stack.addWidget(play_view)
 
-    state = {"playing": False, "delete_armed": False, "delete_path": ""}
+    state = {"playing": False, "delete_armed": False, "delete_path": "", "cover_busy": False}
 
     def chrome_back() -> None:
         if state["playing"] and play_view.playing:
@@ -1329,6 +1334,62 @@ def make_emu_page(
         else:
             status.setText("Open Tools → Transfer · ROMs")
 
+    def do_covers() -> None:
+        """Pull Named_Boxarts from thumbnails.libretro.com for local ROMs."""
+        _disarm_delete()
+        if state["cover_busy"]:
+            status.setText("Cover sync already running…")
+            return
+        roms = [p for p in list_roms(system) if p.is_file()]
+        if not roms:
+            status.setText("No ROMs to cover — Wi‑Fi transfer first")
+            return
+
+        class _CoverWorker(QThread):
+            progress = pyqtSignal(int, int, str)
+            finished_ok = pyqtSignal(int, int, int)
+
+            def run(self) -> None:  # noqa: N802
+                from esp_handset.cover_sync import sync_covers
+
+                def prog(i: int, n: int, name: str) -> None:
+                    self.progress.emit(i, n, name)
+
+                got, had, fail = sync_covers(
+                    roms,
+                    system_key=system.key,
+                    folder=system.folder,
+                    data_root=DATA,
+                    overwrite=False,
+                    on_progress=prog,
+                )
+                self.finished_ok.emit(got, had, fail)
+
+        worker = _CoverWorker()
+        state["cover_busy"] = True
+        covers_btn.setEnabled(False)
+        status.setText(f"Cover sync 0/{len(roms)}…")
+
+        def on_prog(i: int, n: int, name: str) -> None:
+            short = name if len(name) <= 22 else name[:19] + "…"
+            status.setText(f"Cover sync {i}/{n} · {short}")
+
+        def on_done(got: int, had: int, fail: int) -> None:
+            state["cover_busy"] = False
+            covers_btn.setEnabled(True)
+            status.setText(
+                f"Covers: {got} new · {had} kept · {fail} miss"
+            )
+            refresh_list()
+            QTimer.singleShot(0, _focus_shelf)
+            worker.deleteLater()
+
+        worker.progress.connect(on_prog)
+        worker.finished_ok.connect(on_done)
+        worker.start()
+        # Keep a ref so the thread is not GC'd
+        chrome._cover_worker = worker  # type: ignore[attr-defined]
+
     def on_hardware_back() -> bool:
         if stack.currentWidget() is play_view:
             if play_view.playing:
@@ -1353,6 +1414,7 @@ def make_emu_page(
     shelf.index_changed.connect(_on_shelf_index)
     play.clicked.connect(launch)
     delete_btn.clicked.connect(do_delete)
+    covers_btn.clicked.connect(do_covers)
     refresh.clicked.connect(refresh_list)
     recv.clicked.connect(do_receive)
 

@@ -90,7 +90,7 @@ log "apt: packages…"
 apt-get update -qq 2>&1 | tee -a "$LOG" | tail -n 5
 apt-get install -y \
   git \
-  python3 python3-pip python3-pyqt5 python3-serial \
+  python3 python3-pip python3-pyqt5 python3-pyqt5.qtwebengine python3-serial \
   python3-uinput python3-smbus python3-rpi.gpio python3-lgpio \
   python3-spidev python3-pil python3-mss \
   imagemagick \
@@ -98,6 +98,11 @@ apt-get install -y \
   wmctrl fonts-dejavu-core \
   alsa-utils \
   2>&1 | tee -a "$LOG" | tail -n 20
+
+# In-Digivice Browser — separate so a missing WebEngine pkg can't skip the rest
+log "apt: python3-pyqt5.qtwebengine (Browser)…"
+apt-get install -y python3-pyqt5.qtwebengine 2>&1 | tee -a "$LOG" | tail -n 20 \
+  || log "WARN: python3-pyqt5.qtwebengine apt failed — Browser will show install hint"
 
 # VoIP — separate apt so a failed GPIO/imagemagick pkg can't skip Linphone
 log "apt: linphone-cli (VoIP)…"

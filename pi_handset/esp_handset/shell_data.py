@@ -19,7 +19,7 @@ HOME_APPS: List[AppEntry] = [
     AppEntry("calls", "Calls", "Phone · contacts", "☎"),
     AppEntry("sms", "SMS", "Texts · LoRa", "✉"),
     AppEntry("time", "Time", "Alarms · calendar", "⏱"),
-    AppEntry("camera", "Camera", "Snap · preview", "◉"),
+    AppEntry("camera", "Camera", "Photo · video · pano", "◉"),
     AppEntry("browser", "Browser", "Open web", "⎋"),
     AppEntry("media", "Media", "Gallery · notes · GPS", "▶"),
     AppEntry("email", "Email", "Gmail · Inbox", "@"),
@@ -46,6 +46,15 @@ CLOCK_APPS = [
     AppEntry("calendar", "Calendar", "Events", "▦"),
 ]
 TIME_APPS = CLOCK_APPS
+
+# Camera folder (home → Camera): modes, then live preview
+CAMERA_APPS = [
+    AppEntry("cam_photo", "Photo", "Still shot", "◉"),
+    AppEntry("cam_timer3", "Timer 3s", "Countdown", "⏱"),
+    AppEntry("cam_timer10", "Timer 10s", "Countdown", "⌛"),
+    AppEntry("cam_video", "Video", "Record clip", "▶"),
+    AppEntry("cam_pano", "Panorama", "Stitch shots", "▣"),
+]
 
 TOOLS_APPS = [
     AppEntry("wifi_transfer", "Transfer", "Send & get · Wi‑Fi", "⇅"),
@@ -138,6 +147,7 @@ FOLDER_MAP = {
     "calls": ("folder_calls", "Calls", CALLS_APPS),
     "sms": ("folder_sms", "SMS", SMS_APPS),
     "time": ("folder_time", "Time", TIME_APPS),
+    "camera": ("folder_camera", "Camera", CAMERA_APPS),
     "tools": ("folder_tools", "Tools", TOOLS_APPS),
     "settings": ("folder_settings", "Settings", SETTINGS_APPS),
     "media": ("folder_media", "Media", MEDIA_APPS),

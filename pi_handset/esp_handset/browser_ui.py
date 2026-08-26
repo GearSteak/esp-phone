@@ -37,7 +37,7 @@ def make_browser_page(on_back: Callable[[], None]) -> QWidget:
     if not webengine_available():
         msg = QLabel(
             "Embedded browser needs Qt WebEngine.\n\n"
-            "On the Pi run:\n"
+            "Run Settings → Update (or on the Pi):\n"
             "  sudo apt install python3-pyqt5.qtwebengine\n\n"
             "Then reopen Browser."
         )
