@@ -16,9 +16,8 @@ from typing import Callable, Dict, List, Optional, Set, Tuple
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QObject, QSize, QTimer
 from PyQt5.QtGui import QImage, QPixmap, QKeyEvent
 from PyQt5.QtWidgets import (
+    QHBoxLayout,
     QLabel,
-    QListWidget,
-    QListWidgetItem,
     QPushButton,
     QSizePolicy,
     QStackedWidget,
@@ -27,6 +26,12 @@ from PyQt5.QtWidgets import (
 )
 
 from esp_handset.pages import page_chrome
+from esp_handset.rom_shelf import (
+    RomShelf,
+    build_entries,
+    delete_rom_files,
+    rom_deletable,
+)
 
 DATA = Path.home() / ".esp-handset"
 
@@ -193,6 +198,19 @@ def system_rom_dirs(sys: EmuSystem) -> List[Path]:
 def ensure_rom_dir(sys: EmuSystem) -> Path:
     d = DATA / "roms" / sys.folder
     d.mkdir(parents=True, exist_ok=True)
+    covers = d / "covers"
+    try:
+        covers.mkdir(parents=True, exist_ok=True)
+        tip = covers / "README.txt"
+        if not tip.is_file():
+            tip.write_text(
+                f"Drop cover art here as <rom-stem>.png or .jpg\n"
+                f"Example: SuperMario.sfc → SuperMario.png\n"
+                f"Also accepted beside the ROM file.\n",
+                encoding="utf-8",
+            )
+    except OSError:
+        pass
     return d
 
 
@@ -1130,54 +1148,62 @@ def make_emu_page(
 ) -> QWidget:
     list_page = QWidget()
     lay = QVBoxLayout(list_page)
-    lay.setContentsMargins(2, 2, 2, 2)
+    lay.setContentsMargins(2, 1, 2, 2)
     lay.setSpacing(2)
 
     ok_be, be_msg = backend_status(system)
-    extra = f"\n{system.tip_extra}" if system.tip_extra else ""
-    tip = QLabel(
-        (
-            f"{be_msg}{extra}\n"
-            "Confirm on a ROM to play · Play button also works\n"
-            "In-game: Confirm=A · Back=B · Home=Start · Select=Select\n"
-            "Hold Confirm+Back+Home (~0.5s) to quit"
-        )
-        if ok_be
-        else f"{be_msg}\nROMs still work after: Settings → Update"
-    )
-    tip.setWordWrap(True)
-    tip.setStyleSheet("color:#9ab;font-size:9px;")
     status = QLabel("")
     status.setWordWrap(True)
-    status.setStyleSheet("color:#ffe66d;font-size:11px;font-weight:700;")
-    lst = QListWidget()
-    lst.setFocusPolicy(Qt.StrongFocus)
-    lst.setStyleSheet(
-        "QListWidget { background: transparent; border: none; }"
-        "QListWidget::item { padding: 4px; min-height: 22px; }"
-        "QListWidget::item:selected { background:#FFE600; color:#000; }"
+    status.setStyleSheet("color:#ffe66d;font-size:10px;font-weight:700;")
+    tip = QLabel(
+        "←→ covers · Confirm play · ↑↓ buttons\n"
+        "In-game: Confirm=A Back=B · hold all three to quit"
+        if ok_be
+        else f"{be_msg}\nROMs work after Settings → Update"
     )
+    tip.setWordWrap(True)
+    tip.setStyleSheet("color:#9ab;font-size:8px;")
+
+    shelf = RomShelf(system_key=system.key, glyph=system.glyph)
+    shelf.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+
     play = QPushButton("Play")
-    play.setFixedHeight(28)
+    play.setFixedHeight(26)
     play.setStyleSheet("font-weight:800;")
     play.setEnabled(False)
-    recv = QPushButton("Receive ROMs (Wi‑Fi)")
+    delete_btn = QPushButton("Delete")
+    delete_btn.setFixedHeight(26)
+    delete_btn.setEnabled(False)
+    delete_btn.setStyleSheet(
+        "QPushButton { color:#fcc; font-weight:700; }"
+        'QPushButton[digiFocus="1"] { border:2px solid #FFE600; }'
+    )
+    recv = QPushButton("Wi‑Fi")
     recv.setFixedHeight(26)
-    refresh = QPushButton("Reload")
-    refresh.setFixedHeight(24)
-    lay.addWidget(tip)
+    recv.setToolTip("Receive ROMs over Wi‑Fi")
+    refresh = QPushButton("↻")
+    refresh.setFixedHeight(26)
+    refresh.setFixedWidth(32)
+    refresh.setToolTip("Reload ROM list")
+
+    row = QHBoxLayout()
+    row.setSpacing(3)
+    row.addWidget(play, 2)
+    row.addWidget(delete_btn, 2)
+    row.addWidget(recv, 1)
+    row.addWidget(refresh, 0)
+
     lay.addWidget(status)
-    lay.addWidget(lst, 1)
-    lay.addWidget(play)
-    lay.addWidget(recv)
-    lay.addWidget(refresh)
+    lay.addWidget(shelf, 1)
+    lay.addWidget(tip)
+    lay.addLayout(row)
 
     play_view = EmuPlayView(system, on_quit=lambda: None)
     stack = QStackedWidget()
     stack.addWidget(list_page)
     stack.addWidget(play_view)
 
-    state = {"playing": False}
+    state = {"playing": False, "delete_armed": False, "delete_path": ""}
 
     def chrome_back() -> None:
         if state["playing"] and play_view.playing:
@@ -1189,27 +1215,45 @@ def make_emu_page(
 
     chrome = page_chrome(system.title, stack, chrome_back, scroll=False)
 
+    def _disarm_delete() -> None:
+        state["delete_armed"] = False
+        state["delete_path"] = ""
+        delete_btn.setText("Delete")
+
     def show_list() -> None:
         state["playing"] = False
+        _disarm_delete()
         play_view.stop()
         stack.setCurrentWidget(list_page)
         refresh_list()
-        QTimer.singleShot(0, _focus_rom_list)
+        QTimer.singleShot(0, _focus_shelf)
 
     def show_play() -> None:
         state["playing"] = True
+        _disarm_delete()
         play_view._surface = True
         stack.setCurrentWidget(play_view)
         play_view.setFocus(Qt.OtherFocusReason)
 
     play_view._on_quit = show_list  # type: ignore[method-assign]
 
+    def _update_actions() -> None:
+        cur = shelf.current()
+        play.setEnabled(cur is not None)
+        can_del = bool(
+            cur is not None
+            and not cur.from_cart
+            and rom_deletable(cur.path, DATA)
+        )
+        delete_btn.setEnabled(can_del)
+        if not can_del:
+            _disarm_delete()
+
     def refresh_list() -> None:
-        lst.clear()
+        _disarm_delete()
         cart_entries = _cart_games_for_system(system)
         roms = list_roms(system)
         ok, msg = backend_status(system)
-        play.setEnabled(bool(roms))
         folder = ensure_rom_dir(system)
         if cart_entries:
             try:
@@ -1219,36 +1263,34 @@ def make_emu_page(
                 cart_name = c.title if c else "Cart"
             except Exception:
                 cart_name = "Cart"
-            status.setText(f"{msg}\n{len(roms)} from cart · {cart_name}")
+            status.setText(f"{msg} · {len(roms)} cart · {cart_name}")
+            entries = build_entries(
+                roms,
+                folder=system.folder,
+                data_root=DATA,
+                cart_titles=cart_entries,
+            )
         else:
-            status.setText(f"{msg}\n{len(roms)} ROM(s) · {folder.name}/")
+            status.setText(f"{msg} · {len(roms)} in {folder.name}/")
+            entries = build_entries(roms, folder=system.folder, data_root=DATA)
         if not ok and not system.builtin:
             _kick_libretro_cores()
-        if not roms:
-            empty = QListWidgetItem("No ROMs yet\n→ Receive ROMs (Wi‑Fi)")
-            empty.setFlags(Qt.NoItemFlags)
-            lst.addItem(empty)
-            return
-        if cart_entries:
-            for title, p in cart_entries:
-                item = QListWidgetItem(title)
-                item.setData(Qt.UserRole, str(p))
-                lst.addItem(item)
-        else:
-            for p in roms:
-                item = QListWidgetItem(p.name)
-                item.setData(Qt.UserRole, str(p))
-                lst.addItem(item)
-        if lst.currentRow() < 0:
-            lst.setCurrentRow(0)
+        prev = shelf.current_path()
+        idx = 0
+        if prev is not None:
+            for i, e in enumerate(entries):
+                if e.path == prev:
+                    idx = i
+                    break
+        shelf.set_entries(entries, index=idx)
+        _update_actions()
 
     def launch() -> None:
-        item = lst.currentItem()
-        path = item.data(Qt.UserRole) if item is not None else None
-        if not path:
-            status.setText("Pick a ROM first")
+        _disarm_delete()
+        rom = shelf.current_path()
+        if rom is None:
+            status.setText("No ROM selected")
             return
-        rom = Path(str(path))
         if not rom.is_file():
             status.setText("ROM missing")
             return
@@ -1258,7 +1300,30 @@ def make_emu_page(
         play_view.screen.setText(f"Loading\n{rom.name}")
         play_view.start_rom(rom)
 
+    def do_delete() -> None:
+        cur = shelf.current()
+        if cur is None:
+            return
+        if cur.from_cart or not rom_deletable(cur.path, DATA):
+            status.setText("Can't delete cart / system ROMs")
+            return
+        path = cur.path
+        key = str(path)
+        if not state["delete_armed"] or state["delete_path"] != key:
+            state["delete_armed"] = True
+            state["delete_path"] = key
+            delete_btn.setText("Sure?")
+            status.setText(f"Delete {cur.title}? Press Delete again")
+            return
+        ok, msg = delete_rom_files(path, DATA, system.folder)
+        _disarm_delete()
+        status.setText(msg)
+        _emu_log(f"delete {system.key} {path.name} ok={ok}")
+        refresh_list()
+        QTimer.singleShot(0, _focus_shelf)
+
     def do_receive() -> None:
+        _disarm_delete()
         if on_receive is not None:
             on_receive()
         else:
@@ -1270,33 +1335,41 @@ def make_emu_page(
                 return True
             show_list()
             return True
+        if state["delete_armed"]:
+            _disarm_delete()
+            status.setText("Delete canceled")
+            return True
         return False
 
     def on_navigate_away() -> None:
         if state["playing"] or stack.currentWidget() is play_view or play_view.playing:
             show_list()
 
-    lst.itemActivated.connect(lambda _i: launch())
+    def _on_shelf_index(_i: int) -> None:
+        _disarm_delete()
+        _update_actions()
+
+    shelf.activated.connect(launch)
+    shelf.index_changed.connect(_on_shelf_index)
     play.clicked.connect(launch)
+    delete_btn.clicked.connect(do_delete)
     refresh.clicked.connect(refresh_list)
     recv.clicked.connect(do_receive)
 
-    def _focus_rom_list() -> None:
+    def _focus_shelf() -> None:
         if state["playing"] or stack.currentWidget() is not list_page:
             return
         from esp_handset import digi_nav
 
         digi_nav.clear_highlights(chrome)
-        lst.setFocus(Qt.OtherFocusReason)
-        digi_nav._highlight(lst, True)
-        if lst.count() > 0 and lst.currentRow() < 0:
-            lst.setCurrentRow(0)
+        shelf.setFocus(Qt.OtherFocusReason)
+        digi_nav._highlight(shelf, True)
 
     def on_page_show() -> None:
         if state["playing"]:
             return
         refresh_list()
-        QTimer.singleShot(0, _focus_rom_list)
+        QTimer.singleShot(0, _focus_shelf)
 
     chrome.on_hardware_back = on_hardware_back  # type: ignore[attr-defined]
     chrome.on_navigate_away = on_navigate_away  # type: ignore[attr-defined]
