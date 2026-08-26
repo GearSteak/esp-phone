@@ -17,7 +17,7 @@ import os
 from typing import List, Optional, Tuple
 
 from PyQt5.QtCore import Qt, QTimer, QPoint, QEvent, QRect
-from PyQt5.QtGui import QPainter, QImage, QGuiApplication, QMouseEvent
+from PyQt5.QtGui import QPainter, QImage, QGuiApplication, QMouseEvent, QWheelEvent
 from PyQt5.QtWidgets import QWidget, QApplication, QMainWindow
 
 
@@ -111,6 +111,7 @@ class ScaledScreenHost(QWidget):
             Qt.Window | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint
         )
         self.setFocusPolicy(Qt.StrongFocus)
+        self.setMouseTracking(True)
         try:
             self.setCursor(Qt.BlankCursor)
         except Exception:
@@ -155,25 +156,63 @@ class ScaledScreenHost(QWidget):
     def mouseReleaseEvent(self, event) -> None:  # noqa: N802
         self._map_mouse(event, False)
 
-    def _map_mouse(self, event, press: bool) -> None:
+    def mouseMoveEvent(self, event) -> None:  # noqa: N802
+        self._map_mouse(event, None)
+
+    def wheelEvent(self, event) -> None:  # noqa: N802
         src = self._source
         if src is None:
             return
+        local, target = self._map_point(event.pos())
+        if local is None or target is None:
+            return
+        we = QWheelEvent(
+            local,
+            event.globalPos(),
+            event.pixelDelta(),
+            event.angleDelta(),
+            event.buttons(),
+            event.modifiers(),
+            event.phase(),
+            event.inverted(),
+        )
+        QApplication.sendEvent(target, we)
+
+    def _map_point(self, pos):
+        src = self._source
+        if src is None:
+            return None, None
         tw, th = max(1, self.width()), max(1, self.height())
         sw, sh = max(1, src.width()), max(1, src.height())
         scale = min(tw / sw, th / sh)
         dw, dh = int(sw * scale), int(sh * scale)
         ox, oy = (tw - dw) // 2, (th - dh) // 2
-        x, y = event.x() - ox, event.y() - oy
+        x, y = pos.x() - ox, pos.y() - oy
         if x < 0 or y < 0 or x >= dw or y >= dh:
-            return
+            return None, None
         local = QPoint(int(x / scale), int(y / scale))
         child = src.childAt(local)
         target = child if child is not None else src
-        # Event coords must be local to the receiving widget (not source top-left)
-        pos = target.mapFrom(src, local) if child is not None else local
-        et = QEvent.MouseButtonPress if press else QEvent.MouseButtonRelease
-        me = QMouseEvent(et, pos, event.button(), event.buttons(), event.modifiers())
+        mapped = target.mapFrom(src, local) if child is not None else local
+        return mapped, target
+
+    def _map_mouse(self, event, press) -> None:
+        """press True/False for button events; None for move."""
+        src = self._source
+        if src is None:
+            return
+        local, target = self._map_point(event.pos())
+        if local is None or target is None:
+            return
+        if press is None:
+            et = QEvent.MouseMove
+        elif press:
+            et = QEvent.MouseButtonPress
+        else:
+            et = QEvent.MouseButtonRelease
+        me = QMouseEvent(
+            et, local, event.button(), event.buttons(), event.modifiers()
+        )
         QApplication.sendEvent(target, me)
 
     def paintEvent(self, _event) -> None:  # noqa: N802

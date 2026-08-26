@@ -100,9 +100,9 @@ def page_chrome(
         area.setFrameShape(QFrame.NoFrame)
         area.setStyleSheet(
             "QScrollArea { background: transparent; border: none; }"
-            "QScrollBar:vertical { width: 8px; background: #121820; margin: 0; }"
+            "QScrollBar:vertical { width: 14px; background: #121820; margin: 0; }"
             "QScrollBar::handle:vertical {"
-            "  background: #4a6a88; min-height: 28px; border-radius: 3px; }"
+            "  background: #6a8aaa; min-height: 32px; border-radius: 4px; }"
             "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }"
         )
         body.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)

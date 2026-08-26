@@ -7,6 +7,7 @@ from typing import List, Optional, Tuple
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (
     QAbstractButton,
+    QAbstractScrollArea,
     QAbstractSpinBox,
     QApplication,
     QCheckBox,
@@ -15,6 +16,7 @@ from PyQt5.QtWidgets import (
     QListWidget,
     QPlainTextEdit,
     QScrollArea,
+    QScrollBar,
     QSlider,
     QTextEdit,
     QWidget,
@@ -32,6 +34,8 @@ _FOCUS_TYPES = (
     QAbstractSpinBox,
     QSlider,
 )
+
+_SCROLL_STEP = 36
 
 
 def _usable(w: QWidget) -> bool:
@@ -136,6 +140,81 @@ def ensure_visible(w: Optional[QWidget]) -> None:
         p = p.parentWidget()
 
 
+def _bar_can_move(bar: Optional[QScrollBar], delta: int) -> bool:
+    if bar is None:
+        return False
+    if bar.maximum() <= bar.minimum():
+        return False
+    if delta > 0:
+        return bar.value() < bar.maximum()
+    if delta < 0:
+        return bar.value() > bar.minimum()
+    return False
+
+
+def _nudge_bar(bar: QScrollBar, delta: int) -> bool:
+    if not _bar_can_move(bar, delta):
+        return False
+    step = max(bar.singleStep(), _SCROLL_STEP)
+    bar.setValue(bar.value() + int(delta) * step)
+    return True
+
+
+def _scroll_areas_for(w: Optional[QWidget], root: QWidget) -> List[QAbstractScrollArea]:
+    """Nearest scrollables: ancestors of focus first, then page digiScroll areas."""
+    found: List[QAbstractScrollArea] = []
+    seen = set()
+
+    def add(area: Optional[QAbstractScrollArea]) -> None:
+        if area is None:
+            return
+        i = id(area)
+        if i in seen:
+            return
+        if not area.isVisible():
+            return
+        seen.add(i)
+        found.append(area)
+
+    cur: Optional[QWidget] = w
+    while cur is not None:
+        if isinstance(cur, QAbstractScrollArea):
+            add(cur)
+        cur = cur.parentWidget()
+
+    for area in root.findChildren(QAbstractScrollArea):
+        if area.objectName() == "digiScroll" or isinstance(area, QScrollArea):
+            add(area)
+    return found
+
+
+def nudge_scroll(
+    root: QWidget,
+    delta: int,
+    *,
+    from_widget: Optional[QWidget] = None,
+) -> bool:
+    """Scroll the nearest scrollbar that still has room. True if moved."""
+    if delta == 0:
+        return False
+    start = from_widget if from_widget is not None else digi_current(root)
+    for area in _scroll_areas_for(start, root):
+        bar = area.verticalScrollBar()
+        if _nudge_bar(bar, delta):
+            return True
+    return False
+
+
+def text_nudge(edit: QWidget, delta: int) -> bool:
+    """Line-scroll a text view; False at edge so caller can leave the field."""
+    if not isinstance(edit, (QTextEdit, QPlainTextEdit)):
+        return False
+    bar = edit.verticalScrollBar()
+    if _nudge_bar(bar, delta):
+        return True
+    return False
+
+
 def move_focus(root: QWidget, delta: int) -> bool:
     """Cycle focus among page controls (linear). Returns True if handled."""
     items = focusables(root)
@@ -213,7 +292,8 @@ def move_focus_xy(root: QWidget, dx: int, dy: int) -> bool:
             best = w
 
     if best is None:
-        return True  # edge of grid — stay put, still consume
+        # Vertical edge → allow page scroll. Horizontal edge → stay put.
+        return dy == 0
 
     clear_highlights(root)
     best.setFocus(Qt.OtherFocusReason)

@@ -959,6 +959,11 @@ class PhoneShell(QMainWindow):
                     self._nav_click()
                     event.accept()
                     return
+                if isinstance(cur, (QTextEdit, QPlainTextEdit)):
+                    if digi_nav.text_nudge(cur, delta):
+                        self._nav_click()
+                        event.accept()
+                        return
                 if isinstance(cur, QListWidget):
                     if digi_nav.list_nudge(cur, delta):
                         self._nav_click()
@@ -968,7 +973,13 @@ class PhoneShell(QMainWindow):
                     self._nav_click()
                     event.accept()
                     return
-            if key in (Qt.Key_Return, Qt.Key_Enter):
+                # No more focus targets that way — scroll any visible scrollbar
+                if digi_nav.nudge_scroll(page, delta, from_widget=cur):
+                    self._nav_click()
+                    event.accept()
+                    return
+                event.accept()
+                return            if key in (Qt.Key_Return, Qt.Key_Enter):
                 # Camera etc.: page.digi_activate() (Confirm = snap)
                 digi_act = getattr(page, "digi_activate", None)
                 if callable(digi_act):
