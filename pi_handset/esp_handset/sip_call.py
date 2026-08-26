@@ -131,7 +131,7 @@ def _trim_core_log_if_huge(max_keep: int = 200_000) -> None:
         with _CORE_LOG.open("rb") as f:
             f.seek(-max_keep, os.SEEK_END)
             tail = f.read()
-        _CORE_LOG.write_bytes(b"(…log trimmed…)\n" + tail)
+        _CORE_LOG.write_bytes(b"(...log trimmed...)\n" + tail)
     except OSError:
         pass
 
