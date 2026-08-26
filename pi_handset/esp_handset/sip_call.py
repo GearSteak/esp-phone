@@ -42,6 +42,7 @@ _DISC: Dict[str, Tuple[Optional[str], float]] = {
 _DISC_TTL = 90.0
 _last_error = ""
 _last_register_raw = ""
+_active_backend: Optional[str] = None  # "csh" | "pty" | None — which stack owns the call
 _LOG = Path.home() / ".esp-handset" / "sip-last.log"
 _CORE_LOG = Path.home() / ".esp-handset" / "linphone-core.log"
 _REPORT = Path.home() / ".esp-handset" / "sip-doctor.txt"
@@ -1749,27 +1750,43 @@ def _csh_warmup() -> str:
 
 
 def _dial_via_csh(digits: str, server: str) -> Tuple[bool, str]:
-    global _last_register_raw
+    global _last_register_raw, _active_backend
     hint = _csh_warmup()
     if hint and "Set SIP" in hint:
         return False, hint
     st = _csh_cmd("status", "register")
     _last_register_raw = st[:200]
+    if not re.search(r"(?i)registered|identity=", st):
+        _csh_warmup()
+        st = _csh_cmd("status", "register")
+        _last_register_raw = st[:200]
     target = _call_uri(digits, server)
     _log(f"csh dial {target}")
-    _csh_cmd("dial", target)
-    time.sleep(0.6)
+    dial_out = _csh_cmd("dial", target)
+    time.sleep(0.5)
+    if not re.search(r"(?i)Establishing call|in progress|assigned id", dial_out or ""):
+        dial_out2 = _csh_cmd("dial", digits)
+        dial_out = f"{dial_out}\n{dial_out2}"
+        time.sleep(0.5)
     hook = _csh_cmd("status", "hook", timeout=3.0)
     calls = _csh_calls()
     phase = _csh_phase(hook, calls)
+    if phase == "idle":
+        phase = _phase_from_line(dial_out or "", "idle")
     if phase == "idle" and _csh_no_call(hook) and _csh_no_call(calls):
         _csh_cmd("generic", f"call {target}")
         time.sleep(0.7)
         hook = _csh_cmd("status", "hook", timeout=3.0)
         calls = _csh_calls()
         phase = _csh_phase(hook, calls)
-    if phase in ("dialing", "ringing", "active"):
+    blob = f"{dial_out}\n{hook}\n{calls}"
+    if phase in ("dialing", "ringing", "active") or re.search(
+        r"(?i)Establishing call|in progress|assigned id|hook=dialing|hook=offhook",
+        blob,
+    ):
+        _active_backend = "csh"
         _set_error("")
+        _log("csh outbound call started")
         return True, ""
     _log(f"csh: no outbound call (hook={hook[:80]!r})")
     return False, _set_error("Call did not start — try Test SIP")
@@ -1857,7 +1874,8 @@ def dial_ex(number: str) -> Tuple[bool, str]:
 
 
 def _dial_ex_inner(number: str) -> Tuple[bool, str]:
-    global _last_register_raw
+    global _last_register_raw, _active_backend
+    _active_backend = None
     if not _discover_linphonec() and not _discover_csh():
         _log("dial: voip missing — running prepare_voip")
         if not prepare_voip(180.0):
@@ -1876,15 +1894,24 @@ def _dial_ex_inner(number: str) -> Tuple[bool, str]:
     if own:
         return False, _set_error(own)
 
-    target = _call_uri(digits, server)
+    # Prefer linphonecsh for outbound. PTY linphonec registers but often
+    # never emits INVITE; two linphonecs also fight for :5060.
+    if _discover_csh():
+        eng = _engine()
+        if eng.alive():
+            _log("stopping PTY linphonec before csh dial")
+            eng.stop()
+            time.sleep(0.35)
+        _kill_stray_linphone()
+        ok, reason = _dial_via_csh(digits, server)
+        if ok:
+            return True, ""
+        return False, reason or _set_error("Call did not start")
 
+    target = _call_uri(digits, server)
     if _discover_linphonec():
         hint = _engine().start()
         if hint:
-            try:
-                write_sip_report(extra=f"dial aborted: {hint}")
-            except Exception:
-                pass
             return False, hint
         eng = _engine()
         if not eng.alive() or not eng.registered:
@@ -1893,79 +1920,75 @@ def _dial_ex_inner(number: str) -> Tuple[bool, str]:
             )
         eng.reset_call_state()
         _wake_linphonec_cli(eng)
-        # Digivice used to send only `call sip:…@host`. linphonec often
-        # swallowed that on the PTY with no INVITE. Try proxy digits first.
-        attempts = (
-            digits,  # uses default proxy_0 — preferred for Zadarma PSTN
-            target,
-            f"<{target}>",
-            f"sip:{digits}@{server};transport=udp",
-        )
-        for attempt in attempts:
+        log_mark = _core_log_size()
+        _log(f"call try {digits}")
+        eng.cmd(f"call {digits}", force=True)
+        phase, err = _wait_call_progress(eng, log_mark, 8.0)
+        if not phase:
             log_mark = _core_log_size()
-            _log(f"call try {attempt}")
-            if not eng.cmd(f"call {attempt}", force=True):
-                _log("call cmd write failed")
-                continue
-            phase, err = _wait_call_progress(eng, log_mark, 5.0)
-            if phase:
-                _last_register_raw = "registered"
-                _set_error("")
-                _log(f"call progress={phase} via {attempt}")
-                return True, ""
-            if err:
-                eng.cmd("terminate", force=True)
-                eng.cmd("hangup", force=True)
-                return False, _set_error(err)
-            # next attempt
-            eng.cmd("terminate", force=True)
-            time.sleep(0.3)
-            _wake_linphonec_cli(eng)
+            eng.cmd(f"call {target}", force=True)
+            phase, err = _wait_call_progress(eng, log_mark, 8.0)
+        if phase:
+            _active_backend = "pty"
+            _last_register_raw = "registered"
+            _set_error("")
+            return True, ""
+        if err:
+            return False, _set_error(err)
+        return False, _set_error(_core_log_call_error() or "No ringback")
 
-        _log(f"linphonec dial produced no INVITE for {digits} — trying linphonecsh")
-        if _discover_csh():
-            ok, reason = _dial_via_csh(digits, server)
-            if ok:
-                return True, ""
-            if reason:
-                return False, reason
-        why = _core_log_call_error() or "No ringback"
-        _log(f"dial fail digits={digits}: {why}")
-        eng.cmd("terminate", force=True)
-        eng.cmd("hangup", force=True)
-        with eng._lock:
-            eng.phase = "idle"
-        return False, _set_error(why)
-
-    if _discover_csh():
-        return _dial_via_csh(digits, server)
     return False, _set_error(missing_hint())
 
 
 def hangup() -> None:
-    eng = _engine()
-    if eng.alive():
-        eng.cmd("terminate")
-        eng.cmd("hangup")
-        eng.phase = "idle"
-        return
-    if _discover_csh():
+    global _active_backend
+    if _active_backend == "csh" or _discover_csh():
         _csh_cmd("generic", "terminate", timeout=3.0)
         _csh_cmd("hangup", timeout=3.0)
+    eng = _engine()
+    if eng.alive():
+        eng.cmd("terminate", force=True)
+        eng.cmd("hangup", force=True)
+        eng.phase = "idle"
+    _active_backend = None
 
 
 def answer() -> None:
+    if _active_backend == "csh" or (
+        not _engine().alive() and _discover_csh()
+    ):
+        _csh_cmd("answer", timeout=3.0)
+        _csh_cmd("generic", "answer", timeout=3.0)
+        return
     eng = _engine()
     if eng.alive():
-        eng.cmd("answer")
+        eng.cmd("answer", force=True)
         return
     if _discover_csh():
         _csh_cmd("answer", timeout=3.0)
-        _csh_cmd("generic", "answer", timeout=3.0)
 
 
 def poll() -> CallInfo:
-    """Cheap: never spawn linphonecsh from the UI timer."""
+    """Follow whichever backend placed the outbound call."""
+    global _active_backend
+    if _active_backend == "csh":
+        hook = _csh_cmd("status", "hook", timeout=1.5)
+        calls = _csh_calls()
+        raw = f"{hook}\n{calls}"
+        phase = _csh_phase(hook, calls)
+        if phase == "idle" and _csh_no_call(hook) and _csh_no_call(calls):
+            _active_backend = None
+            return CallInfo(raw=raw, phase="idle", state="idle")
+        if not phase or phase == "idle":
+            if re.search(r"(?i)hook=dialing|hook=offhook|in progress", raw):
+                phase = "dialing"
+            elif re.search(r"(?i)ringing", raw):
+                phase = "ringing"
+            elif re.search(r"(?i)StreamsRunning|Connected", raw):
+                phase = "active"
+            else:
+                phase = "dialing"
+        return CallInfo(raw=raw, phase=phase, state=phase)
     eng = _engine()
     if eng.alive():
         return eng.snapshot()
