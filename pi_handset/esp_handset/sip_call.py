@@ -973,7 +973,7 @@ def _core_log_tail(n_chars: int = 8000) -> str:
 
 def _core_log_call_phase() -> Optional[str]:
     """Best-effort call phase from linphone-core.log (PTY banners are often quiet)."""
-    text = _core_log_tail()
+    text = _core_log_tail(14000)
     if not text:
         return None
     last: Optional[str] = None
@@ -981,25 +981,50 @@ def _core_log_call_phase() -> Optional[str]:
         flag = _phase_from_line(ln, "")
         if flag in ("incoming", "error", "ending", "active", "ringing", "dialing"):
             last = flag
+            continue
+        # belle-sip wire log (common when linphonec CLI stays quiet)
+        if re.search(r"(?i)^\s*INVITE\s+sip:", ln) or re.search(
+            r"(?i)message sent.*\bINVITE\b", ln
+        ):
+            last = "dialing"
+        elif re.search(r"(?i)SIP/2\.0\s+180\b|Ringing", ln) and "REGISTER" not in ln:
+            last = "ringing"
+        elif re.search(r"(?i)SIP/2\.0\s+183\b|Session Progress", ln):
+            last = "dialing"
+        elif re.search(r"(?i)SIP/2\.0\s+200\b", ln) and re.search(
+            r"(?i)INVITE|cseq:.*invite", text[-2000:], re.I
+        ):
+            # Don't treat REGISTER 200 as answered
+            if re.search(r"(?i)CSeq:.*INVITE", text[-2500:]):
+                last = "active"
+        elif re.search(
+            r"(?i)SIP/2\.0\s+(402|403|404|408|480|486|487|603)\b", ln
+        ):
+            # Ignore REGISTER 403 lockout noise during an outbound dial if
+            # we already saw an INVITE in this window — still surface as error.
+            last = "error"
     return last
 
 
 def _core_log_call_error() -> str:
-    text = _core_log_tail(12000)
+    text = _core_log_tail(14000)
     if not text:
         return ""
+    # Prefer the most recent SIP failure related to INVITE, not stale REGISTER blocks
+    tail = text[-6000:]
     patterns = (
-        (r"(?i)402 Payment Required", "Zadarma: add balance / enable outbound calls"),
-        (r"(?i)403 Forbidden", "Zadarma rejected the call (403)"),
-        (r"(?i)404 Not Found", "Number not found (404) — check digits"),
-        (r"(?i)480 Temporarily", "Callee unavailable (480)"),
-        (r"(?i)486 Busy", "Line busy"),
-        (r"(?i)603 Decline", "Call declined"),
-        (r"(?i)408 Request Timeout", "Call timed out (408)"),
-        (r"(?i)Unable to call|could not call|Call failed", "Linphone could not place the call"),
+        (r"(?i)402 Payment Required", "Add Zadarma balance"),
+        (r"(?i)403 Forbidden", "Call blocked (403)"),
+        (r"(?i)404 Not Found", "Bad number (404)"),
+        (r"(?i)480 Temporarily", "Unavailable (480)"),
+        (r"(?i)486 Busy", "Busy"),
+        (r"(?i)603 Decline", "Declined"),
+        (r"(?i)408 Request Timeout", "Timed out (408)"),
+        (r"(?i)Unable to call|could not call|Call failed", "Could not place call"),
+        (r"(?i)Blocked for incorrect passwords", "SIP still locked"),
     )
     for pat, msg in patterns:
-        if re.search(pat, text):
+        if re.search(pat, tail):
             return msg
     return ""
 
@@ -1805,6 +1830,14 @@ def _dial_ex_inner(number: str) -> Tuple[bool, str]:
             # Fresh core-log activity after our call command
             try:
                 if _CORE_LOG.is_file() and _CORE_LOG.stat().st_size > log_mark + 40:
+                    fresh = _CORE_LOG.read_text(encoding="utf-8", errors="replace")[
+                        log_mark:
+                    ]
+                    if re.search(r"(?i)\bINVITE\s+sip:", fresh):
+                        with eng._lock:
+                            eng.phase = "dialing"
+                        _set_error("")
+                        return True, ""
                     core_ph = _core_log_call_phase()
                     if core_ph in ("dialing", "ringing", "active"):
                         with eng._lock:
@@ -1812,17 +1845,35 @@ def _dial_ex_inner(number: str) -> Tuple[bool, str]:
                         _set_error("")
                         return True, ""
                     if core_ph == "error":
-                        why = _core_log_call_error() or "SIP rejected call"
-                        return False, _set_error(why)
+                        # Ignore stale REGISTER lockout lines — only fail on INVITE rejects
+                        if re.search(
+                            r"(?i)SIP/2\.0\s+(402|403|404|408|480|486|603)\b", fresh
+                        ) and re.search(r"(?i)INVITE", fresh):
+                            why = _core_log_call_error() or "Call rejected"
+                            return False, _set_error(why)
             except OSError:
                 pass
             time.sleep(0.25)
         if not eng.alive():
             return False, _set_error("linphonec died after dial")
-        why = _core_log_call_error() or (
-            f"No call progress for {digits} — check Zadarma balance / number"
-        )
-        _log(f"dial timeout: {why}")
+        # Last chance: did an INVITE leave at all?
+        try:
+            if _CORE_LOG.is_file():
+                fresh = _CORE_LOG.read_text(encoding="utf-8", errors="replace")[log_mark:]
+                if re.search(r"(?i)\bINVITE\s+sip:", fresh):
+                    with eng._lock:
+                        eng.phase = "dialing"
+                    _set_error("")
+                    return True, ""
+                if re.search(r"(?i)SIP/2\.0\s+(402|403|404|408|480|486|603)\b", fresh):
+                    why = _core_log_call_error() or "Call rejected"
+                    eng.cmd("terminate", force=True)
+                    eng.cmd("hangup", force=True)
+                    return False, _set_error(why)
+        except OSError:
+            pass
+        why = _core_log_call_error() or "No ringback"
+        _log(f"dial timeout digits={digits}: {why}")
         eng.cmd("terminate", force=True)
         eng.cmd("hangup", force=True)
         with eng._lock:

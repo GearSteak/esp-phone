@@ -1,6 +1,7 @@
 """Active-call takeover UI + outbound call controller + call log page."""
 from __future__ import annotations
 
+import re
 import time
 import threading
 from typing import Callable, Optional
@@ -23,6 +24,32 @@ from esp_handset.incoming_call import _CircleAction
 from esp_handset.pages import page_chrome
 
 
+def _screen_detail(msg: str, *, max_chars: int = 72) -> str:
+    """Fit failure text on the 240px call overlay."""
+    s = re.sub(r"\s+", " ", (msg or "").strip())
+    if not s:
+        return ""
+    # Prefer short known phrases
+    low = s.lower()
+    if "balance" in low or "402" in low:
+        return "Add Zadarma balance"
+    if "locked" in low or "blocked for incorrect" in low:
+        return "SIP locked — wait / support"
+    if "403" in low:
+        return "Call blocked (403)"
+    if "404" in low or "bad number" in low:
+        return "Bad number"
+    if "not registered" in low:
+        return "SIP not registered"
+    if "no ringback" in low or "no call progress" in low:
+        return "No ringback"
+    if "dropped before" in low:
+        return "Dropped before ring"
+    if len(s) <= max_chars:
+        return s
+    return s[: max_chars - 1] + "…"
+
+
 class CallOverlay(QWidget):
     """Fullscreen call UI: ringing / in-call / ended (outbound + shared hangup)."""
 
@@ -39,7 +66,7 @@ class CallOverlay(QWidget):
             QLabel#acLabel { color: #aeaeb2; font-size: 10px; font-weight: 600; }
             QLabel#acName { color: #ffffff; font-size: 18px; font-weight: 800; }
             QLabel#acNumber { color: #d1d1d6; font-size: 12px; font-weight: 600; }
-            QLabel#acTimer { color: #34C759; font-size: 14px; font-weight: 700; }
+            QLabel#acTimer { color: #34C759; font-size: 12px; font-weight: 700; }
             """
         )
         self.hide()
@@ -70,6 +97,8 @@ class CallOverlay(QWidget):
         self.timer_lab = QLabel("")
         self.timer_lab.setObjectName("acTimer")
         self.timer_lab.setAlignment(Qt.AlignCenter)
+        self.timer_lab.setWordWrap(True)
+        self.timer_lab.setMaximumWidth(208)
 
         top = QVBoxLayout()
         top.setSpacing(8)
@@ -260,8 +289,13 @@ class CallOverlay(QWidget):
         self._on_dismiss = on_dismiss
         self._resolve(number, name)
         self.label.setText(status_line)
-        self.timer_lab.setText(detail or "")
+        self.timer_lab.setText(_screen_detail(detail) if detail else "")
         self.timer_lab.setVisible(bool(detail))
+        # Errors use a softer color than the green talk timer
+        if detail and not re.match(r"^\d+:\d{2}$", detail.strip()):
+            self.timer_lab.setStyleSheet("color:#FF9F0A; font-size:11px; font-weight:700;")
+        else:
+            self.timer_lab.setStyleSheet("")
         self.hangup_btn.hide()
         self.ok_btn.show()
         self.hint.setText("Confirm · OK")
@@ -463,13 +497,19 @@ class CallController(QObject):
         if self._user_hangup or self._phase not in ("dialing", "ringing"):
             return
         if not ok:
-            detail = reason or sip_call.last_error() or "Check SIP / number / Wi‑Fi"
+            detail = _screen_detail(
+                reason or sip_call.last_error() or "Check SIP / Wi‑Fi"
+            )
             clog.finish(self._entry_id, status="failed", duration_s=0)
             self._phase = "ended"
             title = "Could not dial"
             low = detail.lower()
             if "not registered" in low:
-                title = "SIP not registered"
+                title = "Not registered"
+            elif "balance" in low:
+                title = "No balance"
+            elif "locked" in low:
+                title = "SIP locked"
             elif "voip" in low or "linphone" in low:
                 title = "VoIP not ready"
             self._show_ended(title, detail)
@@ -543,7 +583,7 @@ class CallController(QObject):
             self._number,
             name=self._name,
             status_line=title,
-            detail=detail,
+            detail=_screen_detail(detail) if detail else "",
             on_dismiss=self.dismiss_ended,
         )
 
@@ -655,14 +695,18 @@ class CallController(QObject):
                     if not why:
                         lines = [ln.strip() for ln in (info.raw or "").splitlines() if ln.strip()]
                         why = lines[-1][:80] if lines else "SIP rejected call"
-                    self._finish("failed", why)
+                    self._finish("failed", _screen_detail(why))
                 return
             if info.phase in ("ending", "idle"):
                 if self._user_hangup:
                     return
                 # Quiet linphonec stdout is common — give INVITE time to ring
                 if not self._saw_progress and elapsed > 25.0:
-                    why = sip_call.last_error() or "No call progress — Test SIP / Zadarma balance"
+                    why = _screen_detail(
+                        sip_call.last_error()
+                        or sip_call.last_call_error()
+                        or "No ringback"
+                    )
                     self._finish("failed", why)
                     return
                 # Only say "didn't pick up" if we actually saw remote ringing
@@ -670,7 +714,11 @@ class CallController(QObject):
                     self._finish("no_answer")
                     return
                 if self._saw_progress and not self._saw_remote_ring and elapsed > 8.0:
-                    why = sip_call.last_error() or "Call dropped before ring — check number / Zadarma"
+                    why = _screen_detail(
+                        sip_call.last_error()
+                        or sip_call.last_call_error()
+                        or "Dropped before ring"
+                    )
                     self._finish("failed", why)
                     return
                 return
@@ -682,7 +730,9 @@ class CallController(QObject):
                 else:
                     self._finish(
                         "failed",
-                        "No ringback — check number / Zadarma balance",
+                        _screen_detail(
+                            sip_call.last_call_error() or "No ringback"
+                        ),
                     )
                 return
             return
