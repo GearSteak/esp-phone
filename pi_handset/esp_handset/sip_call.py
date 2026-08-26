@@ -43,6 +43,10 @@ _DISC_TTL = 90.0
 _last_error = ""
 _last_register_raw = ""
 _active_backend: Optional[str] = None  # "csh" | "pty" | None — which stack owns the call
+_csh_poll_lock = threading.Lock()
+_csh_poll_info: Optional[CallInfo] = None  # filled after CallInfo exists; see _ensure_csh_poller
+_csh_poll_thread: Optional[threading.Thread] = None
+_csh_poll_stop = threading.Event()
 _LOG = Path.home() / ".esp-handset" / "sip-last.log"
 _CORE_LOG = Path.home() / ".esp-handset" / "linphone-core.log"
 _REPORT = Path.home() / ".esp-handset" / "sip-doctor.txt"
@@ -1605,7 +1609,7 @@ def ensure_async() -> None:
     threading.Thread(target=work, name="sip-ensure", daemon=True).start()
 
 
-def _csh_cmd(*args: str, timeout: float = 8.0) -> str:
+def _csh_cmd(*args: str, timeout: float = 8.0, quiet: bool = False) -> str:
     csh = _discover_csh()
     if not csh or _is_csh_wrapper(csh):
         return ""
@@ -1619,9 +1623,12 @@ def _csh_cmd(*args: str, timeout: float = 8.0) -> str:
                 check=False,
             )
         except Exception as e:
-            _log(f"csh {args[:2]!r} err: {e}")
+            if not quiet:
+                _log(f"csh {args[:2]!r} err: {e}")
             return str(e)
     out = ((r.stdout or "") + (r.stderr or "")).strip()
+    if quiet:
+        return out
     shown = args[0] if args else ""
     if shown == "register" or (len(args) > 1 and args[0] == "generic" and args[1].startswith("register")):
         _log("csh register → (hidden)")
@@ -1637,33 +1644,37 @@ def _csh_no_call(text: str) -> bool:
         or ("no active call" in s)
         or ("no call" in s)
         or ("hook=onhook" in s)
+        or ("hook=on-hook" in s)
         or s.strip() == "idle"
     )
 
 
-def _csh_calls() -> str:
-    out = _csh_cmd("generic", "states calls", timeout=1.5)
+def _csh_calls(*, quiet: bool = False) -> str:
+    out = _csh_cmd("generic", "states calls", timeout=0.6, quiet=quiet)
     if out.strip() and "unknown" not in out.lower():
         return out
-    return _csh_cmd("generic", "calls", timeout=1.5)
+    return _csh_cmd("generic", "calls", timeout=0.6, quiet=quiet)
 
 
 def _csh_phase(hook: str, calls: str) -> str:
     raw = f"{hook}\n{calls}"
-    phase = _phase_from_line(calls, "idle")
-    phase = _phase_from_line(hook, phase)
-    if phase != "idle":
-        return phase
-    if re.search(r"(?i)OutgoingRinging|Remote ringing", raw):
-        return "ringing"
-    if re.search(r"(?i)OutgoingProgress|OutgoingInit|Calling ", raw):
-        return "dialing"
-    if re.search(r"(?i)StreamsRunning|LinphoneCallConnected", raw):
+    # Answered ONLY on real media — Digivice used to treat "Call out, duration=N"
+    # as Connected while the cell never rang.
+    if re.search(r"(?i)StreamsRunning|LinphoneCallConnected|Call answered", raw):
         return "active"
-    # offhook alone is ringing or talk — keep as dialing, never jump to timer
-    if re.search(r"(?i)hook=offhook", hook):
+    if re.search(r"(?i)OutgoingRinging|Remote ringing|LinphoneCallOutgoingRinging", raw):
+        return "ringing"
+    if re.search(
+        r"(?i)OutgoingProgress|OutgoingInit|Calling |Establishing call|"
+        r"Call out|hook=sip:|hook=dialing|hook=offhook|in progress|duration=\d+",
+        raw,
+    ):
         return "dialing"
-    return "idle"
+    if re.search(r"(?i)LinphoneCallError|403 Forbidden|404 Not Found|486 Busy", raw):
+        return "error"
+    if re.search(r"(?i)Call (terminated|ended)|hook=on-?hook|No active calls", raw):
+        return "idle"
+    return _phase_from_line(hook, _phase_from_line(calls, "idle"))
 
 
 def _csh_warmup() -> str:
@@ -1721,12 +1732,19 @@ def _dial_via_csh(digits: str, server: str) -> Tuple[bool, str]:
         st = _csh_cmd("status", "register")
         _last_register_raw = st[:200]
     target = _call_uri(digits, server)
-    _log(f"csh dial {target}")
-    dial_out = _csh_cmd("dial", target)
+    # Zadarma PSTN: try E.164 (+1…) first, then plain sip:digits@host
+    target_e164 = f"sip:+{digits}@{server}" if digits.isdigit() else target
+    _log(f"csh dial {target_e164}")
+    dial_out = _csh_cmd("dial", target_e164)
     time.sleep(0.5)
     if not re.search(r"(?i)Establishing call|in progress|assigned id", dial_out or ""):
-        dial_out2 = _csh_cmd("dial", digits)
+        _log(f"csh dial fallback {target}")
+        dial_out2 = _csh_cmd("dial", target)
         dial_out = f"{dial_out}\n{dial_out2}"
+        time.sleep(0.5)
+    if not re.search(r"(?i)Establishing call|in progress|assigned id", dial_out or ""):
+        dial_out3 = _csh_cmd("dial", digits)
+        dial_out = f"{dial_out}\n{dial_out3}"
         time.sleep(0.5)
     hook = _csh_cmd("status", "hook", timeout=3.0)
     calls = _csh_calls()
@@ -1745,6 +1763,9 @@ def _dial_via_csh(digits: str, server: str) -> Tuple[bool, str]:
         blob,
     ):
         _active_backend = "csh"
+        with _csh_poll_lock:
+            _csh_poll_info = CallInfo(phase="dialing", state="dialing", raw=blob[:200])
+        _ensure_csh_poller()
         _set_error("")
         _log("csh outbound call started")
         return True, ""
@@ -1928,27 +1949,49 @@ def answer() -> None:
         _csh_cmd("answer", timeout=3.0)
 
 
+def _ensure_csh_poller() -> None:
+    """Background poller so Qt never blocks on linphonecsh (kills CardKB/UI)."""
+    global _csh_poll_thread
+
+    def loop() -> None:
+        global _active_backend, _csh_poll_info
+        while not _csh_poll_stop.is_set():
+            if _active_backend != "csh":
+                _csh_poll_stop.wait(0.4)
+                continue
+            try:
+                hook = _csh_cmd("status", "hook", timeout=0.5, quiet=True)
+                # One cheap status is enough for UI — skip "states calls" spam
+                phase = _csh_phase(hook, "")
+                if _csh_no_call(hook):
+                    phase = "idle"
+                    _active_backend = None
+                elif not phase or phase == "idle":
+                    phase = "dialing"
+                info = CallInfo(raw=hook, phase=phase, state=phase)
+                with _csh_poll_lock:
+                    _csh_poll_info = info
+            except Exception:
+                pass
+            _csh_poll_stop.wait(0.8)
+
+    if _csh_poll_thread is not None and _csh_poll_thread.is_alive():
+        return
+    _csh_poll_stop.clear()
+    _csh_poll_thread = threading.Thread(target=loop, name="csh-poll", daemon=True)
+    _csh_poll_thread.start()
+
+
 def poll() -> CallInfo:
-    """Follow whichever backend placed the outbound call."""
+    """Non-blocking UI poll — never run linphonecsh on the Qt thread."""
     global _active_backend
     if _active_backend == "csh":
-        hook = _csh_cmd("status", "hook", timeout=1.5)
-        calls = _csh_calls()
-        raw = f"{hook}\n{calls}"
-        phase = _csh_phase(hook, calls)
-        if phase == "idle" and _csh_no_call(hook) and _csh_no_call(calls):
-            _active_backend = None
-            return CallInfo(raw=raw, phase="idle", state="idle")
-        if not phase or phase == "idle":
-            if re.search(r"(?i)hook=dialing|hook=offhook|in progress", raw):
-                phase = "dialing"
-            elif re.search(r"(?i)ringing", raw):
-                phase = "ringing"
-            elif re.search(r"(?i)StreamsRunning|Connected", raw):
-                phase = "active"
-            else:
-                phase = "dialing"
-        return CallInfo(raw=raw, phase=phase, state=phase)
+        _ensure_csh_poller()
+        with _csh_poll_lock:
+            info = _csh_poll_info
+        if info is None:
+            return CallInfo(phase="dialing", state="dialing")
+        return info
     eng = _engine()
     if eng.alive():
         return eng.snapshot()

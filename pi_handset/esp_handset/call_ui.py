@@ -672,7 +672,7 @@ class CallController(QObject):
                 ov = getattr(self.shell, "_active_call", None)
                 if ov is not None:
                     ov.set_ringing_hint("Ringing")
-            # Early media is still ringing — do not start the talk timer
+            # Only real answer → Connected. "Call out" is still dialing/ringing.
             if info.phase == "active":
                 self._answered = True
                 self._talk_started = time.time()
@@ -683,6 +683,10 @@ class CallController(QObject):
                 self.on_status("Connected")
                 self.state_changed.emit("active")
                 return
+            if info.phase == "dialing":
+                ov = getattr(self.shell, "_active_call", None)
+                if ov is not None and not self._saw_remote_ring:
+                    ov.set_ringing_hint("Calling…")
             if info.phase == "error":
                 raw = (info.raw or "").lower()
                 self._awaiting_dial = False
