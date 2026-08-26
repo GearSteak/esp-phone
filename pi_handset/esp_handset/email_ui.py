@@ -14,7 +14,7 @@ from email.utils import parsedate_to_datetime
 from typing import Callable, List, Optional
 
 from PyQt5.QtCore import QObject, Qt, QTimer, pyqtSignal
-from PyQt5.QtGui import QColor, QFont, QPainter
+from PyQt5.QtGui import QColor, QFont, QFontMetrics, QPainter
 from PyQt5.QtWidgets import (
     QFrame,
     QHBoxLayout,
@@ -441,6 +441,33 @@ class Avatar(QWidget):
         p.drawText(self.rect(), Qt.AlignCenter, self.letter)
 
 
+class ElideLabel(QLabel):
+    """Single-line label that truncates with … to fit (no horizontal scroll)."""
+
+    def __init__(self, text: str = "", parent=None):
+        super().__init__(parent)
+        self._full = text or ""
+        self.setWordWrap(False)
+        self.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+
+    def setFullText(self, text: str) -> None:
+        self._full = text or ""
+        self._elide()
+
+    def resizeEvent(self, event) -> None:  # noqa: N802
+        super().resizeEvent(event)
+        self._elide()
+
+    def showEvent(self, event) -> None:  # noqa: N802
+        super().showEvent(event)
+        self._elide()
+
+    def _elide(self) -> None:
+        w = max(8, self.width() - 2)
+        fm = QFontMetrics(self.font())
+        self.setText(fm.elidedText(self._full, Qt.ElideRight, w))
+
+
 class MailRow(QFrame):
     """Narrow list row for the left pane (from + time)."""
 
@@ -448,7 +475,6 @@ class MailRow(QFrame):
         super().__init__(parent)
         self.msg = msg
         unread = bool(msg.get("unread"))
-        self.setMinimumWidth(160)
         self.setStyleSheet(
             f"QFrame {{ background: transparent; border: none;"
             f" border-bottom: 1px solid {_CHIP}; }}"
@@ -460,13 +486,13 @@ class MailRow(QFrame):
         lay.addWidget(Avatar(_initial(name), _avatar_color(name), size=22), 0, Qt.AlignTop)
         col = QVBoxLayout()
         col.setSpacing(0)
-        frm = QLabel(name)
+        col.setContentsMargins(0, 0, 0, 0)
+        frm = ElideLabel(name)
         frm.setStyleSheet(
             f"font-size:10px; font-weight:{'700' if unread else '600'};"
             f" color:{_TEXT}; border:none;"
         )
-        frm.setWordWrap(False)
-        when = QLabel(str(msg.get("when") or ""))
+        when = ElideLabel(str(msg.get("when") or ""))
         when.setStyleSheet(
             f"font-size:8px; color:{_BLUE if unread else _MUTED}; border:none;"
         )
@@ -474,7 +500,8 @@ class MailRow(QFrame):
         col.addWidget(when)
         lay.addLayout(col, 1)
         self.setMinimumHeight(36)
-        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.setMaximumWidth(108)
+        self.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
 
 
 def make_email_page(on_back: Callable[[], None]) -> QWidget:
@@ -542,16 +569,16 @@ def make_email_page(on_back: Callable[[], None]) -> QWidget:
     lst.setFocusPolicy(Qt.StrongFocus)
     lst.setSpacing(0)
     lst.setFixedWidth(108)
-    lst.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+    lst.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
     lst.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+    lst.setTextElideMode(Qt.ElideRight)
     lst.setStyleSheet(
         f"QListWidget {{ background:{_SURFACE}; border:none; border-radius:10px;"
         f" outline:none; }}"
         "QListWidget::item { background: transparent; padding:0; margin:0; }"
         f"QListWidget::item:selected {{ background:{_CHIP}; }}"
         'QListWidget[digiFocus="1"] { border:2px solid #FFE600; border-radius:10px; }'
-        "QScrollBar:horizontal { height: 8px; background: #121820; }"
-        "QScrollBar::handle:horizontal { background: #4a6a88; min-width: 20px; border-radius: 3px; }"
+        "QScrollBar:horizontal { height: 0px; }"
         "QScrollBar:vertical { width: 8px; background: #121820; }"
         "QScrollBar::handle:vertical { background: #4a6a88; min-height: 20px; border-radius: 3px; }"
     )
