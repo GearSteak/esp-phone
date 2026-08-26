@@ -64,9 +64,9 @@ class CallOverlay(QWidget):
             #activeCall { background: #000000; }
             QLabel { background: transparent; border: none; }
             QLabel#acLabel { color: #aeaeb2; font-size: 10px; font-weight: 600; }
-            QLabel#acName { color: #ffffff; font-size: 18px; font-weight: 800; }
-            QLabel#acNumber { color: #d1d1d6; font-size: 12px; font-weight: 600; }
-            QLabel#acTimer { color: #34C759; font-size: 12px; font-weight: 700; }
+            QLabel#acName { color: #ffffff; font-size: 16px; font-weight: 800; }
+            QLabel#acNumber { color: #d1d1d6; font-size: 11px; font-weight: 600; }
+            QLabel#acTimer { color: #34C759; font-size: 13px; font-weight: 700; }
             """
         )
         self.hide()
@@ -74,42 +74,46 @@ class CallOverlay(QWidget):
         self.setAttribute(Qt.WA_StyledBackground, True)
 
         lay = QVBoxLayout(self)
-        lay.setContentsMargins(16, 28, 16, 20)
-        lay.setSpacing(6)
+        lay.setContentsMargins(12, 16, 12, 14)
+        lay.setSpacing(4)
 
         self.label = QLabel("calling…")
         self.label.setObjectName("acLabel")
         self.label.setAlignment(Qt.AlignCenter)
 
         self.avatar = QLabel()
-        self.avatar.setFixedSize(88, 88)
+        self.avatar.setFixedSize(72, 72)
         self.avatar.setAlignment(Qt.AlignCenter)
 
         self.name_lab = QLabel("")
         self.name_lab.setObjectName("acName")
         self.name_lab.setAlignment(Qt.AlignCenter)
         self.name_lab.setWordWrap(True)
+        self.name_lab.setMaximumWidth(210)
 
         self.number_lab = QLabel("")
         self.number_lab.setObjectName("acNumber")
         self.number_lab.setAlignment(Qt.AlignCenter)
+        self.number_lab.setWordWrap(True)
+        self.number_lab.setMaximumWidth(210)
 
         self.timer_lab = QLabel("")
         self.timer_lab.setObjectName("acTimer")
         self.timer_lab.setAlignment(Qt.AlignCenter)
         self.timer_lab.setWordWrap(True)
-        self.timer_lab.setMaximumWidth(208)
+        self.timer_lab.setMaximumWidth(210)
 
         top = QVBoxLayout()
-        top.setSpacing(8)
+        top.setSpacing(6)
         top.setAlignment(Qt.AlignHCenter | Qt.AlignTop)
         top.addWidget(self.label)
-        top.addSpacing(12)
+        top.addSpacing(6)
         av_row = QHBoxLayout()
         av_row.addStretch(1)
         av_row.addWidget(self.avatar)
         av_row.addStretch(1)
         top.addLayout(av_row)
+        top.addSpacing(4)
         top.addWidget(self.name_lab)
         top.addWidget(self.number_lab)
         top.addWidget(self.timer_lab)
@@ -160,7 +164,7 @@ class CallOverlay(QWidget):
         return time.time() >= float(self._input_ready_at or 0.0)
 
     def _set_avatar(self, name: str, initial: str, photo: Optional[str]) -> None:
-        size = 88
+        size = 72
         if photo:
             pix = QPixmap(photo)
             if not pix.isNull():
@@ -864,12 +868,17 @@ def make_call_log_page(
     lay.addWidget(tip)
 
     lst = QListWidget()
+    lst.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+    lst.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+    lst.setWordWrap(True)
+    lst.setTextElideMode(Qt.ElideRight)
     lst.setStyleSheet(
         "QListWidget { background:#0e1620; color:#e8eef5; border:none;"
         " font-size:11px; outline:none; }"
         "QListWidget::item { padding:8px 6px; border-bottom:1px solid #1a2430; }"
         'QListWidget::item:selected { background:#1e2a38; }'
         'QListWidget::item[digiFocus="1"] { border:2px solid #FFE600; }'
+        "QScrollBar:vertical, QScrollBar:horizontal { width:0; height:0; }"
     )
     lst.setFocusPolicy(Qt.StrongFocus)
     empty = QLabel("No calls yet.\nPlace a call from Phone.")
@@ -877,14 +886,26 @@ def make_call_log_page(
     empty.setStyleSheet("font-size:12px; color:#7a8a9a;")
     empty.setWordWrap(True)
 
+    clear_btn = QPushButton("Clear all")
+    clear_btn.setFixedHeight(28)
+    clear_btn.setFocusPolicy(Qt.StrongFocus)
+    clear_btn.setStyleSheet(
+        "QPushButton { font-size:11px; font-weight:700; color:#fcc;"
+        " background:#2a1820; border:1px solid #4a2830; border-radius:8px; }"
+        'QPushButton[digiFocus="1"] { border:2px solid #FFE600; }'
+    )
+
     lay.addWidget(lst, 1)
     lay.addWidget(empty)
+    lay.addWidget(clear_btn)
 
     def refresh() -> None:
         lst.clear()
         entries = clog.list_entries()
         empty.setVisible(len(entries) == 0)
         lst.setVisible(len(entries) > 0)
+        clear_btn.setEnabled(len(entries) > 0)
+        clear_btn.setText("Clear all")
         for e in entries:
             direction = e.get("dir") or "?"
             arrow = "↙" if direction == "in" else "↗"
@@ -899,7 +920,6 @@ def make_call_log_page(
             text = f"{line1}\n{when} · {line2}"
             item = QListWidgetItem(text)
             item.setData(Qt.UserRole, num)
-            # Soft color by outcome
             st_key = str(e.get("status") or "")
             if e.get("answered") or st_key in ("answered", "ended"):
                 item.setForeground(QColor("#c8e6d0"))
@@ -908,6 +928,16 @@ def make_call_log_page(
             elif st_key == "canceled":
                 item.setForeground(QColor("#9aa8b8"))
             lst.addItem(item)
+
+    def do_clear() -> None:
+        if not clog.list_entries():
+            return
+        if clear_btn.text() != "Sure?":
+            clear_btn.setText("Sure?")
+            return
+        clog.clear()
+        clear_btn.setText("Clear all")
+        refresh()
 
     def redial_selected(_item: Optional[QListWidgetItem] = None) -> None:
         if not on_redial:
@@ -918,8 +948,6 @@ def make_call_log_page(
         num = str(item.data(Qt.UserRole) or "").strip()
         if not num:
             return
-        # Digi Confirm emits itemClicked + itemActivated; also defer so the
-        # Confirm key-release cannot immediately hit Hang up on the overlay.
         if pending["num"]:
             return
         pending["num"] = num
@@ -939,6 +967,7 @@ def make_call_log_page(
     pending = {"num": ""}
     lst.itemActivated.connect(redial_selected)
     lst.itemClicked.connect(redial_selected)
+    clear_btn.clicked.connect(do_clear)
 
     page = page_chrome("Call Log", body, on_back, scroll=False)
     page.refresh_call_log = refresh  # type: ignore[attr-defined]
@@ -1064,19 +1093,20 @@ def make_phone_page(
     actions.addWidget(end, 2)
     lay.addLayout(actions)
 
-    if on_call_log:
-        log_btn = QPushButton("Call log")
-        log_btn.setFixedHeight(22)
-        log_btn.setStyleSheet("font-size:11px; padding:0px;")
-        log_btn.clicked.connect(on_call_log)
-        lay.addWidget(log_btn)
-
     page = page_chrome("Phone", body, None, scroll=False)
 
     def set_dial_number(number: str) -> None:
         dial.setText(str(number or "").strip())
         dial.setCursorPosition(len(dial.text()))
 
+    def digi_activate() -> bool:
+        # Confirm / CardKB Enter → place call when there are digits
+        if dial.text().strip():
+            do_call()
+            return True
+        return False
+
     page.set_dial_number = set_dial_number  # type: ignore[attr-defined]
     page.start_call_number = do_call  # type: ignore[attr-defined]
+    page.digi_activate = digi_activate  # type: ignore[attr-defined]
     return page

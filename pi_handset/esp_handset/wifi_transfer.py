@@ -97,7 +97,7 @@ _IMG_EXT = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif"}
 
 _ROM_ACCEPT = ",".join(_ROM_EXTS + _ROM_ZIP)
 
-_MAX_UPLOAD = 48 * 1024 * 1024
+_MAX_UPLOAD = 512 * 1024 * 1024  # 512 MiB — Shadowdark PDF / large ROMs
 
 
 def _rom_folder_for(name: str) -> Path:

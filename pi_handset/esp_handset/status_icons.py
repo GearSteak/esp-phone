@@ -99,6 +99,135 @@ def rssi_to_bars(rssi: Optional[int], *, max_bars: int = 4) -> int:
     return max_bars
 
 
+class BtGlyph(QWidget):
+    """Bluetooth mark — bright when a device is connected, dim + slash otherwise."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._on = False
+        self.setFixedSize(12, 14)
+        self.setToolTip("Bluetooth")
+
+    def set_connected(self, on: bool) -> None:
+        on = bool(on)
+        if on == self._on:
+            return
+        self._on = on
+        self.update()
+
+    def paintEvent(self, _event) -> None:  # noqa: N802
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        col = QColor("#c8e0f0") if self._on else QColor("#4a5560")
+        p.setPen(QPen(col, 1.5, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+        # Runic BT shape
+        p.drawLine(6, 1, 6, 13)
+        p.drawLine(6, 1, 10, 4)
+        p.drawLine(10, 4, 6, 7)
+        p.drawLine(6, 7, 10, 10)
+        p.drawLine(10, 10, 6, 13)
+        p.drawLine(6, 7, 2, 4)
+        p.drawLine(6, 7, 2, 10)
+        if not self._on:
+            p.setPen(QPen(QColor("#ff6b6b"), 1.6, Qt.SolidLine, Qt.RoundCap))
+            p.drawLine(2, 2, 10, 12)
+
+
+class BatGlyph(QWidget):
+    """Battery icon: fill by % when UPS present; grey + slash when absent/USB."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._pct = -1  # -1 = absent
+        self._charging = False
+        self.setFixedSize(18, 12)
+        self.setToolTip("UPS battery")
+
+    def set_status(self, percent: int, *, charging: bool = False) -> None:
+        try:
+            p = int(percent)
+        except (TypeError, ValueError):
+            p = -1
+        if p < 0:
+            p = -1
+        else:
+            p = max(0, min(100, p))
+        if p == self._pct and bool(charging) == self._charging:
+            return
+        self._pct = p
+        self._charging = bool(charging)
+        if p < 0:
+            self.setToolTip("No UPS — USB / external power")
+        else:
+            tag = f"UPS {p}%"
+            if self._charging:
+                tag += " charging"
+            self.setToolTip(tag)
+        self.update()
+
+    def paintEvent(self, _event) -> None:  # noqa: N802
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        absent = self._pct < 0
+        if absent:
+            col = QColor("#4a5560")
+        elif self._pct >= 40:
+            col = QColor("#5ec4a8")
+        elif self._pct >= 20:
+            col = QColor("#e8c66a")
+        else:
+            col = QColor("#e07070")
+        # Body
+        p.setPen(QPen(col, 1.2))
+        p.setBrush(Qt.NoBrush)
+        p.drawRoundedRect(1, 2, 13, 8, 1.5, 1.5)
+        # Nipple
+        p.setBrush(col)
+        p.setPen(Qt.NoPen)
+        p.drawRect(14, 4, 2, 4)
+        if not absent:
+            fill_w = max(1, int(11 * self._pct / 100.0))
+            p.drawRoundedRect(2, 3, fill_w, 6, 1.0, 1.0)
+            if self._charging:
+                p.setPen(QPen(QColor("#0a1218"), 1.2))
+                p.drawLine(5, 8, 7, 3)
+                p.drawLine(7, 3, 8, 7)
+                p.drawLine(8, 7, 10, 3)
+        else:
+            p.setPen(QPen(QColor("#ff6b6b"), 1.6, Qt.SolidLine, Qt.RoundCap))
+            p.drawLine(3, 2, 15, 10)
+
+
+def bluetooth_connected() -> bool:
+    """True if bluetoothctl reports a connected device."""
+    try:
+        r = subprocess.run(
+            ["bluetoothctl", "devices", "Connected"],
+            capture_output=True,
+            text=True,
+            timeout=1.2,
+            check=False,
+        )
+        out = (r.stdout or "").strip()
+        if out and "Device " in out:
+            return True
+    except Exception:
+        pass
+    try:
+        r = subprocess.run(
+            ["bluetoothctl", "info"],
+            capture_output=True,
+            text=True,
+            timeout=1.2,
+            check=False,
+        )
+        if "Connected: yes" in (r.stdout or ""):
+            return True
+    except Exception:
+        pass
+    return False
+
+
 class WifiGlyph(QWidget):
     """Fan arcs — bright when connected, dim + slash when not."""
 

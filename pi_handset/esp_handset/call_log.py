@@ -88,6 +88,11 @@ def finish(
     )
 
 
+def clear() -> None:
+    """Wipe call history."""
+    store.save(LOG_NAME, [])
+
+
 def display_status(entry: Dict[str, Any]) -> str:
     st = str(entry.get("status") or "")
     if not st:

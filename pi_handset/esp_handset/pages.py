@@ -1474,7 +1474,106 @@ def make_camera_page(on_back, on_status) -> QWidget:
 
     chrome.digi_move_h = digi_move_h  # type: ignore[attr-defined]
     chrome.digi_pad_active = digi_pad_active  # type: ignore[attr-defined]
-    return chrome
+
+    # --- Chooser hub (modes + flash) before live preview ---
+    flash_state = {"on": False}
+    flash_btn = QPushButton("Flash · Off")
+    flash_btn.setMinimumHeight(32)
+    flash_btn.setFocusPolicy(Qt.StrongFocus)
+    flash_btn.setStyleSheet(
+        "QPushButton { font-size:11px; font-weight:700; color:#e8eef5;"
+        " background:#1e2a38; border:1px solid #243040; border-radius:10px; }"
+        'QPushButton[digiFocus="1"] { border:2px solid #FFE600; }'
+    )
+
+    def set_flash(on: bool) -> None:
+        flash_state["on"] = bool(on)
+        flash_btn.setText("Flash · On" if on else "Flash · Off")
+        try:
+            from esp_handset import mcp23017
+
+            mcp23017.set_output("TORCH", on)
+        except Exception:
+            pass
+
+    def toggle_flash() -> None:
+        set_flash(not flash_state["on"])
+
+    flash_btn.clicked.connect(toggle_flash)
+
+    stack = QStackedWidget()
+    chooser = QWidget()
+    c_lay = QVBoxLayout(chooser)
+    c_lay.setContentsMargins(6, 6, 6, 6)
+    c_lay.setSpacing(4)
+    hub_title = QLabel("Camera")
+    hub_title.setStyleSheet("font-size:14px; font-weight:800; color:#e8eef5;")
+    hub_title.setAlignment(Qt.AlignCenter)
+    c_lay.addWidget(hub_title)
+    c_lay.addWidget(flash_btn)
+    mode_btns = []
+
+    def open_live(mode_i: int) -> None:
+        state["mode"] = mode_i
+        paint_mode()
+        stack.setCurrentWidget(chrome)
+        QTimer.singleShot(80, start_live)
+
+    for i, (_key, lab) in enumerate(_MODES):
+        b = QPushButton(lab)
+        b.setMinimumHeight(34)
+        b.setFocusPolicy(Qt.StrongFocus)
+        b.setStyleSheet(
+            "QPushButton { font-size:12px; font-weight:700; color:#0a1218;"
+            " background:#5ec4a8; border:none; border-radius:10px; }"
+            'QPushButton[digiFocus="1"] { border:2px solid #FFE600; }'
+        )
+        b.clicked.connect(lambda _=False, mi=i: open_live(mi))
+        c_lay.addWidget(b)
+        mode_btns.append(b)
+    c_lay.addStretch(1)
+
+    # Live chrome goes back to chooser
+    def live_back() -> bool:
+        stop_live()
+        set_flash(False)
+        stack.setCurrentWidget(chooser)
+        return True
+
+    chrome.on_hardware_back = live_back  # type: ignore[attr-defined]
+    # Don't auto-start camera until a mode is chosen
+    body.showEvent = lambda e: QWidget.showEvent(body, e)  # type: ignore
+
+    stack.addWidget(chooser)
+    stack.addWidget(chrome)
+    stack.setCurrentWidget(chooser)
+
+    outer = page_chrome("Camera", stack, on_back, scroll=False)
+
+    def hub_back() -> bool:
+        if stack.currentWidget() is chrome:
+            return live_back()
+        set_flash(False)
+        return False
+
+    def hub_activate() -> bool:
+        if stack.currentWidget() is chrome:
+            return bool(do_snap())
+        return False
+
+    def hub_move_h(delta: int) -> bool:
+        if stack.currentWidget() is chrome:
+            cycle_mode(delta)
+            return True
+        return False
+
+    outer.on_hardware_back = hub_back  # type: ignore[attr-defined]
+    outer.digi_activate = hub_activate  # type: ignore[attr-defined]
+    outer.digi_move_h = hub_move_h  # type: ignore[attr-defined]
+    outer.digi_pad_active = (  # type: ignore[attr-defined]
+        lambda: stack.currentWidget() is chrome
+    )
+    return outer
 
 
 def make_gallery_page(on_back: Callable[[], None], on_status) -> QWidget:

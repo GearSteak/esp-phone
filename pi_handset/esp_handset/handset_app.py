@@ -534,24 +534,21 @@ def build_app(bridge: Optional[EspBridge], modem: Optional[Sim7600]) -> PhoneShe
     )
     shell.register_page("set_orientation", pages.make_orientation_page(back))
 
-    def browser_open():
-        try:
-            status("Opening browser…")
-            handset_apps.open_browser()
-        except Exception as e:
-            print(f"[handset] browser: {e}", flush=True)
-            shell.go("browser_stub")
+    try:
+        from esp_handset.browser_ui import make_browser_page
 
-    shell.on_browser = browser_open  # type: ignore[attr-defined]
-    shell.register_page(
-        "browser_stub",
-        pages.stub_page(
-            "Browser",
-            "No browser found.\nFrom Linux Desktop:\n  sudo apt install midori\n"
-            "Then try Browser again from home.",
-            back,
-        ),
-    )
+        shell.register_page("browser", make_browser_page(back))
+    except Exception as e:
+        print(f"[handset] browser page: {e}", flush=True)
+        shell.register_page(
+            "browser",
+            pages.stub_page(
+                "Browser",
+                "Could not load in-Digivice browser.\n"
+                "sudo apt install python3-pyqt5.qtwebengine",
+                back,
+            ),
+        )
 
     # Previously scaffolded — now implemented
     shell.register_page("calendar", features.make_calendar_page(back))
@@ -798,6 +795,8 @@ def build_app(bridge: Optional[EspBridge], modem: Optional[Sim7600]) -> PhoneShe
                     _hw_poll._warned = True  # type: ignore[attr-defined]
                 if pct > 25:
                     _hw_poll._warned = False  # type: ignore[attr-defined]
+            else:
+                shell.set_ups_battery(-1)
         except Exception:
             pass
         try:

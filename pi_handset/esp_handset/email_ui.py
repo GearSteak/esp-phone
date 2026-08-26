@@ -308,14 +308,25 @@ def _strip_html_preview(raw: str) -> str:
 
 
 def _decode_part_bytes(payload: bytes, charset: Optional[str]) -> str:
+    import quopri
+
+    raw = payload or b""
+    # Quoted-printable left as text shows literal "=0A" (Uber etc.)
+    if b"=" in raw[:800] and (
+        b"=0A" in raw or b"=0D" in raw or b"=\n" in raw or b"=\r\n" in raw
+    ):
+        try:
+            raw = quopri.decodestring(raw)
+        except Exception:
+            pass
     for enc in ((charset or "").strip(), "utf-8", "latin-1"):
         if not enc:
             continue
         try:
-            return payload.decode(enc, errors="replace")
+            return raw.decode(enc, errors="replace")
         except Exception:
             continue
-    return payload.decode("utf-8", errors="replace")
+    return raw.decode("utf-8", errors="replace")
 
 
 def _extract_text(msg) -> str:
@@ -437,6 +448,7 @@ class MailRow(QFrame):
         super().__init__(parent)
         self.msg = msg
         unread = bool(msg.get("unread"))
+        self.setMinimumWidth(160)
         self.setStyleSheet(
             f"QFrame {{ background: transparent; border: none;"
             f" border-bottom: 1px solid {_CHIP}; }}"
@@ -530,12 +542,18 @@ def make_email_page(on_back: Callable[[], None]) -> QWidget:
     lst.setFocusPolicy(Qt.StrongFocus)
     lst.setSpacing(0)
     lst.setFixedWidth(108)
+    lst.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+    lst.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
     lst.setStyleSheet(
         f"QListWidget {{ background:{_SURFACE}; border:none; border-radius:10px;"
         f" outline:none; }}"
         "QListWidget::item { background: transparent; padding:0; margin:0; }"
         f"QListWidget::item:selected {{ background:{_CHIP}; }}"
         'QListWidget[digiFocus="1"] { border:2px solid #FFE600; border-radius:10px; }'
+        "QScrollBar:horizontal { height: 8px; background: #121820; }"
+        "QScrollBar::handle:horizontal { background: #4a6a88; min-width: 20px; border-radius: 3px; }"
+        "QScrollBar:vertical { width: 8px; background: #121820; }"
+        "QScrollBar::handle:vertical { background: #4a6a88; min-height: 20px; border-radius: 3px; }"
     )
     empty = QLabel("Empty folder.\nSet Accounts → Email.")
     empty.setAlignment(Qt.AlignCenter)
@@ -854,6 +872,13 @@ def make_email_page(on_back: Callable[[], None]) -> QWidget:
                     if text:
                         break
                 if not text:
+                    typ, data = M.uid("fetch", uid_b, "(RFC822)")
+                    payloads = _fetch_payload_parts(data)
+                    if typ == "OK" and payloads:
+                        raw = payloads[0][:200_000]
+                        text = _extract_text(email_lib.message_from_bytes(raw))
+                # Prefer full RFC822 parse when peek left QP artifacts
+                if text and ("=0A" in text or "=0D" in text or "=\n" in text):
                     typ, data = M.uid("fetch", uid_b, "(RFC822)")
                     payloads = _fetch_payload_parts(data)
                     if typ == "OK" and payloads:

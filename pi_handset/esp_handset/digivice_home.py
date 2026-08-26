@@ -154,16 +154,7 @@ class DigiviceHome(QWidget):
                 cur.title,
             )
             if cur.subtitle:
-                p.setPen(QColor("#8aa"))
-                p.setFont(QFont("DejaVu Sans", 8))
-                p.drawText(
-                    stage.left() + 4,
-                    stage.bottom() - 10,
-                    stage.width() - 8,
-                    12,
-                    Qt.AlignHCenter | Qt.AlignTop,
-                    cur.subtitle,
-                )
+                pass  # Titles only — no hint text under icons
 
         # Bottom row
         draw_row(self._bot(), h - 22, 1)

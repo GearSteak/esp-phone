@@ -72,8 +72,9 @@ class GCalMonth(QWidget):
         self._month = date.today().month
         self._selected = date.today()
         self._by_day: Dict[int, List[dict]] = {}
-        self.setMinimumHeight(128)
-        self.setFocusPolicy(Qt.NoFocus)
+        self.setMinimumHeight(168)
+        self.setFocusPolicy(Qt.StrongFocus)
+        self.setProperty("digiPad", True)
         self.setStyleSheet(f"background:{_BG};")
 
     def set_month(self, year: int, month: int) -> None:
@@ -123,7 +124,7 @@ class GCalMonth(QWidget):
         cal = pycal.Calendar(firstweekday=6)  # Sunday
         weeks = cal.monthdayscalendar(self._year, self._month)
         rows = max(len(weeks), 1)
-        cell_h = max(16.0, (h - head_h) / rows)
+        cell_h = max(22.0, (h - head_h) / rows)
         today = date.today()
 
         for r, week in enumerate(weeks):
@@ -171,19 +172,17 @@ class GCalMonth(QWidget):
                     str(day),
                 )
 
-                # Event chips / dots under the number
+                # Event dots under the number
                 if evs:
-                    dot_y = y + cell_h - 7
+                    dot_y = y + min(cell_h - 6, 24)
                     n = min(3, len(evs))
-                    total = n * 5 + (n - 1) * 2
+                    total = n * 6 + (n - 1) * 2
                     start = cx - total / 2
                     for i in range(n):
                         col = QColor(_color_for(str(evs[i].get("title", ""))))
                         p.setBrush(col)
                         p.setPen(Qt.NoPen)
-                        p.drawRoundedRect(
-                            QRectF(start + i * 7, dot_y, 5, 3), 1.0, 1.0
-                        )
+                        p.drawEllipse(QRectF(start + i * 8, dot_y, 5, 5))
 
 
 def make_calendar_page(on_back: Callable[[], None]) -> QWidget:
@@ -212,7 +211,23 @@ def make_calendar_page(on_back: Callable[[], None]) -> QWidget:
     root.addLayout(head)
 
     grid = GCalMonth()
-    root.addWidget(grid, 0)
+    from PyQt5.QtWidgets import QScrollArea
+
+    grid_scroll = QScrollArea()
+    grid_scroll.setWidgetResizable(False)
+    grid_scroll.setFrameShape(QFrame.NoFrame)
+    grid_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+    grid_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+    grid_scroll.setStyleSheet(
+        "QScrollArea { background: transparent; border: none; }"
+        "QScrollBar:vertical { width: 10px; background: #202124; }"
+        "QScrollBar::handle:vertical { background: #5a6570; min-height: 24px; border-radius: 3px; }"
+    )
+    grid.setFixedWidth(220)
+    grid.setMinimumHeight(168)
+    grid_scroll.setWidget(grid)
+    grid_scroll.setFixedHeight(150)
+    root.addWidget(grid_scroll, 0)
 
     # Agenda header (selected day)
     agenda_head = QLabel("")
@@ -264,11 +279,13 @@ def make_calendar_page(on_back: Callable[[], None]) -> QWidget:
     day_next.setFixedWidth(30)
     today_btn = _btn("Today")
     del_btn = _btn("Del")
+    sync_btn = _btn("Sync")
     add_btn = _btn("＋", fab=True)
     bar.addWidget(day_prev)
     bar.addWidget(day_next)
     bar.addWidget(today_btn)
     bar.addWidget(del_btn)
+    bar.addWidget(sync_btn)
     bar.addStretch(1)
     bar.addWidget(add_btn)
     root.addLayout(bar)
@@ -324,7 +341,7 @@ def make_calendar_page(on_back: Callable[[], None]) -> QWidget:
         editor.setVisible(show)
         lst.setVisible(not show)
         agenda_head.setVisible(not show)
-        for w in (day_prev, day_next, today_btn, del_btn, add_btn):
+        for w in (day_prev, day_next, today_btn, del_btn, sync_btn, add_btn):
             w.setVisible(not show)
         if show:
             title_in.clear()
@@ -363,6 +380,46 @@ def make_calendar_page(on_back: Callable[[], None]) -> QWidget:
         grid.shift_day(delta)
         refresh()
 
+    def do_sync() -> None:
+        """Pull Google Calendar via secret iCal URL (IMAP login is not enough)."""
+        url = str(store.load("calendar_ical_url", "") or "").strip()
+        if not url:
+            agenda_head.setText(
+                "Set iCal URL in ~/.esp-handset/calendar_ical_url"
+            )
+            return
+        try:
+            import urllib.request
+            from icalendar import Calendar  # type: ignore
+        except Exception:
+            agenda_head.setText("Need: pip install icalendar")
+            return
+        try:
+            with urllib.request.urlopen(url, timeout=20) as resp:
+                raw = resp.read()
+            cal = Calendar.from_ical(raw)
+            events = []
+            for comp in cal.walk():
+                if comp.name != "VEVENT":
+                    continue
+                dt = comp.get("dtstart")
+                summary = str(comp.get("summary") or "Event")
+                if dt is None:
+                    continue
+                val = dt.dt
+                if hasattr(val, "date"):
+                    d = val.date() if hasattr(val, "hour") else val
+                else:
+                    continue
+                events.append({"date": d.isoformat(), "title": summary, "src": "ical"})
+            # Keep local-only events (no src) + replace prior ical
+            local = [e for e in _events() if e.get("src") != "ical"]
+            store.save("calendar.json", local + events)
+            agenda_head.setText(f"Synced {len(events)} Google events")
+            refresh()
+        except Exception as e:
+            agenda_head.setText(f"Sync failed: {str(e)[:40]}")
+
     prev_btn.clicked.connect(lambda: shift_month(-1))
     next_btn.clicked.connect(lambda: shift_month(1))
     day_prev.clicked.connect(lambda: nudge(-1))
@@ -374,8 +431,30 @@ def make_calendar_page(on_back: Callable[[], None]) -> QWidget:
     cancel_btn.clicked.connect(lambda: show_editor(False))
     save_btn.clicked.connect(do_save)
     del_btn.clicked.connect(do_del)
+    sync_btn.clicked.connect(do_sync)
 
     page = page_chrome("Calendar", body, None, scroll=False)
+
+    def digi_move_h(delta: int) -> bool:
+        nudge(delta)
+        return True
+
+    def digi_move_v(delta: int) -> bool:
+        bar = grid_scroll.verticalScrollBar()
+        if bar.maximum() > bar.minimum():
+            step = max(18, bar.singleStep() * 2)
+            bar.setValue(bar.value() + int(delta) * step)
+            return True
+        # No overflow — step a week of days
+        nudge(7 if delta > 0 else -7)
+        return True
+
+    def digi_pad_active() -> bool:
+        return not state["edit"]
+
+    page.digi_move_h = digi_move_h  # type: ignore[attr-defined]
+    page.digi_move_v = digi_move_v  # type: ignore[attr-defined]
+    page.digi_pad_active = digi_pad_active  # type: ignore[attr-defined]
     page.digi_seek = lambda _d: False  # type: ignore[attr-defined]
     page.digi_seek_active = lambda: False  # type: ignore[attr-defined]
     refresh()

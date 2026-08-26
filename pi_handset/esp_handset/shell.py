@@ -81,7 +81,7 @@ class PhoneShell(QMainWindow):
     """Digivice: two-row home, radial folders, hard-button nav apps."""
 
     # Emitted from worker threads → slots update glyphs on the UI thread
-    net_status = pyqtSignal(bool, int, bool)  # wifi_on, cell_bars, cell_known
+    net_status = pyqtSignal(bool, int, bool, bool)  # wifi, bars, known, bt
 
     def __init__(self):
         super().__init__()
@@ -126,7 +126,9 @@ class PhoneShell(QMainWindow):
             "font-weight: 700; font-size: 10px; color:#e8eef5; font-family: monospace;"
         )
         self.date_lab = QLabel("")
-        self.date_lab.setStyleSheet("font-size: 9px; color:#8a9aaa;")
+        self.date_lab.setStyleSheet(
+            "font-size: 9px; font-weight:700; color:#e8eef5; font-family: monospace;"
+        )
         left.addWidget(self.clock_lab)
         left.addWidget(self.date_lab)
         s_lay.addLayout(left)
@@ -136,22 +138,16 @@ class PhoneShell(QMainWindow):
         self.title_lab.setStyleSheet("font-weight: 700; font-size: 10px; color: #e8eef5;")
         s_lay.addWidget(self.title_lab, 1)
 
-        # Right: Wi‑Fi + cellular bars (not modem text)
-        from esp_handset.status_icons import CellGlyph, WifiGlyph
+        # Right: cart · UPS bat · BT · Wi‑Fi · cellular (no Heltec %)
+        from esp_handset.status_icons import BatGlyph, BtGlyph, CellGlyph, WifiGlyph
 
         self.wifi_glyph = WifiGlyph()
         self.cell_glyph = CellGlyph()
+        self.bt_glyph = BtGlyph()
+        self.bat_glyph = BatGlyph()
         self.heltec_bat_lab = QLabel("")
-        self.heltec_bat_lab.setStyleSheet(
-            "font-size:9px; font-weight:700; color:#9ab; font-family:monospace;"
-        )
-        self.heltec_bat_lab.setToolTip("Heltec Tracker battery")
         self.heltec_bat_lab.hide()
         self.ups_bat_lab = QLabel("")
-        self.ups_bat_lab.setStyleSheet(
-            "font-size:9px; font-weight:700; color:#9ab; font-family:monospace;"
-        )
-        self.ups_bat_lab.setToolTip("UPS pack (3S)")
         self.ups_bat_lab.hide()
         self.cart_lab = QLabel("")
         self.cart_lab.setStyleSheet(
@@ -159,15 +155,14 @@ class PhoneShell(QMainWindow):
         )
         self.cart_lab.setToolTip("USB cartridge inserted")
         self.cart_lab.hide()
-        # Keep signal_lab as a hidden compatibility hook for old checks
         self.signal_lab = QLabel("")
         self.signal_lab.hide()
         right = QHBoxLayout()
-        right.setSpacing(4)
+        right.setSpacing(3)
         right.setContentsMargins(0, 0, 0, 0)
         right.addWidget(self.cart_lab, 0, Qt.AlignVCenter)
-        right.addWidget(self.ups_bat_lab, 0, Qt.AlignVCenter)
-        right.addWidget(self.heltec_bat_lab, 0, Qt.AlignVCenter)
+        right.addWidget(self.bat_glyph, 0, Qt.AlignVCenter)
+        right.addWidget(self.bt_glyph, 0, Qt.AlignVCenter)
         right.addWidget(self.wifi_glyph, 0, Qt.AlignVCenter)
         right.addWidget(self.cell_glyph, 0, Qt.AlignVCenter)
         s_lay.addLayout(right)
@@ -409,42 +404,18 @@ class PhoneShell(QMainWindow):
         self._flash_timer.start(2200)
 
     def set_heltec_battery(self, percent: int, *, mv: int = 0) -> None:
-        """Show Heltec LiPo % in the status bar (from BATTERY / STATUS lines)."""
-        del mv
-        try:
-            p = int(percent)
-        except (TypeError, ValueError):
-            return
-        if p < 0:
-            self.heltec_bat_lab.hide()
-            return
-        p = max(0, min(100, p))
-        color = "#5ec4a8" if p >= 40 else ("#e8c66a" if p >= 20 else "#e07070")
-        self.heltec_bat_lab.setStyleSheet(
-            f"font-size:9px; font-weight:700; color:{color}; font-family:monospace;"
-        )
-        self.heltec_bat_lab.setText(f"H{p}%")
-        self.heltec_bat_lab.show()
+        """Ignored — Digivice only shows UPS pack %, not Heltec LiPo."""
+        del percent, mv
 
     def set_ups_battery(self, percent: int, *, charging: bool = False) -> None:
-        """Show UPS 3S pack % from INA219 (Pi I2C @ 0x41)."""
+        """UPS 3S pack via BatGlyph. percent < 0 → absent / USB power."""
         try:
-            p = int(percent)
-        except (TypeError, ValueError):
-            return
-        if p < 0:
-            self.ups_bat_lab.hide()
-            return
-        p = max(0, min(100, p))
-        color = "#5ec4a8" if p >= 40 else ("#e8c66a" if p >= 20 else "#e07070")
-        self.ups_bat_lab.setStyleSheet(
-            f"font-size:9px; font-weight:700; color:{color}; font-family:monospace;"
-        )
-        tag = f"P{p}%"
-        if charging:
-            tag = f"P{p}%+"
-        self.ups_bat_lab.setText(tag)
-        self.ups_bat_lab.show()
+            self.bat_glyph.set_status(int(percent), charging=charging)
+        except Exception:
+            try:
+                self.bat_glyph.set_status(-1)
+            except Exception:
+                pass
 
     def set_cart_label(self, title: str) -> None:
         t = (title or "").strip()
@@ -467,17 +438,20 @@ class PhoneShell(QMainWindow):
         self._modem_signal_fn = fn
         QTimer.singleShot(400, self._tick_network)
 
-    def _apply_net_status(self, wifi_on: bool, bars: int, known: bool) -> None:
+    def _apply_net_status(
+        self, wifi_on: bool, bars: int, known: bool, bt_on: bool = False
+    ) -> None:
         try:
             self.wifi_glyph.set_connected(bool(wifi_on))
             self.cell_glyph.set_bars(int(bars), known=bool(known))
+            self.bt_glyph.set_connected(bool(bt_on))
         except Exception:
             pass
         finally:
             self._net_busy = False
 
     def _tick_network(self) -> None:
-        """Probe Wi‑Fi + CSQ off the UI thread; apply via net_status signal."""
+        """Probe Wi‑Fi + CSQ + BT off the UI thread; apply via net_status signal."""
         if self._net_busy:
             return
         self._net_busy = True
@@ -487,8 +461,10 @@ class PhoneShell(QMainWindow):
             wifi_on = False
             bars = 0
             known = False
+            bt_on = False
             try:
                 from esp_handset.status_icons import (
+                    bluetooth_connected,
                     parse_csq_rssi,
                     rssi_to_bars,
                     wifi_is_up,
@@ -498,6 +474,10 @@ class PhoneShell(QMainWindow):
                     wifi_on = bool(wifi_is_up())
                 except Exception:
                     wifi_on = False
+                try:
+                    bt_on = bool(bluetooth_connected())
+                except Exception:
+                    bt_on = False
                 line = None
                 if callable(fn):
                     try:
@@ -510,7 +490,12 @@ class PhoneShell(QMainWindow):
             except Exception:
                 pass
             try:
-                self.net_status.emit(wifi_on, bars, known)
+                self.net_status.emit(wifi_on, bars, known, bt_on)
+            except TypeError:
+                try:
+                    self.net_status.emit(wifi_on, bars, known)
+                except Exception:
+                    self._net_busy = False
             except Exception:
                 self._net_busy = False
 
@@ -649,11 +634,6 @@ class PhoneShell(QMainWindow):
             if handler:
                 handler()
             return
-        if key == "browser":
-            handler = getattr(self, "on_browser", None)
-            if callable(handler):
-                handler()
-                return
         if key in self.pages:
             self.go(key)
             return
