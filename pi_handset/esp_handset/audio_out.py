@@ -163,6 +163,28 @@ def play_test_tone(*, seconds: float = 4.0) -> bool:
 
 
 def _alsa_play(wav: Path, secs: float) -> Tuple[bool, str]:
+    if not which("aplay"):
+        return False, "aplay missing"
+
+    # Dual route: pcm.!default tees to jack + USB
+    try:
+        from esp_handset.alsa_dual import dual_playback_ready
+
+        if dual_playback_ready():
+            for dev in ("default", "digivice_dual"):
+                cmd = ["aplay", "-D", dev, "-q", str(wav)]
+                for attempt in (1, 2):
+                    _log(f"dual try {attempt}: {' '.join(cmd)}")
+                    code, out = _run(cmd, timeout=secs + 5.0)
+                    if code in (0, 124):
+                        return True, f"{AUDIO_BUILD} {dev} dual"
+                    if _is_524(out) or "busy" in out.lower():
+                        time.sleep(2.0)
+                        continue
+                    break
+    except Exception:
+        pass
+
     cards = _aplay_cards()
     if not cards:
         return False, "no ALSA card"
@@ -178,8 +200,6 @@ def _alsa_play(wav: Path, secs: float) -> Tuple[bool, str]:
         f"hw:{card},0",
     ]
     last = "no play"
-    if not which("aplay"):
-        return False, "aplay missing"
 
     for dev in devices:
         cmd = ["aplay", "-D", dev, "-q", str(wav)]

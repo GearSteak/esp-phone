@@ -363,43 +363,57 @@ def _linphonerc_path() -> Path:
 
 
 def _alsa_voip_devices() -> Tuple[str, str, str]:
-    """ALSA labels for linphone: (playback, capture, ringer). Pi 4 jack preferred for out."""
+    """ALSA labels for linphone: (playback, capture, ringer). Dual = jack + USB tee."""
     try:
-        r = subprocess.run(
-            ["aplay", "-l"],
-            capture_output=True,
-            text=True,
-            timeout=5.0,
-            check=False,
-        )
+        from esp_handset.alsa_dual import card_sets, voip_playback_label
+
+        dual_pb = voip_playback_label()
+        hp_short, hp_label, usb_short, usb_label = card_sets()
     except Exception:
-        d = "ALSA: default"
-        return d, d, d
-    lines = (r.stdout or "").splitlines()
-    usb = ""
-    headphones = ""
-    other = ""
-    for line in lines:
-        m = re.match(r"^card \d+:\s*\S+\s*\[([^\]]+)\]", line)
-        if not m:
-            continue
-        low = line.lower()
-        if any(x in low for x in ("hdmi", "vc4")):
-            continue
-        name = m.group(1).strip()
-        if not name:
-            continue
-        label = f"ALSA: {name}"
-        if "usb" in low or "device" in low or "cm10" in low or "headset" in low:
-            usb = usb or label
-        elif "bcm2835" in low or "headphones" in low or "headphone" in low:
-            headphones = headphones or label
-        else:
-            other = other or label
-    # Playback: Pi 4 3.5 mm jack first, then USB DAC (Pi Zero)
-    playback = headphones or usb or other or "ALSA: default"
-    # Capture: USB mic when present (jack is playback-only on Pi 4)
-    capture = usb or headphones or other or "ALSA: default"
+        dual_pb = None
+        hp_short = hp_label = usb_short = usb_label = None
+
+    usb = f"ALSA: {usb_label}" if usb_label else ""
+    headphones = f"ALSA: {hp_label}" if hp_label else ""
+
+    if not usb and not headphones:
+        try:
+            r = subprocess.run(
+                ["aplay", "-l"],
+                capture_output=True,
+                text=True,
+                timeout=5.0,
+                check=False,
+            )
+        except Exception:
+            d = "ALSA: default"
+            return d, d, d
+        lines = (r.stdout or "").splitlines()
+        other = ""
+        for line in lines:
+            m = re.match(r"^card \d+:\s*\S+\s*\[([^\]]+)\]", line)
+            if not m:
+                continue
+            low = line.lower()
+            if any(x in low for x in ("hdmi", "vc4")):
+                continue
+            name = m.group(1).strip()
+            if not name:
+                continue
+            label = f"ALSA: {name}"
+            if "usb" in low or "device" in low or "cm10" in low or "headset" in low:
+                usb = usb or label
+            elif "bcm2835" in low or "headphones" in low or "headphone" in low:
+                headphones = headphones or label
+            else:
+                other = other or label
+
+    # Both plugged in → ALSA default pcm.!default mirrors to jack + USB
+    if dual_pb:
+        playback = dual_pb
+    else:
+        playback = headphones or usb or "ALSA: default"
+    capture = usb or headphones or "ALSA: default"
     ringer = playback
     return playback, capture, ringer
 

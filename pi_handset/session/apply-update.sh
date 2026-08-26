@@ -411,11 +411,15 @@ if [[ -f "$PREFIX/session/ensure-libretro-cores.sh" ]]; then
     || log "WARN: digivice-libretro-cores failed/timed out — check $LOG"
 fi
 
-# Pi 4 onboard 3.5 mm jack — unmute PCM (VoIP + UI beeps)
+# Pi headphone jack + USB dongle — mirror playback to both (ALSA tee)
 if [[ -f "$PREFIX/session/digivice-analog-audio.sh" ]]; then
   install -m 755 "$PREFIX/session/digivice-analog-audio.sh" /usr/local/bin/digivice-analog-audio
-  log "Pi analog audio (headphone jack)…"
+  log "Dual audio (jack + USB when both plugged in)…"
   bash /usr/local/bin/digivice-analog-audio >>"$LOG" 2>&1 || true
+  if [[ -x /usr/local/bin/digivice-sip-sync ]]; then
+    sudo -u "$USER_NAME" env HOME="$USER_HOME" \
+      /usr/local/bin/digivice-sip-sync >>"$LOG" 2>&1 || true
+  fi
 fi
 
 # Sealed-case CM108: keep wake helper + boot unit after GUI apply

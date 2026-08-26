@@ -389,7 +389,7 @@ fi
 if [[ -f "$ROOT/session/digivice-analog-audio.sh" ]]; then
   install -m 755 "$ROOT/session/digivice-analog-audio.sh" "$PREFIX/session/digivice-analog-audio.sh"
   install -m 755 "$ROOT/session/digivice-analog-audio.sh" /usr/local/bin/digivice-analog-audio
-  log "Pi analog audio (3.5 mm jack)…"
+  log "Dual audio (jack + USB when both plugged in)…"
   bash /usr/local/bin/digivice-analog-audio 2>&1 | tee -a "$LOG" | tail -n 10 || true
 fi
 
