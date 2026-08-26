@@ -47,6 +47,7 @@ _csh_poll_lock = threading.Lock()
 _csh_poll_info: Optional[CallInfo] = None  # filled after CallInfo exists; see _ensure_csh_poller
 _csh_poll_thread: Optional[threading.Thread] = None
 _csh_poll_stop = threading.Event()
+_csh_idle_streak = 0
 _LOG = Path.home() / ".esp-handset" / "sip-last.log"
 _CORE_LOG = Path.home() / ".esp-handset" / "linphone-core.log"
 _REPORT = Path.home() / ".esp-handset" / "sip-doctor.txt"
@@ -362,7 +363,7 @@ def _linphonerc_path() -> Path:
 
 
 def _alsa_usb_label() -> str:
-    """Card name linphonec's ALSA backend understands (skip HDMI)."""
+    """Best ALSA card for VoIP: USB first, then Headphones — never HDMI."""
     try:
         r = subprocess.run(
             ["aplay", "-l"],
@@ -373,16 +374,28 @@ def _alsa_usb_label() -> str:
         )
     except Exception:
         return "ALSA: default"
-    for line in (r.stdout or "").splitlines():
+    lines = (r.stdout or "").splitlines()
+    usb = ""
+    headphones = ""
+    other = ""
+    for line in lines:
         m = re.match(r"^card \d+:\s*\S+\s*\[([^\]]+)\]", line)
         if not m:
             continue
-        if any(x in line.lower() for x in ("hdmi", "vc4", "bcm2835")):
+        low = line.lower()
+        if any(x in low for x in ("hdmi", "vc4")):
             continue
         name = m.group(1).strip()
-        if name:
-            return f"ALSA: {name}"
-    return "ALSA: default"
+        if not name:
+            continue
+        label = f"ALSA: {name}"
+        if "usb" in low or "device" in low or "cm10" in low or "headset" in low:
+            usb = usb or label
+        elif "bcm2835" in low or "headphones" in low:
+            headphones = headphones or label
+        else:
+            other = other or label
+    return usb or other or headphones or "ALSA: default"
 
 
 def _local_ipv4() -> str:
@@ -436,7 +449,7 @@ def _write_linphonerc(env: Dict[str, str]) -> Optional[Path]:
         "[rtp]\n"
         "audio_rtp_port=7078\n"
         "audio_jitt_comp=60\n"
-        "nortp_timeout=30\n"
+        "nortp_timeout=120\n"
         "\n"
         "[net]\n"
         "firewall_policy=0\n"
@@ -1637,15 +1650,34 @@ def _csh_cmd(*args: str, timeout: float = 8.0, quiet: bool = False) -> str:
     return out
 
 
+def _csh_call_live(text: str) -> bool:
+    """True while SIP still owns a session (ringing, answered, or renegotiating)."""
+    s = (text or "").lower()
+    if not s.strip():
+        return False
+    return bool(
+        re.search(
+            r"(?i)call out|hook=sip:|hook=offhook|hook=dialing|"
+            r"duration=\d+|StreamsRunning|OutgoingRinging|"
+            r"OutgoingProgress|Establishing call|Calling ",
+            s,
+        )
+    )
+
+
 def _csh_no_call(text: str) -> bool:
     s = (text or "").lower()
+    if _csh_call_live(s):
+        return False
+    # Empty / unknown: do not treat as hung up (status blips on answer)
+    if not s.strip():
+        return False
     return (
-        (not s)
-        or ("no active call" in s)
-        or ("no call" in s)
+        ("no active call" in s)
+        or ("no active calls" in s)
+        or s.strip() in ("no call", "idle")
         or ("hook=onhook" in s)
         or ("hook=on-hook" in s)
-        or s.strip() == "idle"
     )
 
 
@@ -1956,20 +1988,43 @@ def _ensure_csh_poller() -> None:
     global _csh_poll_thread
 
     def loop() -> None:
-        global _active_backend, _csh_poll_info
+        global _active_backend, _csh_poll_info, _csh_idle_streak
         while not _csh_poll_stop.is_set():
             if _active_backend != "csh":
+                _csh_idle_streak = 0
                 _csh_poll_stop.wait(0.4)
                 continue
             try:
                 hook = _csh_cmd("status", "hook", timeout=0.5, quiet=True)
-                # One cheap status is enough for UI — skip "states calls" spam
+                # Empty/failed status: keep last poll (answer renegotiation)
+                if not (hook or "").strip():
+                    _csh_poll_stop.wait(0.8)
+                    continue
                 phase = _csh_phase(hook, "")
-                if _csh_no_call(hook):
-                    phase = "idle"
-                    _active_backend = None
-                elif not phase or phase == "idle":
-                    phase = "dialing"
+                live = _csh_call_live(hook)
+                # Answer / media can briefly look idle — need sustained no-call
+                if live:
+                    _csh_idle_streak = 0
+                    if not phase or phase == "idle":
+                        phase = "dialing"
+                elif _csh_no_call(hook) or phase == "idle":
+                    _csh_idle_streak += 1
+                    if _csh_idle_streak < 4:
+                        with _csh_poll_lock:
+                            prev = _csh_poll_info
+                        phase = (
+                            prev.phase
+                            if prev is not None and prev.phase not in ("idle", "ending")
+                            else "dialing"
+                        )
+                    else:
+                        phase = "idle"
+                        _active_backend = None
+                        _csh_idle_streak = 0
+                else:
+                    _csh_idle_streak = 0
+                    if not phase or phase == "idle":
+                        phase = "dialing"
                 info = CallInfo(raw=hook, phase=phase, state=phase)
                 with _csh_poll_lock:
                     _csh_poll_info = info

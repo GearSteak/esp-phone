@@ -461,6 +461,7 @@ class CallController(QObject):
         self._ring_started = time.time()
         self._saw_progress = False
         self._saw_remote_ring = False
+        self._active_idle_hits = 0
         self._phase = "dialing"
         self._awaiting_dial = True
         self._dial_gen += 1
@@ -711,8 +712,14 @@ class CallController(QObject):
             if info.phase in ("ending", "idle"):
                 if self._user_hangup:
                     return
-                # Ignore brief idle blips while a call is still negotiating
-                if elapsed < 12.0:
+                raw = (info.raw or "").lower()
+                if re.search(
+                    r"call out|duration=\d+|hook=sip:|StreamsRunning|OutgoingRinging",
+                    raw,
+                ):
+                    return
+                # Ignore brief idle blips (answer / media renegotiation)
+                if elapsed < 20.0:
                     return
                 if not self._saw_progress and elapsed > 25.0:
                     why = _screen_detail(
@@ -736,6 +743,13 @@ class CallController(QObject):
                 return
             # Still dialing/ringing according to linphone
             if elapsed >= self._ring_timeout_s:
+                raw = (info.raw or "").lower()
+                # Still on the wire (answered or still ringing) — do not kill it
+                if re.search(
+                    r"call out|duration=\d+|hook=sip:|StreamsRunning|OutgoingRinging",
+                    raw,
+                ):
+                    return
                 sip_call.hangup()
                 if self._saw_remote_ring:
                     self._finish("no_answer")
@@ -752,9 +766,25 @@ class CallController(QObject):
             ov = getattr(self.shell, "_active_call", None)
             if ov is not None and ov.mode == "active" and self._talk_started:
                 ov.set_elapsed(int(time.time() - self._talk_started))
+            raw = (info.raw or "").lower()
+            still_live = bool(
+                re.search(
+                    r"call out|duration=\d+|hook=sip:|StreamsRunning|hook=offhook",
+                    raw,
+                )
+            )
+            if still_live:
+                self._active_idle_hits = 0
+                return
             if info.phase in ("idle", "ending", "error"):
                 if self._user_hangup:
                     return
+                # Don't tear down on a single idle poll right after answer
+                idle_hits = getattr(self, "_active_idle_hits", 0) + 1
+                self._active_idle_hits = idle_hits
+                if idle_hits < 4:
+                    return
+                self._active_idle_hits = 0
                 dur = int(time.time() - self._talk_started) if self._talk_started else 0
                 clog.finish(self._entry_id, status="ended", duration_s=dur)
                 clog.update(self._entry_id, answered=True, status="ended")
@@ -762,6 +792,8 @@ class CallController(QObject):
                 self._show_ended("Call ended", self._fmt_dur(dur))
                 self.state_changed.emit("ended")
                 self._clear_soon()
+            else:
+                self._active_idle_hits = 0
 
     def _prompt_incoming(self, number: str) -> None:
         name = ""
