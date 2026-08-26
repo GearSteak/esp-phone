@@ -411,6 +411,13 @@ if [[ -f "$PREFIX/session/ensure-libretro-cores.sh" ]]; then
     || log "WARN: digivice-libretro-cores failed/timed out — check $LOG"
 fi
 
+# Pi 4 onboard 3.5 mm jack — unmute PCM (VoIP + UI beeps)
+if [[ -f "$PREFIX/session/digivice-analog-audio.sh" ]]; then
+  install -m 755 "$PREFIX/session/digivice-analog-audio.sh" /usr/local/bin/digivice-analog-audio
+  log "Pi analog audio (headphone jack)…"
+  bash /usr/local/bin/digivice-analog-audio >>"$LOG" 2>&1 || true
+fi
+
 # Sealed-case CM108: keep wake helper + boot unit after GUI apply
 if [[ -f "$PREFIX/session/digivice-cm108-wake.sh" ]]; then
   install -m 755 "$PREFIX/session/digivice-cm108-wake.sh" /usr/local/bin/digivice-cm108-wake

@@ -67,15 +67,23 @@ def _aplay_cards() -> list:
     _code, out = _run(["aplay", "-l"], timeout=8)
     _log(out or "(aplay -l empty)")
     cards = []
+    headphones = []
     for line in out.splitlines():
         m = re.match(r"^card (\d+):\s*(\S+)", line)
         if not m:
             continue
         low = line.lower()
-        if any(x in low for x in ("hdmi", "vc4", "bcm2835")):
+        if any(x in low for x in ("hdmi", "vc4")):
             continue
-        cards.append((m.group(1), m.group(2), line))
-    return cards
+        entry = (m.group(1), m.group(2), line)
+        if "bcm2835" in low or "headphones" in low or "headphone" in low:
+            headphones.append(entry)
+        elif any(x in low for x in ("hdmi", "vc4", "bcm2835")):
+            continue
+        else:
+            cards.append(entry)
+    # USB / other first; Pi 4 onboard jack when no USB DAC
+    return cards + headphones
 
 
 def _usb_card() -> Optional[str]:

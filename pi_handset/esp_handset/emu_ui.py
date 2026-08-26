@@ -252,6 +252,11 @@ def list_roms(sys: EmuSystem) -> List[Path]:
     cart_entries = _cart_games_for_system(sys)
     if cart_entries:
         return [p for _, p in cart_entries]
+    return list_local_roms(sys)
+
+
+def list_local_roms(sys: EmuSystem) -> List[Path]:
+    """Scan on-disk ROM folders (ignores cart takeover shortcut)."""
     found: List[Path] = []
     seen = set()
     ensure_rom_dir(sys)
@@ -1340,14 +1345,14 @@ def make_emu_page(
         if state["cover_busy"]:
             status.setText("Cover sync already running…")
             return
-        roms = [p for p in list_roms(system) if p.is_file()]
+        roms = [p for p in list_local_roms(system) if p.is_file()]
         if not roms:
             status.setText("No ROMs to cover — Wi‑Fi transfer first")
             return
 
         class _CoverWorker(QThread):
             progress = pyqtSignal(int, int, str)
-            finished_ok = pyqtSignal(int, int, int)
+            finished_ok = pyqtSignal(int, int, int, str)
 
             def run(self) -> None:  # noqa: N802
                 from esp_handset.cover_sync import sync_covers
@@ -1355,7 +1360,7 @@ def make_emu_page(
                 def prog(i: int, n: int, name: str) -> None:
                     self.progress.emit(i, n, name)
 
-                got, had, fail = sync_covers(
+                got, had, fail, hint = sync_covers(
                     roms,
                     system_key=system.key,
                     folder=system.folder,
@@ -1363,7 +1368,7 @@ def make_emu_page(
                     overwrite=False,
                     on_progress=prog,
                 )
-                self.finished_ok.emit(got, had, fail)
+                self.finished_ok.emit(got, had, fail, hint)
 
         worker = _CoverWorker()
         state["cover_busy"] = True
@@ -1374,12 +1379,13 @@ def make_emu_page(
             short = name if len(name) <= 22 else name[:19] + "…"
             status.setText(f"Cover sync {i}/{n} · {short}")
 
-        def on_done(got: int, had: int, fail: int) -> None:
+        def on_done(got: int, had: int, fail: int, hint: str) -> None:
             state["cover_busy"] = False
             covers_btn.setEnabled(True)
-            status.setText(
-                f"Covers: {got} new · {had} kept · {fail} miss"
-            )
+            msg = f"Covers: {got} new · {had} kept · {fail} miss"
+            if fail and got == 0 and hint:
+                msg += f" · {hint[:36]}"
+            status.setText(msg)
             refresh_list()
             QTimer.singleShot(0, _focus_shelf)
             worker.deleteLater()

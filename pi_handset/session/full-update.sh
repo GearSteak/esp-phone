@@ -386,6 +386,13 @@ if [[ -f "$ROOT/session/digivice-audio-fix.sh" ]]; then
   install -m 755 "$ROOT/session/digivice-audio-fix.sh" "$PREFIX/session/digivice-audio-fix.sh"
   install -m 755 "$ROOT/session/digivice-audio-fix.sh" /usr/local/bin/digivice-audio-fix
 fi
+if [[ -f "$ROOT/session/digivice-analog-audio.sh" ]]; then
+  install -m 755 "$ROOT/session/digivice-analog-audio.sh" "$PREFIX/session/digivice-analog-audio.sh"
+  install -m 755 "$ROOT/session/digivice-analog-audio.sh" /usr/local/bin/digivice-analog-audio
+  log "Pi analog audio (3.5 mm jack)…"
+  bash /usr/local/bin/digivice-analog-audio 2>&1 | tee -a "$LOG" | tail -n 10 || true
+fi
+
 if [[ -f "$ROOT/session/digivice-cm108-beep.sh" ]]; then
   install -m 755 "$ROOT/session/digivice-cm108-beep.sh" "$PREFIX/session/digivice-cm108-beep.sh"
   install -m 755 "$ROOT/session/digivice-cm108-beep.sh" /usr/local/bin/digivice-cm108-beep

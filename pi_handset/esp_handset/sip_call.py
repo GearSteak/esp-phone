@@ -362,8 +362,8 @@ def _linphonerc_path() -> Path:
     return Path.home() / ".esp-handset" / "linphonerc"
 
 
-def _alsa_usb_label() -> str:
-    """Best ALSA card for VoIP: USB first, then Headphones — never HDMI."""
+def _alsa_voip_devices() -> Tuple[str, str, str]:
+    """ALSA labels for linphone: (playback, capture, ringer). Pi 4 jack preferred for out."""
     try:
         r = subprocess.run(
             ["aplay", "-l"],
@@ -373,7 +373,8 @@ def _alsa_usb_label() -> str:
             check=False,
         )
     except Exception:
-        return "ALSA: default"
+        d = "ALSA: default"
+        return d, d, d
     lines = (r.stdout or "").splitlines()
     usb = ""
     headphones = ""
@@ -391,11 +392,21 @@ def _alsa_usb_label() -> str:
         label = f"ALSA: {name}"
         if "usb" in low or "device" in low or "cm10" in low or "headset" in low:
             usb = usb or label
-        elif "bcm2835" in low or "headphones" in low:
+        elif "bcm2835" in low or "headphones" in low or "headphone" in low:
             headphones = headphones or label
         else:
             other = other or label
-    return usb or other or headphones or "ALSA: default"
+    # Playback: Pi 4 3.5 mm jack first, then USB DAC (Pi Zero)
+    playback = headphones or usb or other or "ALSA: default"
+    # Capture: USB mic when present (jack is playback-only on Pi 4)
+    capture = usb or headphones or other or "ALSA: default"
+    ringer = playback
+    return playback, capture, ringer
+
+
+def _alsa_usb_label() -> str:
+    """Legacy single device — playback path."""
+    return _alsa_voip_devices()[0]
 
 
 def _local_ipv4() -> str:
@@ -424,7 +435,7 @@ def _write_linphonerc(env: Dict[str, str]) -> Optional[Path]:
     display = (env.get("SIP_DISPLAY") or user or "Digivice").strip()
     if not user or not server or not password:
         return None
-    sound = _alsa_usb_label()
+    playback, capture, ringer = _alsa_voip_devices()
     ip = _local_ipv4() or "127.0.0.1"
     ha1 = hashlib.md5(f"{user}:{server}:{password}".encode("utf-8")).hexdigest()
     _prepare_linphone_home()
@@ -457,9 +468,9 @@ def _write_linphonerc(env: Dict[str, str]) -> Optional[Path]:
         "\n"
         "[sound]\n"
         "echocancellation=0\n"
-        f"playback_dev_id={sound}\n"
-        f"capture_dev_id={sound}\n"
-        f"ringer_dev_id={sound}\n"
+        f"playback_dev_id={playback}\n"
+        f"capture_dev_id={capture}\n"
+        f"ringer_dev_id={ringer}\n"
         "\n"
         "[audio_codec_0]\n"
         "mime=PCMU\n"
@@ -1359,7 +1370,7 @@ class LinphoneEngine:
         last_err = ""
         started = False
         for args in attempts:
-            _log(f"start {' '.join(args)} sound={_alsa_usb_label()}")
+            _log(f"start {' '.join(args)} sound={_alsa_voip_devices()}")
             try:
                 self._spawn(args)
             except Exception as e:
