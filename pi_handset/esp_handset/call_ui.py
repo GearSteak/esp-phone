@@ -676,7 +676,7 @@ class CallController(QObject):
                 ov = getattr(self.shell, "_active_call", None)
                 if ov is not None:
                     ov.set_ringing_hint("Ringing")
-            # Only real answer → Connected. "Call out" is still dialing/ringing.
+            # Call out / StreamsRunning → Connected (answered)
             if info.phase == "active":
                 self._answered = True
                 self._talk_started = time.time()

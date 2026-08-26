@@ -1690,19 +1690,26 @@ def _csh_calls(*, quiet: bool = False) -> str:
 
 def _csh_phase(hook: str, calls: str) -> str:
     raw = f"{hook}\n{calls}"
-    # Answered ONLY on real media — Digivice used to treat "Call out, duration=N"
-    # as Connected while the cell never rang.
-    if re.search(r"(?i)StreamsRunning|LinphoneCallConnected|Call answered", raw):
+    # linphonec status hook (authoritative):
+    #   Call out, duration=N  → outbound StreamsRunning/Connected (ANSWERED)
+    #   hook=answered         → inbound answered
+    #   hook=ringing          → OutgoingRinging (far end ringing)
+    #   hook=dialing          → OutgoingProgress
+    # Digivice used to map "Call out" → Ringing, so Connected never appeared.
+    if re.search(
+        r"(?i)Call out|hook=answered|"
+        r"StreamsRunning|LinphoneCallConnected|Call answered",
+        raw,
+    ):
         return "active"
-    if re.search(r"(?i)OutgoingRinging|Remote ringing|LinphoneCallOutgoingRinging", raw):
-        return "ringing"
-    # Outbound in progress (PSTN may already be ringing the cell)
-    m = re.search(r"(?i)duration=(\d+)", raw)
-    if re.search(r"(?i)Call out|hook=sip:", raw) and m and int(m.group(1)) >= 2:
+    if re.search(
+        r"(?i)hook=ringing|OutgoingRinging|Remote ringing|LinphoneCallOutgoingRinging",
+        raw,
+    ):
         return "ringing"
     if re.search(
-        r"(?i)OutgoingProgress|OutgoingInit|Calling |Establishing call|"
-        r"Call out|hook=sip:|hook=dialing|hook=offhook|in progress|duration=\d+",
+        r"(?i)hook=dialing|hook=outgoing_init|OutgoingProgress|OutgoingInit|"
+        r"Calling |Establishing call|hook=sip:|hook=offhook|in progress",
         raw,
     ):
         return "dialing"
@@ -2000,8 +2007,14 @@ def _ensure_csh_poller() -> None:
                 if not (hook or "").strip():
                     _csh_poll_stop.wait(0.8)
                     continue
-                phase = _csh_phase(hook, "")
-                live = _csh_call_live(hook)
+                # Cheap backup: states calls often shows StreamsRunning when hook is quiet
+                calls = ""
+                if not re.search(r"(?i)Call out|hook=answered|hook=ringing", hook):
+                    calls = _csh_cmd(
+                        "generic", "states calls", timeout=0.5, quiet=True
+                    )
+                phase = _csh_phase(hook, calls)
+                live = _csh_call_live(hook) or _csh_call_live(calls)
                 # Answer / media can briefly look idle — need sustained no-call
                 if live:
                     _csh_idle_streak = 0
@@ -2025,7 +2038,11 @@ def _ensure_csh_poller() -> None:
                     _csh_idle_streak = 0
                     if not phase or phase == "idle":
                         phase = "dialing"
-                info = CallInfo(raw=hook, phase=phase, state=phase)
+                info = CallInfo(
+                    raw=(hook + ("\n" + calls if calls else ""))[:400],
+                    phase=phase,
+                    state=phase,
+                )
                 with _csh_poll_lock:
                     _csh_poll_info = info
             except Exception:
