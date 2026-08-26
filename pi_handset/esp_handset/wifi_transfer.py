@@ -702,20 +702,14 @@ def _make_handler(get_dest: Callable[[], str], signals: _UploadSignals):
             self.wfile.write(data)
 
         def _serve_sip_report(self, *, download: bool) -> None:
+            # Never regenerate here — Prep SIP already wrote the file.
+            # Regenerating on download was crashing Digivice (OOM / VoIP fight).
             path = _sip_report_path()
-            if path is None:
-                try:
-                    from esp_handset import sip_call
-
-                    sip_call.write_sip_report(run_doctor=False)
-                except Exception:
-                    pass
-                path = _sip_report_path()
             if path is None:
                 body = (
                     "No sip-doctor.txt yet.\n\n"
                     "On Digivice: Tools → Transfer → Prep SIP report\n"
-                    "(or Test SIP / place a call, then try this link again).\n"
+                    "then open this link again.\n"
                 ).encode("utf-8")
                 self.send_response(404)
                 self.send_header("Content-Type", "text/plain; charset=utf-8")
@@ -725,21 +719,30 @@ def _make_handler(get_dest: Callable[[], str], signals: _UploadSignals):
                 signals.activity.emit("No SIP report yet")
                 return
             try:
-                data = path.read_bytes()
+                # Stream in chunks — don't hold two full copies in RAM.
+                size = path.stat().st_size
+                self.send_response(200)
+                self.send_header("Content-Type", "text/plain; charset=utf-8")
+                self.send_header("Content-Length", str(size))
+                if download:
+                    self.send_header(
+                        "Content-Disposition",
+                        'attachment; filename="sip-doctor.txt"',
+                    )
+                self.end_headers()
+                with path.open("rb") as f:
+                    while True:
+                        chunk = f.read(8192)
+                        if not chunk:
+                            break
+                        self.wfile.write(chunk)
             except OSError:
-                self.send_error(500)
+                try:
+                    self.send_error(500)
+                except Exception:
+                    pass
                 return
             signals.activity.emit("Sent sip-doctor.txt")
-            self.send_response(200)
-            self.send_header("Content-Type", "text/plain; charset=utf-8")
-            self.send_header("Content-Length", str(len(data)))
-            if download:
-                self.send_header(
-                    "Content-Disposition",
-                    'attachment; filename="sip-doctor.txt"',
-                )
-            self.end_headers()
-            self.wfile.write(data)
 
         def do_POST(self) -> None:  # noqa: N802
             if self.path not in ("/upload", "/upload/"):
@@ -944,15 +947,11 @@ def make_wifi_transfer_page(
         url_lab.setText(f"http://{ip}:{UPLOAD_PORT}")
         status.setText(
             f"SIP report on PC:\n"
-            f"http://{ip}:{UPLOAD_PORT}/diag/sip.txt"
+            f"http://{ip}:{UPLOAD_PORT}/diag/sip.txt\n"
+            f"(tap Prep SIP report first)"
         )
-        try:
-            from esp_handset import sip_call
-
-            sip_call.write_sip_report(run_doctor=False)
-        except Exception:
-            pass
-
+        # Do not generate the report on Start — that crashed Digivice.
+        # User taps Prep SIP report once, then downloads.
         handler = _make_handler(lambda: state["dest"], signals)
         try:
             httpd = HTTPServer(("0.0.0.0", UPLOAD_PORT), handler)

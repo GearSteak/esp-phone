@@ -97,12 +97,8 @@ def _redact(text: str) -> str:
     s = text or ""
     s = re.sub(r"(?im)^(\s*(?:SIP_PASS|passwd|password|ha1)\s*=\s*).+$", r"\1***", s)
     s = re.sub(r"(?im)^(register sip:\S+ \S+ )\S+$", r"\1***", s)
-    try:
-        pw = (_sip_env().get("SIP_PASS") or "").strip()
-        if len(pw) >= 4:
-            s = s.replace(pw, "***")
-    except Exception:
-        pass
+    # Do not call _sip_env() here — Prep SIP redacts large tails and that
+    # re-read + replace loop was a crash vector on low-RAM Pis.
     return s
 
 
@@ -156,39 +152,33 @@ def _tail_file(path: Path, max_bytes: int = 2500) -> str:
 
 
 def write_sip_report(*, extra: str = "", run_doctor: bool = False) -> Path:
-    """Redacted SIP dump for Transfer → sip-doctor.txt (safe to paste).
+    """Tiny SIP dump for Transfer → sip-doctor.txt.
 
-    Keep this small and cheap: Prep SIP + download must not OOM a 2GB Pi.
+    File tails only — no subprocesses, no doctor(), no log rewrite.
+    Prep SIP / download must stay safe on a 2GB Pi.
     """
-    _trim_core_log_if_huge()
     chunks: List[str] = [
         f"=== digivice-sip-doctor {time.strftime('%Y-%m-%d %H:%M:%S')} ===",
         f"host={_hostname()} user={os.environ.get('USER', '')}",
+        f"backend={_active_backend or 'none'}",
+        f"last_error={_last_error or ''}",
         "",
     ]
     if extra:
         chunks.append("--- extra ---")
-        chunks.append(_redact(extra).rstrip()[:1500])
+        chunks.append(_redact(str(extra))[:800])
         chunks.append("")
-    # Never call doctor() here during Prep — that restarts VoIP and balloons RAM.
-    if run_doctor:
-        chunks.append("--- doctor (skipped on prep; use Test SIP) ---")
-        chunks.append(f"registered={_engine().registered if _ENGINE else '?'}")
-        chunks.append(f"last_error={_last_error or ''}")
-        chunks.append("")
-    env = _sip_env()
+    # Ignore run_doctor — never restart VoIP from Prep/download.
+    _ = run_doctor
+    try:
+        env = _sip_env()
+    except Exception:
+        env = {}
     chunks.append("--- sip.env (redacted) ---")
     if not env:
-        chunks.append("(no sip.env / unreadable)")
+        chunks.append("(no sip.env)")
     else:
-        for k in (
-            "SIP_SERVER",
-            "SIP_USER",
-            "SIP_DISPLAY",
-            "SIP_DID",
-            "SIP_CC",
-            "SIP_PASS",
-        ):
+        for k in ("SIP_SERVER", "SIP_USER", "SIP_DISPLAY", "SIP_DID", "SIP_PASS"):
             if k not in env:
                 continue
             v = "***" if k == "SIP_PASS" else env.get(k, "")
@@ -196,84 +186,54 @@ def write_sip_report(*, extra: str = "", run_doctor: bool = False) -> Path:
         chunks.append(f"env-from: {sip_env_source() or '?'}")
         chunks.append(f"pass-len: {len((env.get('SIP_PASS') or '').strip())}")
     chunks.append("")
+    # Paths only — never run linphonec / find / ss / git here.
     chunks.append("--- binaries ---")
-    chunks.append(f"linphonec: {_discover_linphonec_uncached() or 'MISSING'}")
-    chunks.append(f"linphonecsh: {_discover_csh_uncached() or 'MISSING'}")
-    lp = _discover_linphonec_uncached()
-    if lp:
-        chunks.append(_cmd_out([lp, "-v"], timeout=2.0, cap=200))
-    chunks.append("")
-    chunks.append("--- git / update ---")
-    for folder in (
-        Path.home() / "esp-phone",
-        Path("/opt/esp-handset"),
+    for label, cand in (
+        ("linphonec", _read_pin("linphonec.bin") or "/usr/bin/linphonec"),
+        ("linphonecsh", _read_pin("linphone.bin") or "/usr/bin/linphonecsh"),
     ):
-        if (folder / ".git").exists() or (folder / "pi_handset").is_dir():
-            chunks.append(
-                f"{folder}: "
-                + _cmd_out(
-                    ["git", "-C", str(folder), "rev-parse", "--short", "HEAD"],
-                    timeout=2.0,
-                    cap=40,
-                )
-            )
+        try:
+            ok = Path(cand).is_file()
+        except OSError:
+            ok = False
+        chunks.append(f"{label}: {cand}{' OK' if ok else ' MISSING'}")
+    chunks.append("")
     for p in (
         Path.home() / ".esp-handset" / "last_update",
         Path("/etc/esp-handset/last_update"),
+        Path.home() / "esp-phone" / ".git" / "HEAD",
     ):
         try:
             if p.is_file():
-                chunks.append(
-                    f"{p}: {p.read_text(encoding='utf-8', errors='replace').strip()[:120]}"
-                )
+                chunks.append(f"{p}: {p.read_text(encoding='utf-8', errors='replace').strip()[:100]}")
         except OSError:
             pass
     chunks.append("")
-    chunks.append("--- network ---")
     chunks.append(f"ipv4={_local_ipv4() or 'NONE'}")
-    chunks.append(
-        "dns: "
-        + _cmd_out(["getent", "hosts", "sip.zadarma.com"], timeout=3.0, cap=120)
-    )
-    chunks.append("")
-    chunks.append("--- linphone processes ---")
-    chunks.append(_cmd_out(["pgrep", "-a", "linphone"], timeout=2.0, cap=400))
-    chunks.append("")
-    chunks.append("--- udp 5060 ---")
-    chunks.append(
-        _cmd_out(
-            ["bash", "-lc", "ss -ulnp 2>/dev/null | grep -E 'State|5060' | head -n 8"],
-            timeout=2.0,
-            cap=500,
-        )
-    )
     chunks.append("")
     for label, path, cap in (
-        ("linphonerc", _linphonerc_path(), 2200),
-        ("sip-last.log", _LOG, 2000),
-        ("linphone-core.log", _CORE_LOG, 3500),
-        ("linphone-ensure.log", Path.home() / ".esp-handset" / "linphone-ensure.log", 800),
-        ("linphone.status", Path("/etc/esp-handset/linphone.status"), 200),
+        ("linphonerc", _linphonerc_path(), 1600),
+        ("sip-last.log", _LOG, 1800),
+        ("linphone-core.log", _CORE_LOG, 2800),
+        ("linphone.status", Path("/etc/esp-handset/linphone.status"), 120),
     ):
-        chunks.append(f"--- {label} ({path}) ---")
+        chunks.append(f"--- {label} ---")
         chunks.append(_tail_file(path, cap))
         chunks.append("")
-    if _last_error:
-        chunks.append(f"last_error={_last_error}")
     body = "\n".join(chunks) + "\n"
-    if len(body) > 48000:
-        body = body[:48000] + "\n=== truncated for Pi memory ===\n"
-    for dest in (
-        _REPORT,
-        Path("/tmp/digivice-sip-doctor.txt"),
-        Path.home() / ".esp-handset" / "inbox" / "sip-doctor.txt",
-    ):
+    if len(body) > 24000:
+        body = body[:24000] + "\n=== truncated ===\n"
+    # One write path only — less I/O / less chance of OOM mid-copy.
+    for dest in (_REPORT, Path("/tmp/digivice-sip-doctor.txt")):
         try:
             dest.parent.mkdir(parents=True, exist_ok=True)
             dest.write_text(body, encoding="utf-8")
         except OSError as e:
             _log(f"sip report write {dest}: {e}")
-    _log(f"sip report → {_REPORT} ({len(body)} bytes)")
+    try:
+        _log(f"sip report → {_REPORT} ({len(body)} bytes)")
+    except Exception:
+        pass
     return _REPORT
 
 
