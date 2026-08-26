@@ -120,8 +120,46 @@ def _cmd_out(cmd: List[str], timeout: float = 5.0, cap: int = 2500) -> str:
         return f"(err {e})"
 
 
+def _trim_core_log_if_huge(max_keep: int = 200_000) -> None:
+    """Prevent linphone-core.log from growing until Prep SIP OOMs the Pi."""
+    try:
+        if not _CORE_LOG.is_file():
+            return
+        size = _CORE_LOG.stat().st_size
+        if size <= max_keep * 2:
+            return
+        with _CORE_LOG.open("rb") as f:
+            f.seek(-max_keep, os.SEEK_END)
+            tail = f.read()
+        _CORE_LOG.write_bytes(b"(…log trimmed…)\n" + tail)
+    except OSError:
+        pass
+
+
+def _tail_file(path: Path, max_bytes: int = 2500) -> str:
+    """Read only the end of a file — full core logs OOM the Pi on Prep SIP."""
+    try:
+        if not path.is_file():
+            return "(missing)"
+        size = path.stat().st_size
+        with path.open("rb") as f:
+            if size > max_bytes:
+                f.seek(-max_bytes, os.SEEK_END)
+            data = f.read(max_bytes)
+        text = data.decode("utf-8", "replace")
+        if size > max_bytes:
+            text = f"(…truncated, last {max_bytes} bytes…)\n" + text
+        return _redact(text)
+    except OSError as e:
+        return f"(read error: {e})"
+
+
 def write_sip_report(*, extra: str = "", run_doctor: bool = False) -> Path:
-    """Redacted SIP dump for Transfer → sip-doctor.txt (safe to paste)."""
+    """Redacted SIP dump for Transfer → sip-doctor.txt (safe to paste).
+
+    Keep this small and cheap: Prep SIP + download must not OOM a 2GB Pi.
+    """
+    _trim_core_log_if_huge()
     chunks: List[str] = [
         f"=== digivice-sip-doctor {time.strftime('%Y-%m-%d %H:%M:%S')} ===",
         f"host={_hostname()} user={os.environ.get('USER', '')}",
@@ -129,16 +167,14 @@ def write_sip_report(*, extra: str = "", run_doctor: bool = False) -> Path:
     ]
     if extra:
         chunks.append("--- extra ---")
-        chunks.append(_redact(extra).rstrip())
+        chunks.append(_redact(extra).rstrip()[:1500])
         chunks.append("")
+    # Never call doctor() here during Prep — that restarts VoIP and balloons RAM.
     if run_doctor:
-        try:
-            chunks.append("--- doctor() ---")
-            chunks.append(_redact(doctor(save_report=False)).rstrip())
-            chunks.append("")
-        except Exception:
-            chunks.append(traceback.format_exc())
-            chunks.append("")
+        chunks.append("--- doctor (skipped on prep; use Test SIP) ---")
+        chunks.append(f"registered={_engine().registered if _ENGINE else '?'}")
+        chunks.append(f"last_error={_last_error or ''}")
+        chunks.append("")
     env = _sip_env()
     chunks.append("--- sip.env (redacted) ---")
     if not env:
@@ -156,28 +192,28 @@ def write_sip_report(*, extra: str = "", run_doctor: bool = False) -> Path:
                 continue
             v = "***" if k == "SIP_PASS" else env.get(k, "")
             chunks.append(f"{k}={v}")
+        chunks.append(f"env-from: {sip_env_source() or '?'}")
+        chunks.append(f"pass-len: {len((env.get('SIP_PASS') or '').strip())}")
     chunks.append("")
     chunks.append("--- binaries ---")
     chunks.append(f"linphonec: {_discover_linphonec_uncached() or 'MISSING'}")
     chunks.append(f"linphonecsh: {_discover_csh_uncached() or 'MISSING'}")
     lp = _discover_linphonec_uncached()
     if lp:
-        chunks.append(_cmd_out([lp, "-v"], timeout=3.0, cap=800))
-        chunks.append(_cmd_out([lp, "--help"], timeout=3.0, cap=1200))
+        chunks.append(_cmd_out([lp, "-v"], timeout=2.0, cap=200))
     chunks.append("")
     chunks.append("--- git / update ---")
     for folder in (
         Path.home() / "esp-phone",
         Path("/opt/esp-handset"),
-        Path("/opt/esp-phone"),
     ):
         if (folder / ".git").exists() or (folder / "pi_handset").is_dir():
             chunks.append(
                 f"{folder}: "
                 + _cmd_out(
                     ["git", "-C", str(folder), "rev-parse", "--short", "HEAD"],
-                    timeout=3.0,
-                    cap=80,
+                    timeout=2.0,
+                    cap=40,
                 )
             )
     for p in (
@@ -187,62 +223,45 @@ def write_sip_report(*, extra: str = "", run_doctor: bool = False) -> Path:
         try:
             if p.is_file():
                 chunks.append(
-                    f"{p}: {p.read_text(encoding='utf-8', errors='replace').strip()[:200]}"
+                    f"{p}: {p.read_text(encoding='utf-8', errors='replace').strip()[:120]}"
                 )
         except OSError:
             pass
     chunks.append("")
     chunks.append("--- network ---")
     chunks.append(f"ipv4={_local_ipv4() or 'NONE'}")
-    chunks.append(_cmd_out(["ip", "-4", "addr"], timeout=3.0, cap=1200))
-    chunks.append(_cmd_out(["ip", "-4", "route"], timeout=3.0, cap=600))
     chunks.append(
-        "dns sip.zadarma.com: "
-        + _cmd_out(["getent", "hosts", "sip.zadarma.com"], timeout=5.0, cap=300)
+        "dns: "
+        + _cmd_out(["getent", "hosts", "sip.zadarma.com"], timeout=3.0, cap=120)
     )
+    chunks.append("")
+    chunks.append("--- linphone processes ---")
+    chunks.append(_cmd_out(["pgrep", "-a", "linphone"], timeout=2.0, cap=400))
+    chunks.append("")
+    chunks.append("--- udp 5060 ---")
     chunks.append(
-        "ping sip.zadarma.com: "
-        + _cmd_out(
-            ["ping", "-c", "1", "-W", "3", "sip.zadarma.com"],
-            timeout=6.0,
-            cap=400,
+        _cmd_out(
+            ["bash", "-lc", "ss -ulnp 2>/dev/null | grep -E 'State|5060' | head -n 8"],
+            timeout=2.0,
+            cap=500,
         )
     )
     chunks.append("")
-    chunks.append(_cmd_out(["aplay", "-l"], timeout=4.0, cap=1500))
-    chunks.append("")
-    chunks.append("--- linphone processes ---")
-    chunks.append(_cmd_out(["pgrep", "-a", "linphone"], timeout=3.0, cap=800))
-    chunks.append("")
-    chunks.append("--- udp 5060 ---")
-    chunks.append(_cmd_out(["ss", "-ulnp"], timeout=3.0, cap=1500))
-    chunks.append("")
-    for label, path in (
-        ("linphonerc", _linphonerc_path()),
-        ("~/.linphonerc", Path.home() / ".linphonerc"),
-        ("sip-last.log", _LOG),
-        ("linphone-core.log", _CORE_LOG),
-        (
-            "linphone-ensure.log",
-            Path.home() / ".esp-handset" / "linphone-ensure.log",
-        ),
-        ("linphone.status", Path("/etc/esp-handset/linphone.status")),
-        ("linphonec.bin", Path("/etc/esp-handset/linphonec.bin")),
+    for label, path, cap in (
+        ("linphonerc", _linphonerc_path(), 2200),
+        ("sip-last.log", _LOG, 2000),
+        ("linphone-core.log", _CORE_LOG, 3500),
+        ("linphone-ensure.log", Path.home() / ".esp-handset" / "linphone-ensure.log", 800),
+        ("linphone.status", Path("/etc/esp-handset/linphone.status"), 200),
     ):
         chunks.append(f"--- {label} ({path}) ---")
-        try:
-            if path.is_file():
-                chunks.append(
-                    _redact(path.read_text(encoding="utf-8", errors="replace"))[-4000:]
-                )
-            else:
-                chunks.append("(missing)")
-        except OSError as e:
-            chunks.append(f"(read error: {e})")
+        chunks.append(_tail_file(path, cap))
         chunks.append("")
     if _last_error:
         chunks.append(f"last_error={_last_error}")
     body = "\n".join(chunks) + "\n"
+    if len(body) > 48000:
+        body = body[:48000] + "\n=== truncated for Pi memory ===\n"
     for dest in (
         _REPORT,
         Path("/tmp/digivice-sip-doctor.txt"),
@@ -253,7 +272,7 @@ def write_sip_report(*, extra: str = "", run_doctor: bool = False) -> Path:
             dest.write_text(body, encoding="utf-8")
         except OSError as e:
             _log(f"sip report write {dest}: {e}")
-    _log(f"sip report → {_REPORT}")
+    _log(f"sip report → {_REPORT} ({len(body)} bytes)")
     return _REPORT
 
 
@@ -1756,6 +1775,70 @@ def _dial_via_csh(digits: str, server: str) -> Tuple[bool, str]:
     return False, _set_error("Call did not start — try Test SIP")
 
 
+def _core_log_size() -> int:
+    try:
+        return _CORE_LOG.stat().st_size if _CORE_LOG.is_file() else 0
+    except OSError:
+        return 0
+
+
+def _core_log_since(mark: int) -> str:
+    try:
+        if not _CORE_LOG.is_file():
+            return ""
+        with _CORE_LOG.open("rb") as f:
+            f.seek(max(0, mark))
+            return f.read().decode("utf-8", "replace")
+    except OSError:
+        return ""
+
+
+def _fresh_has_invite(mark: int) -> bool:
+    return bool(re.search(r"(?i)\bINVITE\s+sip:", _core_log_since(mark)))
+
+
+def _wake_linphonec_cli(eng: "LinphoneEngine") -> None:
+    """Nudge readline so the next call command is accepted."""
+    try:
+        if eng._pty is not None:
+            os.write(eng._pty, b"\r\n")
+        elif eng.proc is not None and eng.proc.stdin is not None:
+            eng.proc.stdin.write("\n")
+            eng.proc.stdin.flush()
+    except Exception:
+        pass
+    with eng._lock:
+        eng._cli_ready = True
+        eng._auth_prompt = False
+    time.sleep(0.25)
+
+
+def _wait_call_progress(
+    eng: "LinphoneEngine", log_mark: int, timeout_s: float
+) -> Tuple[str, str]:
+    """Return (phase|'' , error_msg). phase set on success."""
+    deadline = time.time() + max(1.0, timeout_s)
+    while time.time() < deadline:
+        if not eng.alive():
+            return "", "linphonec died after dial"
+        if _fresh_has_invite(log_mark):
+            with eng._lock:
+                eng.phase = "dialing"
+            return "dialing", ""
+        info = eng.snapshot()
+        if info.phase in ("dialing", "ringing", "active"):
+            return info.phase, ""
+        if info.phase == "error":
+            return "", _core_log_call_error() or "Call rejected"
+        fresh = _core_log_since(log_mark)
+        if fresh and re.search(
+            r"(?i)SIP/2\.0\s+(402|403|404|408|480|486|603)\b", fresh
+        ) and re.search(r"(?i)INVITE", fresh):
+            return "", _core_log_call_error() or "Call rejected"
+        time.sleep(0.2)
+    return "", ""
+
+
 def dial(number: str) -> bool:
     ok, _ = dial_ex(number)
     return ok
@@ -1808,72 +1891,46 @@ def _dial_ex_inner(number: str) -> Tuple[bool, str]:
             return False, _set_error(
                 hint or "SIP not registered — check Wi‑Fi / Accounts"
             )
-        _log(f"call {target}")
         eng.reset_call_state()
-        # Mark log position so we don't treat an old INVITE as this dial
-        try:
-            log_mark = _CORE_LOG.stat().st_size if _CORE_LOG.is_file() else 0
-        except OSError:
-            log_mark = 0
-        if not eng.cmd(f"call {target}", force=True):
-            return False, _set_error("Could not dial — linphonec not ready")
-        deadline = time.time() + 12.0
-        while time.time() < deadline:
-            info = eng.snapshot()
-            _last_register_raw = "registered"
-            if info.phase in ("dialing", "ringing", "active"):
+        _wake_linphonec_cli(eng)
+        # Digivice used to send only `call sip:…@host`. linphonec often
+        # swallowed that on the PTY with no INVITE. Try proxy digits first.
+        attempts = (
+            digits,  # uses default proxy_0 — preferred for Zadarma PSTN
+            target,
+            f"<{target}>",
+            f"sip:{digits}@{server};transport=udp",
+        )
+        for attempt in attempts:
+            log_mark = _core_log_size()
+            _log(f"call try {attempt}")
+            if not eng.cmd(f"call {attempt}", force=True):
+                _log("call cmd write failed")
+                continue
+            phase, err = _wait_call_progress(eng, log_mark, 5.0)
+            if phase:
+                _last_register_raw = "registered"
                 _set_error("")
+                _log(f"call progress={phase} via {attempt}")
                 return True, ""
-            if info.phase == "error":
-                why = _core_log_call_error() or "SIP rejected call"
-                return False, _set_error(why)
-            # Fresh core-log activity after our call command
-            try:
-                if _CORE_LOG.is_file() and _CORE_LOG.stat().st_size > log_mark + 40:
-                    fresh = _CORE_LOG.read_text(encoding="utf-8", errors="replace")[
-                        log_mark:
-                    ]
-                    if re.search(r"(?i)\bINVITE\s+sip:", fresh):
-                        with eng._lock:
-                            eng.phase = "dialing"
-                        _set_error("")
-                        return True, ""
-                    core_ph = _core_log_call_phase()
-                    if core_ph in ("dialing", "ringing", "active"):
-                        with eng._lock:
-                            eng.phase = core_ph
-                        _set_error("")
-                        return True, ""
-                    if core_ph == "error":
-                        # Ignore stale REGISTER lockout lines — only fail on INVITE rejects
-                        if re.search(
-                            r"(?i)SIP/2\.0\s+(402|403|404|408|480|486|603)\b", fresh
-                        ) and re.search(r"(?i)INVITE", fresh):
-                            why = _core_log_call_error() or "Call rejected"
-                            return False, _set_error(why)
-            except OSError:
-                pass
-            time.sleep(0.25)
-        if not eng.alive():
-            return False, _set_error("linphonec died after dial")
-        # Last chance: did an INVITE leave at all?
-        try:
-            if _CORE_LOG.is_file():
-                fresh = _CORE_LOG.read_text(encoding="utf-8", errors="replace")[log_mark:]
-                if re.search(r"(?i)\bINVITE\s+sip:", fresh):
-                    with eng._lock:
-                        eng.phase = "dialing"
-                    _set_error("")
-                    return True, ""
-                if re.search(r"(?i)SIP/2\.0\s+(402|403|404|408|480|486|603)\b", fresh):
-                    why = _core_log_call_error() or "Call rejected"
-                    eng.cmd("terminate", force=True)
-                    eng.cmd("hangup", force=True)
-                    return False, _set_error(why)
-        except OSError:
-            pass
+            if err:
+                eng.cmd("terminate", force=True)
+                eng.cmd("hangup", force=True)
+                return False, _set_error(err)
+            # next attempt
+            eng.cmd("terminate", force=True)
+            time.sleep(0.3)
+            _wake_linphonec_cli(eng)
+
+        _log(f"linphonec dial produced no INVITE for {digits} — trying linphonecsh")
+        if _discover_csh():
+            ok, reason = _dial_via_csh(digits, server)
+            if ok:
+                return True, ""
+            if reason:
+                return False, reason
         why = _core_log_call_error() or "No ringback"
-        _log(f"dial timeout digits={digits}: {why}")
+        _log(f"dial fail digits={digits}: {why}")
         eng.cmd("terminate", force=True)
         eng.cmd("hangup", force=True)
         with eng._lock:

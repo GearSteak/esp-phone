@@ -226,7 +226,8 @@ def _refresh_sip_report() -> Tuple[bool, str]:
     try:
         from esp_handset import sip_call
 
-        path = sip_call.write_sip_report(run_doctor=True)
+        # run_doctor=False — full doctor() restarts VoIP and can OOM/crash Digivice
+        path = sip_call.write_sip_report(run_doctor=False)
         if path.is_file() and path.stat().st_size > 0:
             return True, f"Report ready ({path.name})"
         return False, "sip report empty"
