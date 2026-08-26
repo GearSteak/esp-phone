@@ -1158,17 +1158,9 @@ def make_emu_page(
     lay.setSpacing(2)
 
     ok_be, be_msg = backend_status(system)
-    status = QLabel("")
+    status = QLabel(be_msg if not ok_be else "")
     status.setWordWrap(True)
     status.setStyleSheet("color:#ffe66d;font-size:10px;font-weight:700;")
-    tip = QLabel(
-        "←→ covers · Confirm play · Covers=box art sync\n"
-        "In-game: Confirm=A Back=B · hold all three to quit"
-        if ok_be
-        else f"{be_msg}\nROMs work after Settings → Update"
-    )
-    tip.setWordWrap(True)
-    tip.setStyleSheet("color:#9ab;font-size:8px;")
 
     shelf = RomShelf(system_key=system.key, glyph=system.glyph)
     shelf.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
@@ -1205,7 +1197,6 @@ def make_emu_page(
 
     lay.addWidget(status)
     lay.addWidget(shelf, 1)
-    lay.addWidget(tip)
     lay.addLayout(row)
 
     play_view = EmuPlayView(system, on_quit=lambda: None)

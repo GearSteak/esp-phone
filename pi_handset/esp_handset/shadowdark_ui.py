@@ -194,12 +194,8 @@ def make_shadowdark_page(on_back: Callable[[], None]) -> QWidget:
     type_ed = QLineEdit()
     type_ed.setStyleSheet(_EDIT)
     type_ed.setFocusPolicy(Qt.StrongFocus)
-    type_hint = QLabel("CardKB / BT keyboard · Confirm save · Back save")
-    type_hint.setWordWrap(True)
-    type_hint.setStyleSheet("font-size:10px; color:#888;")
     tyl.addWidget(type_lab)
     tyl.addWidget(type_ed)
-    tyl.addWidget(type_hint)
     tyl.addStretch(1)
 
     stack.addWidget(menu)

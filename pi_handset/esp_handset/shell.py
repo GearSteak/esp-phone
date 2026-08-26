@@ -659,7 +659,7 @@ class PhoneShell(QMainWindow):
         except Exception:
             pass
         try:
-            self.set_status_right("Typing · Back exits")
+            self.set_status_right("")
         except Exception:
             pass
 

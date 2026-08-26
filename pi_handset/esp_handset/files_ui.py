@@ -88,11 +88,8 @@ def make_files_page(on_back: Callable[[], None], start: Optional[Path] = None) -
         "QListWidget::item:selected { background:#fff; color:#000; }"
         'QListWidget[digiFocus="1"] { border:2px solid #fff; }'
     )
-    hint = QLabel("Confirm open · Back parent")
-    hint.setStyleSheet("font-size:9px; color:#888;")
     bl.addWidget(path_lab)
     bl.addWidget(lst, 1)
-    bl.addWidget(hint)
 
     reader = QWidget()
     rl = QVBoxLayout(reader)

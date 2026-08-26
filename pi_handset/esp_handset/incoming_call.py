@@ -141,12 +141,6 @@ class IncomingCallOverlay(QWidget):
         btn_row.addStretch(1)
         lay.addLayout(btn_row)
 
-        hint = QLabel("Confirm · Answer     Back · Decline")
-        hint.setAlignment(Qt.AlignCenter)
-        hint.setStyleSheet("color:#636366; font-size:8px;")
-        lay.addSpacing(8)
-        lay.addWidget(hint)
-
         self.answer_btn.clicked.connect(self._do_answer)
         self.decline_btn.clicked.connect(self._do_decline)
 

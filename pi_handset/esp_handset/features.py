@@ -62,12 +62,8 @@ def make_notifs_page(on_back: Callable[[], None]) -> QWidget:
     """Notification history (SMS / LoRa / alarms / etc. logged via store.push_notif)."""
     body = QWidget()
     lay = QVBoxLayout(body)
-    tip = QLabel("History of alerts · toasts also pop on screen")
-    tip.setStyleSheet("color:#9ab;font-size:9px;")
-    tip.setWordWrap(True)
     lst = QListWidget()
     clear = QPushButton("Clear all")
-    lay.addWidget(tip)
     lay.addWidget(lst, 1)
     lay.addWidget(clear)
 
@@ -103,11 +99,7 @@ def make_security_page(on_back: Callable[[], None]) -> QWidget:
     lay.setSpacing(6)
     title = QLabel("Security")
     title.setStyleSheet("font-size:15px; font-weight:700;")
-    tip = QLabel("Optional lock PIN when Digivice starts")
-    tip.setWordWrap(True)
-    tip.setStyleSheet("font-size:10px; color:#7a8a9a;")
     lay.addWidget(title)
-    lay.addWidget(tip)
     sec = store.load("security.json", {"pin": "", "lock_timeout_min": 0})
     status = QLabel("PIN is on" if sec.get("pin") else "PIN is off")
     status.setStyleSheet(
@@ -273,15 +265,6 @@ def make_steps_page(on_back: Callable[[], None], bridge=None) -> QWidget:
         f" background:{_BG}; padding:4px 0;"
     )
 
-    hint = QLabel(
-        "Tilt switch on pin 11\n"
-        "(BCM 17 → GND)\n"
-        "Walk or shake to count"
-    )
-    hint.setWordWrap(True)
-    hint.setAlignment(Qt.AlignCenter)
-    hint.setStyleSheet(f"color:{_TEXT}; font-size:12px;")
-
     status = QLabel("")
     status.setWordWrap(True)
     status.setAlignment(Qt.AlignCenter)
@@ -308,7 +291,6 @@ def make_steps_page(on_back: Callable[[], None], bridge=None) -> QWidget:
 
     lay.addWidget(title)
     lay.addWidget(big)
-    lay.addWidget(hint)
     lay.addWidget(status)
     lay.addLayout(row)
     lay.addLayout(row2)
@@ -450,7 +432,7 @@ def make_recorder_page(on_back: Callable[[], None], on_status) -> QWidget:
     lay.setContentsMargins(4, 2, 4, 2)
     lay.setSpacing(4)
     lay.addWidget(
-        media_header("◉", "Voice", "Tap record · plays through USB audio")
+        media_header("◉", "Voice")
     )
     lst = media_list()
     empty = media_empty("No voice notes yet.\nRecord a quick clip below.")
@@ -594,7 +576,7 @@ def make_ebook_page(on_back: Callable[[], None]) -> QWidget:
     lay = QVBoxLayout(body)
     lay.setContentsMargins(4, 2, 4, 2)
     lay.setSpacing(4)
-    lay.addWidget(media_header("▤", "Ebooks", "~/Books · txt / md"))
+    lay.addWidget(media_header("▤", "Ebooks"))
 
     lst = media_list()
     lst.setMaximumHeight(72)

@@ -179,7 +179,7 @@ def make_weather_page(on_back: Callable[[], None], modem=None) -> QWidget:
     out.setAlignment(Qt.AlignCenter)
     out.setWordWrap(True)
     out.setStyleSheet("font-size:18px; font-weight:700; color:#cde;")
-    detail = QLabel("GPS → Wi‑Fi APs → IP")
+    detail = QLabel("")
     detail.setAlignment(Qt.AlignCenter)
     detail.setWordWrap(True)
     detail.setStyleSheet("font-size:10px; color:#9ab;")
@@ -320,6 +320,6 @@ def make_weather_page(on_back: Callable[[], None], modem=None) -> QWidget:
     refresh.clicked.connect(do_update)
     _show_place()
     if state.get("lat") is not None:
-        out.setText("Tap Update")
+        out.setText(saved.get("summary") or "")
     QTimer.singleShot(350, do_update)
     return page_chrome("Weather", body, None, scroll=False)

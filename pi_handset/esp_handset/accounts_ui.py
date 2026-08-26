@@ -44,8 +44,6 @@ def _field(placeholder: str = "", *, password: bool = False) -> QLineEdit:
     ed.setStyleSheet(_FIELD)
     ed.setMinimumHeight(32)
     ed.setFocusPolicy(Qt.StrongFocus)
-    # Digivice: Confirm focuses for CardKB; Escape leaves (kiosk filter)
-    ed.setToolTip("Confirm to type · Back to leave")
     if password:
         ed.setEchoMode(QLineEdit.Password)
     return ed
@@ -77,18 +75,19 @@ def _status() -> QLabel:
     return lab
 
 
-def _header(title: str, blurb: str) -> QWidget:
+def _header(title: str, blurb: str = "") -> QWidget:
     w = QWidget()
     lay = QVBoxLayout(w)
     lay.setContentsMargins(2, 0, 2, 4)
     lay.setSpacing(2)
     t = QLabel(title)
     t.setStyleSheet(f"font-size:15px; font-weight:700; color:{_TEXT};")
-    b = QLabel(blurb)
-    b.setWordWrap(True)
-    b.setStyleSheet(f"font-size:10px; color:{_MUTED};")
     lay.addWidget(t)
-    lay.addWidget(b)
+    if blurb:
+        b = QLabel(blurb)
+        b.setWordWrap(True)
+        b.setStyleSheet(f"font-size:10px; color:{_MUTED};")
+        lay.addWidget(b)
     return w
 
 
@@ -169,12 +168,10 @@ def make_sip_account_page(on_back: Callable[[], None]) -> QWidget:
     lay = QVBoxLayout(body)
     lay.setContentsMargins(6, 4, 6, 6)
     lay.setSpacing(6)
-    lay.addWidget(
-        _header("SIP / VoIP", "Test SIP shows the result up here")
-    )
+    lay.addWidget(_header("SIP / VoIP"))
     status = _status()
     status.setMinimumHeight(88)
-    status.setText("Confirm Test SIP — result appears here")
+    status.setText("")
     status.setStyleSheet(
         f"font-size:11px; font-weight:600; color:{_TEXT};"
         f" background:#1a2430; border:1px solid {_BORDER};"
@@ -356,13 +353,7 @@ def make_email_account_page(on_back: Callable[[], None]) -> QWidget:
     lay = QVBoxLayout(body)
     lay.setContentsMargins(6, 4, 6, 6)
     lay.setSpacing(6)
-    lay.addWidget(
-        _header(
-            "Email",
-            "Gmail: App Password only (not your normal password). "
-            "Google Account → Security → 2-Step → App passwords.",
-        )
-    )
+    lay.addWidget(_header("Email"))
     em = store.load(
         "email.json",
         {
@@ -454,12 +445,7 @@ def make_ai_account_page(on_back: Callable[[], None]) -> QWidget:
     lay = QVBoxLayout(body)
     lay.setContentsMargins(6, 4, 6, 6)
     lay.setSpacing(6)
-    lay.addWidget(
-        _header(
-            "AI · Ollama",
-            "Confirm on a field to type · local or LAN Ollama",
-        )
-    )
+    lay.addWidget(_header("AI · Ollama"))
     cfg = store.load(
         "ollama.json",
         {"host": "http://127.0.0.1:11434", "model": "deepseek-r1:1.5b"},

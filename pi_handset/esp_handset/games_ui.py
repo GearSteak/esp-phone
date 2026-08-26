@@ -193,11 +193,6 @@ class SplashPane(QWidget):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing, True)
         _draw_title_block(p, self.rect(), self.title, self.tagline, self.accent, phase=self._t)
-        # press hint fades in
-        alpha = min(220, int(max(0, self._t - 0.6) * 280))
-        p.setPen(QColor(200, 220, 255, alpha))
-        p.setFont(_font(10))
-        p.drawText(self.rect().adjusted(0, 0, 0, -28), Qt.AlignHCenter | Qt.AlignBottom, "Confirm · skip")
 
     def digi_confirm(self):
         self._hold.stop()
@@ -272,9 +267,6 @@ class MenuPane(QWidget):
             p.setPen(_INK)
             p.setFont(_font(10))
             p.drawText(box.adjusted(8, 8, -8, -8), Qt.TextWordWrap | Qt.AlignTop | Qt.AlignLeft, self.howto)
-            p.setPen(_MUTED)
-            p.setFont(_font(9))
-            p.drawText(r.adjusted(0, 0, 0, -10), Qt.AlignHCenter | Qt.AlignBottom, "Confirm · close")
             return
 
         # menu items
@@ -295,10 +287,6 @@ class MenuPane(QWidget):
             p.setPen(self.accent if sel else _INK)
             p.setFont(_font(12, sel))
             p.drawText(br, Qt.AlignCenter, label)
-
-        p.setPen(QColor(120, 140, 160, 160))
-        p.setFont(_font(9))
-        p.drawText(r.adjusted(0, 0, 0, -8), Qt.AlignHCenter | Qt.AlignBottom, "↑↓ select · Confirm · Back")
 
     def digi_nav(self, dx: int, dy: int) -> bool:
         if self._show_how:
@@ -436,11 +424,6 @@ class ArcadeShell(QWidget):
         )
         pl.addWidget(self._hud)
         pl.addWidget(board, 1)
-        tip = QLabel("D-pad move · Confirm pause · Space restart")
-        tip.setAlignment(Qt.AlignCenter)
-        tip.setStyleSheet("color:#6a7a8a;font-size:9px;")
-        tip.setWordWrap(True)
-        pl.addWidget(tip)
         self.play_page = play
 
         self.stack.addWidget(self.splash)

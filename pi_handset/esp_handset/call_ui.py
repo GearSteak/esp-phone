@@ -142,11 +142,8 @@ class CallOverlay(QWidget):
         btn_row.addStretch(1)
         lay.addLayout(btn_row)
 
-        self.hint = QLabel("Confirm · Hang up")
-        self.hint.setAlignment(Qt.AlignCenter)
-        self.hint.setStyleSheet("color:#636366; font-size:8px;")
-        lay.addSpacing(8)
-        lay.addWidget(self.hint)
+        self.hint = QLabel("")
+        self.hint.hide()
 
         self.hangup_btn.clicked.connect(self._do_hangup)
         self.ok_btn.clicked.connect(self._do_dismiss)
@@ -250,7 +247,6 @@ class CallOverlay(QWidget):
         self.timer_lab.show()
         self.hangup_btn.show()
         self.ok_btn.hide()
-        self.hint.setText("Confirm · Hang up")
         self._arm_input()
         self._show_and_focus(self.hangup_btn)
         self._pulse_n = 0
@@ -274,7 +270,6 @@ class CallOverlay(QWidget):
         self.timer_lab.show()
         self.hangup_btn.show()
         self.ok_btn.hide()
-        self.hint.setText("Confirm · Hang up")
         self._arm_input()
         self._show_and_focus(self.hangup_btn)
         self._pulse.stop()
@@ -302,7 +297,6 @@ class CallOverlay(QWidget):
             self.timer_lab.setStyleSheet("")
         self.hangup_btn.hide()
         self.ok_btn.show()
-        self.hint.setText("Confirm · OK")
         self._arm_input()
         self._show_and_focus(self.ok_btn)
         self._pulse.stop()
@@ -862,10 +856,6 @@ def make_call_log_page(
     lay = QVBoxLayout(body)
     lay.setContentsMargins(4, 2, 4, 4)
     lay.setSpacing(4)
-
-    tip = QLabel("Confirm = call again")
-    tip.setStyleSheet("font-size:10px; color:#7a8a9a;")
-    lay.addWidget(tip)
 
     lst = QListWidget()
     lst.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)

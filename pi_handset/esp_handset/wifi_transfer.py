@@ -837,10 +837,6 @@ def make_wifi_transfer_page(
     lay.setContentsMargins(2, 2, 2, 2)
     lay.setSpacing(3)
 
-    tip = QLabel("Start · PC: pick GB/GBC, NES, or SMS/GG")
-    tip.setWordWrap(True)
-    tip.setStyleSheet("color:#9ab;font-size:9px;")
-
     dest_row = QHBoxLayout()
     dest_row.setSpacing(2)
     dest_btns: Dict[str, QPushButton] = {}
@@ -853,14 +849,14 @@ def make_wifi_transfer_page(
         dest_btns[key] = b
         dest_row.addWidget(b, 1)
 
-    url_lab = QLabel("Press Start")
+    url_lab = QLabel("")
     url_lab.setAlignment(Qt.AlignCenter)
     url_lab.setWordWrap(True)
     url_lab.setStyleSheet(
         "font-size:12px; font-weight:800; color:#FFE600;"
         "background:#1a2230; padding:6px;"
     )
-    status = QLabel("Photos selected · Start to share both ways.")
+    status = QLabel("")
     status.setAlignment(Qt.AlignCenter)
     status.setWordWrap(True)
     status.setStyleSheet("font-size:10px; color:#cde;")
@@ -881,7 +877,6 @@ def make_wifi_transfer_page(
     stop_btn.setFixedHeight(26)
     stop_btn.setEnabled(False)
 
-    lay.addWidget(tip)
     lay.addLayout(dest_row)
     lay.addWidget(url_lab)
     lay.addWidget(status, 1)

@@ -122,10 +122,6 @@ def stub_page(title: str, blurb: str, on_back: Callable[[], None]) -> QWidget:
     msg.setStyleSheet("color: #9ab; font-size: 14px;")
     lay.addWidget(msg)
     lay.addStretch(1)
-    tip = QLabel("Scaffold — behavior will match the ESP Phone app over time.")
-    tip.setWordWrap(True)
-    tip.setStyleSheet("color: #678; font-size: 11px;")
-    lay.addWidget(tip)
     return page_chrome(title, body, on_back)
 
 
@@ -902,8 +898,6 @@ def make_contacts_page(
     pl = QVBoxLayout(photo_page)
     pl.setContentsMargins(2, 1, 2, 1)
     pl.setSpacing(2)
-    photo_tip = QLabel("Confirm a Camera shot · Back = edit")
-    photo_tip.setStyleSheet("color:#9ab;font-size:9px;")
     photo_list = QListWidget()
     photo_list.setIconSize(QSize(36, 28))
     photo_list.setStyleSheet(
@@ -914,7 +908,6 @@ def make_contacts_page(
     photo_done = QPushButton("Done")
     photo_done.setFixedHeight(26)
     photo_done.setStyleSheet(_BTN)
-    pl.addWidget(photo_tip)
     pl.addWidget(photo_list, 1)
     pl.addWidget(photo_done)
     stack.addWidget(photo_page)
@@ -1232,10 +1225,6 @@ def make_camera_page(on_back, on_status) -> QWidget:
     mode_lab = QLabel("Photo")
     mode_lab.setStyleSheet("color:#5ec4a8;font-size:11px;font-weight:700;")
     mode_lab.setAlignment(Qt.AlignCenter)
-    tip = QLabel("Confirm snap/record · Flash · Back")
-    tip.setStyleSheet("color:#9ab;font-size:9px;")
-    tip.setWordWrap(True)
-    tip.setAlignment(Qt.AlignCenter)
     preview = QLabel("Starting camera…")
     preview.setAlignment(Qt.AlignCenter)
     preview.setMinimumHeight(180)
@@ -1273,7 +1262,6 @@ def make_camera_page(on_back, on_status) -> QWidget:
     flash_btn.clicked.connect(toggle_flash)
 
     lay.addWidget(mode_lab)
-    lay.addWidget(tip)
     lay.addWidget(flash_btn)
     lay.addWidget(preview, 1)
     lay.addWidget(status)
@@ -1341,10 +1329,10 @@ def make_camera_page(on_back, on_status) -> QWidget:
         _started[0] = ok
         paint_mode()
         if ok:
-            status.setText("Live · Confirm to capture")
+            status.setText("Live")
         else:
-            status.setText("No preview — Confirm still tries capture")
-            preview.setText("Preview unavailable\nConfirm = capture")
+            status.setText("No preview")
+            preview.setText("Preview unavailable")
 
     def stop_live() -> None:
         if live.recording:
@@ -1396,11 +1384,11 @@ def make_camera_page(on_back, on_status) -> QWidget:
                     paint_mode()
                     if path:
                         show_saved(path, f"Video {path.name}")
-                    status.setText("Live · Confirm to record")
+                    status.setText("Live")
                 elif live.running:
                     path = live.start_recording()
                     paint_mode()
-                    status.setText(f"REC {path.name} · Confirm stop")
+                    status.setText(f"REC {path.name}")
                 else:
                     status.setText("Start preview first")
                 return
@@ -1417,11 +1405,11 @@ def make_camera_page(on_back, on_status) -> QWidget:
                 else:
                     show_saved(
                         path,
-                        f"Pano {state['pano_step']}/{_PANO_SHOTS} · rotate · Confirm",
+                        f"Pano {state['pano_step']}/{_PANO_SHOTS}",
                     )
                 return
             snap_still()
-            QTimer.singleShot(700, lambda: status.setText("Live · Confirm to capture"))
+            QTimer.singleShot(700, lambda: status.setText("Live"))
         except Exception as e:
             status.setText(str(e)[:120])
             on_status(f"Camera: {e}")
@@ -1489,11 +1477,11 @@ def make_camera_page(on_back, on_status) -> QWidget:
         _busy[0] = False
         paint_mode()
         hints = {
-            "photo": "Instant still",
-            "timer3": "3 second countdown",
-            "timer10": "10 second countdown",
-            "video": "Confirm start/stop recording",
-            "pano": f"{_PANO_SHOTS} shots · rotate between each",
+            "photo": "Still",
+            "timer3": "3s countdown",
+            "timer10": "10s countdown",
+            "video": "Video",
+            "pano": f"{_PANO_SHOTS} shots",
         }
         status.setText(hints.get(mode_key(), ""))
 
@@ -1543,7 +1531,7 @@ def make_gallery_page(on_back: Callable[[], None], on_status) -> QWidget:
         " color:#0a1218; background:#5ec4a8; border:none; border-radius:8px; }"
         'QPushButton[digiFocus="1"] { border:2px solid #FFE600; }'
     )
-    empty = QLabel("No photos yet.\nOpen Camera on home · Snap")
+    empty = QLabel("No photos yet.")
     empty.setAlignment(Qt.AlignCenter)
     empty.setStyleSheet(
         "color:#7a8a9a; font-size:11px; padding:16px; background:#16202c;"
@@ -1569,9 +1557,6 @@ def make_gallery_page(on_back: Callable[[], None], on_status) -> QWidget:
     meta.setAlignment(Qt.AlignCenter)
     meta.setStyleSheet("color:#e8eef5;font-size:10px;font-weight:700;")
     meta.setWordWrap(True)
-    hint = QLabel("← → prev/next · Back = list")
-    hint.setAlignment(Qt.AlignCenter)
-    hint.setStyleSheet("color:#9ab;font-size:9px;")
     row = QHBoxLayout()
     prev_btn = QPushButton("◀ Prev")
     next_btn = QPushButton("Next ▶")
@@ -1583,7 +1568,6 @@ def make_gallery_page(on_back: Callable[[], None], on_status) -> QWidget:
     close_btn.setMinimumHeight(28)
     vl.addWidget(img_lab, 1)
     vl.addWidget(meta)
-    vl.addWidget(hint)
     vl.addLayout(row)
     vl.addWidget(close_btn)
 
@@ -1788,10 +1772,6 @@ def make_lora_page(bridge, on_back, on_status) -> QWidget:
     nf_row.addWidget(new_cancel, 1)
     nf_lay.addWidget(new_to)
     nf_lay.addLayout(nf_row)
-    tip = QLabel("Broadcast = 0 · match Contacts LoRa ID")
-    tip.setStyleSheet("font-size:9px; color:#678;")
-    tip.setWordWrap(True)
-    nf_lay.addWidget(tip)
     in_lay.addWidget(new_form)
     stack.addWidget(inbox)
 
@@ -2084,12 +2064,6 @@ def make_gps_page(modem, on_back, on_status, get_modem=None) -> QWidget:
     body = QWidget()
     lay = QVBoxLayout(body)
     lay.setSpacing(4)
-    tip = QLabel(
-        "GNSS antenna on SIM7600 IPEX.\n"
-        "Outdoors · cold start 30–120s."
-    )
-    tip.setWordWrap(True)
-    tip.setStyleSheet("color:#9ab;font-size:10px;")
     summary = QLabel("GPS off")
     summary.setWordWrap(True)
     summary.setAlignment(Qt.AlignCenter)
@@ -2108,7 +2082,6 @@ def make_gps_page(modem, on_back, on_status, get_modem=None) -> QWidget:
     poll_btn.setMinimumHeight(28)
     off_btn = QPushButton("Stop GPS")
     off_btn.setMinimumHeight(28)
-    lay.addWidget(tip)
     lay.addWidget(summary)
     lay.addWidget(detail)
     lay.addWidget(on_btn)
@@ -2225,7 +2198,7 @@ def make_gps_page(modem, on_back, on_status, get_modem=None) -> QWidget:
         _show({}, "SIM7600 not connected.\nSettings→Network→Reconnect")
     else:
         try:
-            detail.setText(f"Modem AT: {m0.port}\nPress Start GPS")
+            detail.setText(f"Modem AT: {m0.port}")
         except Exception:
             pass
     return page_chrome("GPS", body, on_back)
@@ -2240,7 +2213,7 @@ def make_notes_page(on_back) -> QWidget:
     lay = QVBoxLayout(body)
     lay.setContentsMargins(4, 2, 4, 2)
     lay.setSpacing(4)
-    lay.addWidget(media_header("✎", "Notes", "Autosave when you hit Save"))
+    lay.addWidget(media_header("✎", "Notes"))
     edit = QTextEdit()
     edit.setPlainText("\n".join(_load_json(NOTES, ["(new note)"])))
     edit.setStyleSheet(
@@ -2277,7 +2250,7 @@ def make_todos_page(on_back) -> QWidget:
     lay = QVBoxLayout(body)
     lay.setContentsMargins(4, 2, 4, 2)
     lay.setSpacing(4)
-    lay.addWidget(media_header("☑", "Todos", "Confirm adds · keep it short"))
+    lay.addWidget(media_header("☑", "Todos"))
     lst = media_list()
     empty = media_empty("Nothing to do.\nAdd one below.")
     empty.hide()
@@ -2389,15 +2362,7 @@ def make_appearance_page(shell, on_back) -> QWidget:
     )
     info.setWordWrap(True)
     info.setStyleSheet("color:#9ab;")
-    tip = QLabel(
-        "Same idea as ESP Phone SD art:\n"
-        "  ~/.esp-handset/ui/wallpaper.jpg\n"
-        "  ~/.esp-handset/ui/icons/   (app icons later)\n\n"
-        "Pick any JPG/PNG from Gallery or Desktop."
-    )
-    tip.setWordWrap(True)
     lay.addWidget(info)
-    lay.addWidget(tip)
 
     def refresh_info():
         p = handset_theme.resolve_wallpaper()
@@ -2460,17 +2425,12 @@ def make_orientation_page(on_back: Callable[[], None]) -> QWidget:
     lay = QVBoxLayout(body)
     lay.setContentsMargins(2, 0, 2, 0)
     lay.setSpacing(2)
-    tip = QLabel("Pick rotation · Confirm applies · Reboot finishes")
-    tip.setWordWrap(True)
-    tip.setStyleSheet("color:#9ab;font-size:9px;")
-    tip.setFixedHeight(28)
     current = QLabel("")
     current.setStyleSheet("font-size:10px; font-weight:700;")
     status = QLabel("Ready.")
     status.setWordWrap(True)
     status.setStyleSheet("color:#8aa;font-size:9px;")
     status.setFixedHeight(36)
-    lay.addWidget(tip)
     lay.addWidget(current)
     lay.addWidget(status)
 
@@ -2479,7 +2439,7 @@ def make_orientation_page(on_back: Callable[[], None]) -> QWidget:
         AppEntry("180", "180°", "Flip (upside-down fix)", "↻"),
         AppEntry("90", "90°", "Rotate right", "↷"),
         AppEntry("270", "270°", "Rotate left", "↶"),
-        AppEntry("reboot", "Reboot", "Press twice to confirm", "⏻"),
+        AppEntry("reboot", "Reboot", "", "⏻"),
     ]
 
     def refresh() -> None:
@@ -2614,18 +2574,14 @@ def make_power_page(on_back: Callable[[], None]) -> QWidget:
     lay = QVBoxLayout(body)
     lay.setContentsMargins(2, 0, 2, 0)
     lay.setSpacing(2)
-    tip = QLabel("Confirm the same action twice within 4s")
-    tip.setWordWrap(True)
-    tip.setStyleSheet("color:#9ab;font-size:9px;")
     status = QLabel("Ready.")
     status.setWordWrap(True)
     status.setStyleSheet("font-size:10px; font-weight:700;")
-    lay.addWidget(tip)
     lay.addWidget(status)
 
     entries = [
-        AppEntry("poweroff", "Power off", "Press twice", "⏻"),
-        AppEntry("reboot", "Restart", "Press twice", "↻"),
+        AppEntry("poweroff", "Power off", "", "⏻"),
+        AppEntry("reboot", "Restart", "", "↻"),
     ]
     pending = {"action": None, "ts": 0.0}
     busy = {"on": False}
@@ -3016,12 +2972,8 @@ def make_mouse_page(on_back: Callable[[], None]) -> QWidget:
     body = QWidget()
     lay = QVBoxLayout(body)
     lay.setContentsMargins(2, 0, 2, 0)
-    tip = QLabel("Desktop pointer speed · Confirm to set")
-    tip.setWordWrap(True)
-    tip.setStyleSheet("color:#9ab;font-size:9px;")
     cur = QLabel("")
     cur.setStyleSheet("font-size:10px; font-weight:700;")
-    lay.addWidget(tip)
     lay.addWidget(cur)
 
     def _read_step() -> int:
@@ -3122,10 +3074,6 @@ def make_debug_notifs_page(
     lay.addWidget(lora_btn)
     lay.addWidget(call_btn)
     lay.addWidget(call_known_btn)
-    tip = QLabel("Confirm=Answer · Back=Decline · ←→ switch")
-    tip.setWordWrap(True)
-    tip.setStyleSheet("color:#9ab;font-size:9px;")
-    lay.addWidget(tip)
     lay.addStretch(1)
 
     def _toast(title: str, body: str, kind: str) -> None:
@@ -3232,7 +3180,7 @@ def make_debug_page(on_back: Callable[[], None]) -> QWidget:
     if pref_state["profile"] not in profiles:
         pref_state["profile"] = "Normal"
 
-    status = QLabel("Tap BEEP")
+    status = QLabel("")
     status.setAlignment(Qt.AlignCenter)
     status.setWordWrap(True)
     status.setFixedHeight(44)
@@ -3300,7 +3248,7 @@ def make_debug_page(on_back: Callable[[], None]) -> QWidget:
     yes_btn.hide()
     no_btn.hide()
 
-    tip = QLabel(f"{AUDIO_BUILD} · green=out · piezo pin 15")
+    tip = QLabel(f"{AUDIO_BUILD}")
     tip.setAlignment(Qt.AlignCenter)
     tip.setStyleSheet("font-size:10px; color:#789;")
     lay.addWidget(tip)
@@ -3738,12 +3686,8 @@ def make_network_page(
     lay.setSpacing(6)
     title = QLabel("Network")
     title.setStyleSheet("font-size:15px; font-weight:700;")
-    tip = QLabel("SIM7600 modem · Wi‑Fi is system-managed")
-    tip.setWordWrap(True)
-    tip.setStyleSheet("font-size:10px; color:#7a8a9a;")
     lay.addWidget(title)
-    lay.addWidget(tip)
-    lab = QLabel("Tap refresh for modem")
+    lab = QLabel("")
     lab.setWordWrap(True)
     lab.setStyleSheet(
         "font-size:11px; padding:8px; background:#16202c; border-radius:8px;"
