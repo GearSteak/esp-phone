@@ -389,6 +389,9 @@ def build_app(bridge: Optional[EspBridge], modem: Optional[Sim7600]) -> PhoneShe
         "folder_media",
         shell.build_folder_keyed("folder_media", "Media", MEDIA_APPS),
     )
+    from esp_handset.cart_media_ui import make_cart_media_page
+
+    shell.register_page("cart_media", make_cart_media_page(back))
     shell.register_page(
         "folder_games",
         shell.build_folder_keyed("folder_games", "Games", GAMES_APPS),
@@ -834,6 +837,9 @@ def build_app(bridge: Optional[EspBridge], modem: Optional[Sim7600]) -> PhoneShe
 
             refresh()
             shell.set_cart_label(cart_label())
+            apply = getattr(shell, "apply_cart_media_home", None)
+            if callable(apply):
+                apply()
         except Exception:
             pass
 

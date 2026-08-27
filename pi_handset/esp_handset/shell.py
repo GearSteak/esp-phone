@@ -750,7 +750,37 @@ class PhoneShell(QMainWindow):
     ) -> QWidget:
         return self._build_radial_page(title, entries, page_key)
 
+    def apply_cart_media_home(self) -> None:
+        """Rename home Media → cart title when a movies/tv cart is mounted."""
+        home = getattr(self, "_home", None)
+        if home is None or not hasattr(home, "set_entries"):
+            return
+        try:
+            from esp_handset.cart_media_ui import media_home_title
+            from esp_handset.shell_data import HOME_APPS, AppEntry
+
+            title = media_home_title()
+            entries: List[AppEntry] = []
+            for e in HOME_APPS:
+                if e.key == "media" and title:
+                    entries.append(AppEntry("media", title, "USB cart", "▶"))
+                else:
+                    entries.append(e)
+            home.set_entries(entries)
+        except Exception:
+            pass
+
     def _on_icon(self, key: str) -> None:
+        # Movies/TV cart: Media opens DVD menu instead of the Media folder
+        if key == "media":
+            try:
+                from esp_handset.cart_media_ui import media_cart_active
+
+                if media_cart_active() and "cart_media" in self.pages:
+                    self.go("cart_media")
+                    return
+            except Exception:
+                pass
         if key in FOLDER_MAP:
             page_key, _title, _apps = FOLDER_MAP[key]
             self.go(page_key)

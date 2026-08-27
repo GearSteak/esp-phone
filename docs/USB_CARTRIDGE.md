@@ -144,8 +144,8 @@ Minimal **games-only** cart:
 |---------------|------------|
 | `games` | **Games** — cart titles only; Confirm boots ROM |
 | `music` | **Media → Music** |
-| `movies` | **Media → Videos** (DVD-style menus when `menu` blocks present) |
-| `tv` | **Media → Videos** (season/episode lists; `autoplay: true` plays next ep) |
+| `movies` | **Home Media** → cart title → DVD-style menu (Play / Extras) |
+| `tv` | **Home Media** → cart title → show / season / episode menus |
 | `audiobooks` | **Media → Audiobooks** |
 
 - **No cart** → SD libraries as today

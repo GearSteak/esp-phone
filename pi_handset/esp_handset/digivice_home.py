@@ -36,6 +36,24 @@ class DigiviceHome(QWidget):
         if on_activate:
             self.activated.connect(on_activate)
 
+    def set_entries(self, entries: List[AppEntry]) -> None:
+        """Replace home icons (e.g. Media → cart title) without resetting focus hard."""
+        prev = self.current()
+        prev_key = prev.key if prev else None
+        self._entries = list(entries)
+        self._top_n = max(1, min(self._top_n, len(self._entries))) if self._entries else 1
+        if prev_key:
+            for row_i, row in enumerate((self._top(), self._bot())):
+                for col_i, e in enumerate(row):
+                    if e.key == prev_key:
+                        self._row = row_i
+                        self._col = col_i
+                        self.update()
+                        return
+        self._row = 0
+        self._col = min(self._col, max(0, len(self._top()) - 1))
+        self.update()
+
     def _top(self) -> List[AppEntry]:
         return self._entries[: self._top_n]
 

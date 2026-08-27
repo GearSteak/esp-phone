@@ -113,7 +113,7 @@ def _pretty_size(n: int) -> str:
 
 
 def digivice_play(path: Path) -> bool:
-    """Play media Digivice-friendly: Back/Escape quits; avoid VLC's Esc-keyboard OSD."""
+    """Play media Digivice-friendly: Back/Escape quits; Pi hwdec; OK on HDMI too."""
     from shutil import which
     import subprocess
 
@@ -122,6 +122,7 @@ def digivice_play(path: Path) -> bool:
         return False
 
     # Prefer mpv (not xdg-open → VLC). Digivice Back is Escape via buttons_inputd.
+    # hwdec for SPI + HDMI — do not force 240×320 scale (HDMI may be connected).
     if which("mpv"):
         conf = Path.home() / ".cache" / "digivice-mpv-input.conf"
         try:
@@ -142,6 +143,11 @@ def digivice_play(path: Path) -> bool:
             "--osd-level=0",
             "--no-terminal",
             "--keep-open=no",
+            "--hwdec=auto-safe",
+            "--vo=gpu",
+            "--framedrop=vo",
+            "--cache=yes",
+            "--demuxer-max-bytes=67108864",
         ]
         if conf is not None:
             cmd.append(f"--input-conf={conf}")
