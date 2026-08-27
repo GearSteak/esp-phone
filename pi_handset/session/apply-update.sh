@@ -395,12 +395,19 @@ elif ! command -v linphonecsh >/dev/null 2>&1 && [[ ! -x /usr/bin/linphonecsh ]]
     || log "WARN: apt install linphone-cli failed"
 fi
 
-# In-Digivice Browser (Qt WebEngine) — Settings→Update used to skip this
-log "Ensuring python3-pyqt5.qtwebengine (Browser)…"
-export DEBIAN_FRONTEND=noninteractive
-apt-get update -qq >>"$LOG" 2>&1 || true
-apt-get install -y python3-pyqt5.qtwebengine >>"$LOG" 2>&1 \
-  || log "WARN: apt install python3-pyqt5.qtwebengine failed — Browser needs it"
+# In-Digivice Browser — WebEngine often missing on Pi OS ARM; WebKit usually works
+if [[ -f "$PREFIX/session/digivice-ensure-browser.sh" ]]; then
+  install -m 755 "$PREFIX/session/digivice-ensure-browser.sh" /usr/local/bin/digivice-ensure-browser
+  log "Ensuring Digivice Browser (WebKit / WebEngine)…"
+  bash /usr/local/bin/digivice-ensure-browser >>"$LOG" 2>&1 \
+    || log "WARN: digivice-ensure-browser — check $LOG (Browser may still use WebKit after reboot)"
+else
+  log "Ensuring Digivice Browser deps…"
+  export DEBIAN_FRONTEND=noninteractive
+  apt-get update -qq >>"$LOG" 2>&1 || true
+  apt-get install -y python3-pyqt5.qtwebkit >>"$LOG" 2>&1 || true
+  apt-get install -y python3-pyqt5.qtwebengine >>"$LOG" 2>&1 || true
+fi
 
 # In-UI NES/GB/… cores — Settings→Update never fetched these before
 if [[ -f "$PREFIX/session/ensure-libretro-cores.sh" ]]; then

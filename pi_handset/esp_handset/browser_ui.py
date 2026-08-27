@@ -1,8 +1,13 @@
-"""In-Digivice browser — embedded web view inside Digivice chrome."""
+"""In-Digivice browser — embedded web view inside Digivice chrome.
+
+Prefers Qt WebEngine; falls back to Qt WebKit (QWebView) which is what
+Raspberry Pi OS actually packages for ARM. External light browser is a
+last-resort button if neither binding imports.
+"""
 
 from __future__ import annotations
 
-from typing import Callable, Optional
+from typing import Callable, Optional, Tuple
 
 from PyQt5.QtCore import Qt, QUrl
 from PyQt5.QtWidgets import (
@@ -17,37 +22,69 @@ from PyQt5.QtWidgets import (
 from esp_handset.pages import page_chrome
 
 
-def webengine_available() -> bool:
+def _probe_backends() -> Tuple[Optional[str], Optional[type]]:
+    """Return (name, view_class) for the first working web widget."""
     try:
-        from PyQt5.QtWebEngineWidgets import QWebEngineView  # noqa: F401
+        from PyQt5.QtWebEngineWidgets import QWebEngineView
 
-        return True
+        return "webengine", QWebEngineView
     except Exception:
-        return False
+        pass
+    try:
+        from PyQt5.QtWebKitWidgets import QWebView
+
+        return "webkit", QWebView
+    except Exception:
+        pass
+    return None, None
+
+
+def webengine_available() -> bool:
+    """True if any embedded web backend can import (Engine or WebKit)."""
+    name, _ = _probe_backends()
+    return name is not None
 
 
 def make_browser_page(on_back: Callable[[], None]) -> QWidget:
-    """Skinned browser page. Requires PyQt5 QtWebEngineWidgets."""
+    """Skinned browser page using WebEngine or WebKit."""
     del on_back
     body = QWidget()
     lay = QVBoxLayout(body)
     lay.setContentsMargins(2, 2, 2, 2)
     lay.setSpacing(2)
 
-    if not webengine_available():
+    backend, view_cls = _probe_backends()
+    if view_cls is None:
         msg = QLabel(
-            "Embedded browser needs Qt WebEngine.\n\n"
-            "Run Settings → Update (or on the Pi):\n"
-            "  sudo apt install python3-pyqt5.qtwebengine\n\n"
-            "Then reopen Browser."
+            "No embedded browser package yet.\n\n"
+            "Run Settings → Update — it installs\n"
+            "Qt WebKit (and WebEngine when available).\n\n"
+            "Or open a light browser on the desktop."
         )
         msg.setWordWrap(True)
         msg.setStyleSheet("color:#e8eef5; font-size:11px; padding:8px;")
         lay.addWidget(msg)
+        ext = QPushButton("Open external browser")
+        ext.setMinimumHeight(32)
+        ext.setFocusPolicy(Qt.StrongFocus)
+        ext.setStyleSheet(
+            "QPushButton { font-size:12px; font-weight:700; color:#0a1218;"
+            " background:#5ec4a8; border:none; border-radius:10px; }"
+            'QPushButton[digiFocus="1"] { border:2px solid #FFE600; }'
+        )
+
+        def _open_ext() -> None:
+            try:
+                from esp_handset.apps import open_browser
+
+                open_browser()
+            except Exception as e:
+                msg.setText(f"Could not open external browser:\n{e}")
+
+        ext.clicked.connect(_open_ext)
+        lay.addWidget(ext)
         lay.addStretch(1)
         return page_chrome("Browser", body, None, scroll=False)
-
-    from PyQt5.QtWebEngineWidgets import QWebEngineView
 
     bar = QHBoxLayout()
     bar.setSpacing(2)
@@ -78,9 +115,16 @@ def make_browser_page(on_back: Callable[[], None]) -> QWidget:
     bar.addWidget(go_btn)
     lay.addLayout(bar)
 
-    view = QWebEngineView()
+    view = view_cls()
     view.setStyleSheet("background:#000;")
     lay.addWidget(view, 1)
+
+    def _set_url(text: str) -> None:
+        q = QUrl(text)
+        if hasattr(view, "setUrl"):
+            view.setUrl(q)
+        else:
+            view.load(q)
 
     def navigate() -> None:
         text = (url.text() or "").strip()
@@ -89,7 +133,7 @@ def make_browser_page(on_back: Callable[[], None]) -> QWidget:
         if "://" not in text:
             text = "https://" + text
         url.setText(text)
-        view.setUrl(QUrl(text))
+        _set_url(text)
 
     def on_url_changed(qurl: QUrl) -> None:
         url.setText(qurl.toString())
@@ -98,9 +142,10 @@ def make_browser_page(on_back: Callable[[], None]) -> QWidget:
     fwd_btn.clicked.connect(view.forward)
     go_btn.clicked.connect(navigate)
     url.returnPressed.connect(navigate)
-    view.urlChanged.connect(on_url_changed)
+    if hasattr(view, "urlChanged"):
+        view.urlChanged.connect(on_url_changed)
 
-    view.setUrl(QUrl("https://duckduckgo.com/"))
+    _set_url("https://duckduckgo.com/")
     url.setText("https://duckduckgo.com/")
 
     chrome = page_chrome("Browser", body, None, scroll=False)
@@ -113,4 +158,5 @@ def make_browser_page(on_back: Callable[[], None]) -> QWidget:
 
     chrome.digi_activate = digi_activate  # type: ignore[attr-defined]
     chrome.browser_view = view  # type: ignore[attr-defined]
+    chrome.browser_backend = backend  # type: ignore[attr-defined]
     return chrome

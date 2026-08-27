@@ -571,8 +571,8 @@ def build_app(bridge: Optional[EspBridge], modem: Optional[Sim7600]) -> PhoneShe
             pages.stub_page(
                 "Browser",
                 "Could not load in-Digivice browser.\n"
-                "Run Settings → Update, or:\n"
-                "sudo apt install python3-pyqt5.qtwebengine",
+                "Run Settings → Update to install\n"
+                "Qt WebKit / WebEngine support.",
                 back,
             ),
         )
