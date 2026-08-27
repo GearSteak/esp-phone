@@ -96,9 +96,13 @@ def start_menu_audio(path: Optional[Path]) -> None:
         )
 
 
-def _play_feature(path: Path, start_sec: Optional[float] = None) -> None:
+def _play_feature(
+    path: Path,
+    start_sec: Optional[float] = None,
+    sub_files: Optional[List[Path]] = None,
+) -> None:
     stop_menu_audio()
-    digivice_play(path, start_sec=start_sec)
+    digivice_play(path, start_sec=start_sec, sub_files=sub_files)
 
 
 def _pick_menu(*assets: MenuAssets) -> MenuAssets:
@@ -312,9 +316,9 @@ def make_cart_media_page(on_back: Callable[[], None]) -> QWidget:
         assets = _pick_menu(movie.menu, cart.menu)
         start_menu_audio(assets.music or cart.menu.music)
 
-        def on_play(p=movie.path) -> None:
+        def on_play(p=movie.path, subs=list(movie.subtitles or [])) -> None:
             if p.is_file():
-                _play_feature(p)
+                _play_feature(p, sub_files=subs)
 
         on_ex = (lambda i=idx: _go_extras(i)) if movie.extras else None
         scenes = _movie_scenes(movie)
@@ -336,10 +340,13 @@ def make_cart_media_page(on_back: Callable[[], None]) -> QWidget:
         _set_bg(assets)
         labels: List[str] = []
         callbacks: List[Callable[[], None]] = []
+        subs = list(movie.subtitles or [])
         for title, start in _movie_scenes(movie):
             labels.append(title)
             callbacks.append(
-                lambda p=movie.path, t=start: _play_feature(p, start_sec=t)
+                lambda p=movie.path, t=start, s=subs: _play_feature(
+                    p, start_sec=t, sub_files=s
+                )
                 if p.is_file()
                 else None
             )

@@ -63,6 +63,7 @@ class CartMovie:
     menu: MenuAssets = field(default_factory=MenuAssets)
     extras: List[CartExtra] = field(default_factory=list)
     scenes: List[CartScene] = field(default_factory=list)
+    subtitles: List[Path] = field(default_factory=list)
 
 
 @dataclass
@@ -179,6 +180,35 @@ def _parse_timecode(raw: Any) -> Optional[float]:
         return None
 
 
+def _parse_subtitles(root: Path, block: Any) -> List[Path]:
+    """``subtitles``: string path, list of paths, or list of {path} objects."""
+    out: List[Path] = []
+    if block is None:
+        return out
+    items: List[Any]
+    if isinstance(block, str):
+        items = [block]
+    elif isinstance(block, list):
+        items = block
+    else:
+        return out
+    for item in items:
+        rel = ""
+        if isinstance(item, str):
+            rel = item.strip()
+        elif isinstance(item, dict):
+            rel = str(item.get("path") or "").strip()
+        if not rel:
+            continue
+        try:
+            p = _resolve(root, rel)
+        except ValueError:
+            continue
+        if p.is_file():
+            out.append(p)
+    return out
+
+
 def _parse_scenes(block: Any) -> List[CartScene]:
     out: List[CartScene] = []
     if not isinstance(block, list):
@@ -290,6 +320,9 @@ def _parse_manifest(root: Path, data: Dict[str, Any]) -> Cartridge:
                 menu=_menu_assets(root, entry.get("menu")),
                 extras=extras,
                 scenes=_parse_scenes(entry.get("scenes")),
+                subtitles=_parse_subtitles(
+                    root, entry.get("subtitles", entry.get("subs"))
+                ),
             )
         )
 

@@ -112,11 +112,38 @@ def _pretty_size(n: int) -> str:
     return f"{n / (1024 * 1024):.1f} MB"
 
 
-def digivice_play(path: Path, *, start_sec: Optional[float] = None) -> bool:
+def find_sidecar_subtitles(video: Path) -> List[Path]:
+    """Same-folder .srt/.vtt/.ass next to the video (movie.srt, movie.en.srt, …)."""
+    video = Path(video)
+    if not video.is_file():
+        return []
+    parent = video.parent
+    stem = video.stem
+    found: List[Path] = []
+    for ext in (".srt", ".vtt", ".ass", ".ssa", ".sub"):
+        exact = parent / f"{stem}{ext}"
+        if exact.is_file():
+            found.append(exact)
+        try:
+            for p in parent.glob(f"{stem}.*{ext}"):
+                if p.is_file() and p not in found:
+                    found.append(p)
+        except OSError:
+            pass
+    return found
+
+
+def digivice_play(
+    path: Path,
+    *,
+    start_sec: Optional[float] = None,
+    sub_files: Optional[List[Path]] = None,
+) -> bool:
     """Play media Digivice-friendly: hand off HDMI, Pi hwdec, Back/Escape quits.
 
     Digivice normally paints a stay-on-top HDMI host at ~30fps — that must pause
     or mpv cannot use the display / GPU. ``start_sec`` seeks to a scene/chapter.
+    Subtitles: embedded + sidecars + optional ``sub_files``.
     """
     from shutil import which
     import subprocess
@@ -132,6 +159,15 @@ def digivice_play(path: Path, *, start_sec: Optional[float] = None) -> bool:
         codec_info = probe_video_codec(path)
     except Exception:
         codec_info = ""
+
+    subs: List[Path] = []
+    for p in list(sub_files or []) + find_sidecar_subtitles(path):
+        try:
+            rp = Path(p).resolve()
+        except OSError:
+            continue
+        if rp.is_file() and rp not in subs:
+            subs.append(rp)
 
     def _handoff_begin() -> None:
         try:
@@ -187,12 +223,20 @@ def digivice_play(path: Path, *, start_sec: Optional[float] = None) -> bool:
         conf = Path.home() / ".cache" / "digivice-mpv-input.conf"
         try:
             conf.parent.mkdir(parents=True, exist_ok=True)
-            conf.write_text("ESC quit\nENTER quit\nq quit\nBS quit\n", encoding="utf-8")
+            conf.write_text(
+                "ESC quit\nENTER quit\nq quit\nBS quit\n"
+                "s cycle sub\nj cycle sub\n"
+                "v cycle-values sub-visibility yes no\n",
+                encoding="utf-8",
+            )
         except OSError:
             conf = Path("/tmp/digivice-mpv-input.conf")
             try:
                 conf.write_text(
-                    "ESC quit\nENTER quit\nq quit\nBS quit\n", encoding="utf-8"
+                    "ESC quit\nENTER quit\nq quit\nBS quit\n"
+                    "s cycle sub\nj cycle sub\n"
+                    "v cycle-values sub-visibility yes no\n",
+                    encoding="utf-8",
                 )
             except OSError:
                 conf = None
@@ -232,7 +276,19 @@ def digivice_play(path: Path, *, start_sec: Optional[float] = None) -> bool:
             "--sigmoid-upscaling=no",
             "--hdr-compute-peak=no",
             "--msg-level=vd=warn,ffmpeg=warn",
+            # Subtitles on (embedded + sidecars + --sub-file)
+            "--sub-visibility=yes",
+            "--sub-auto=fuzzy",
+            "--subs-with-matching-audio=no",
+            "--sub-font-size=48",
+            "--sub-bold=yes",
+            "--sub-border-size=2",
+            "--sub-shadow-offset=1",
+            "--sub-color=#FFFFFFFF",
+            "--sub-border-color=#000000FF",
         ]
+        for sp in subs:
+            cmd.append(f"--sub-file={sp}")
         if on_pi:
             cmd.extend(
                 [
@@ -251,6 +307,7 @@ def digivice_play(path: Path, *, start_sec: Optional[float] = None) -> bool:
             log_path.parent.mkdir(parents=True, exist_ok=True)
             log_f = open(log_path, "w", encoding="utf-8")
             log_f.write(f"codec={codec_info or '?'}\n")
+            log_f.write(f"subs={', '.join(str(s) for s in subs) or '(auto/embedded)'}\n")
             log_f.write(" ".join(cmd) + "\n\n")
             log_f.flush()
         except OSError:
@@ -284,6 +341,9 @@ def digivice_play(path: Path, *, start_sec: Optional[float] = None) -> bool:
             cmd.extend(["-c:v", "hevc_v4l2m2m"])
         elif "h264" in (codec_info or "").lower() or "avc" in (codec_info or "").lower():
             cmd.extend(["-c:v", "h264_v4l2m2m"])
+        if subs:
+            # ffplay subtitle filter — escape colons in Windows-style paths unused on Pi
+            cmd.extend(["-vf", f"subtitles={subs[0]}"])
         cmd.append(str(path))
         try:
             proc = subprocess.Popen(
@@ -308,9 +368,12 @@ def digivice_play(path: Path, *, start_sec: Optional[float] = None) -> bool:
             "--qt-notification=0",
             "--no-osd",
             "--avcodec-hw=any",
+            "--sub-track=0",
         ]
         if start_sec is not None and start_sec > 0:
             cmd.append(f"--start-time={int(start_sec)}")
+        for sp in subs:
+            cmd.extend(["--sub-file", str(sp)])
         cmd.append(str(path))
         try:
             proc = subprocess.Popen(

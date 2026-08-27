@@ -163,6 +163,17 @@ Minimal **games-only** cart:
 ```
 
 `time` may be `H:MM:SS`, `M:SS`, or seconds.
+
+**Subtitles:** on by default. Digivice loads:
+1. Softsubs already inside the MKV/MP4  
+2. Sidecar files next to the video (`Beetlejuice.srt`, `Beetlejuice.en.srt`, `.vtt`, `.ass`)  
+3. Optional paths in `cartridge.json`:
+
+```json
+"subtitles": "movies/Beetlejuice/Beetlejuice.en.srt"
+```
+
+or a list of paths. During playback, **s** / **j** cycles tracks; **v** toggles visibility (when a keyboard is available).
 | `audiobooks` | **Media → Audiobooks** |
 
 - **No cart** → SD libraries as today
