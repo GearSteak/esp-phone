@@ -72,21 +72,29 @@ class RadialMenu(QWidget):
         if not self._entries or delta == 0:
             return False
         n = len(self._entries)
-        # finish any in-flight anim
+        # Mid-scroll press: commit the in-flight step so we never snap back.
         if self._anim is not None:
+            try:
+                self._anim.finished.disconnect()
+            except Exception:
+                pass
             self._anim.stop()
+            self._anim = None
+            pending = getattr(self, "_pending_index", self._index)
+            self._index = int(pending) % n
             self._shift = 0.0
 
         direction = 1 if delta > 0 else -1
         self._pending_index = (self._index + direction) % n
 
         self._anim = QPropertyAnimation(self, b"shift", self)
-        self._anim.setDuration(140)
+        self._anim.setDuration(180)
         self._anim.setStartValue(0.0)
         self._anim.setEndValue(float(direction))
         self._anim.setEasingCurve(QEasingCurve.OutCubic)
 
         def _done():
+            self._anim = None
             self._index = self._pending_index
             self._shift = 0.0
             self.update()

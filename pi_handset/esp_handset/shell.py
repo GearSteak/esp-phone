@@ -5,8 +5,8 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Callable, Dict, List, Optional
 
-from PyQt5.QtCore import Qt, QTimer, pyqtSignal
-from PyQt5.QtGui import QPixmap
+from PyQt5.QtCore import QEasingCurve, QPropertyAnimation, Qt, QTimer, pyqtProperty, pyqtSignal
+from PyQt5.QtGui import QColor, QPainter, QPixmap
 from PyQt5.QtWidgets import (
     QFrame,
     QHBoxLayout,
@@ -79,6 +79,40 @@ __all__ = [
 ]
 
 
+class _FadeVeil(QWidget):
+    """Soft blackout used for page transitions (cheap on SPI / Pi)."""
+
+    def __init__(self, parent: Optional[QWidget] = None):
+        super().__init__(parent)
+        self._alpha = 0
+        self.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        self.setAttribute(Qt.WA_NoSystemBackground, True)
+        self.hide()
+
+    def _get_alpha(self) -> int:
+        return int(self._alpha)
+
+    def _set_alpha(self, v: int) -> None:
+        a = max(0, min(220, int(v)))
+        if a == self._alpha:
+            return
+        self._alpha = a
+        if a <= 0:
+            self.hide()
+        else:
+            if not self.isVisible():
+                self.show()
+            self.update()
+
+    veil_alpha = pyqtProperty(int, _get_alpha, _set_alpha)
+
+    def paintEvent(self, _event) -> None:  # noqa: N802
+        if self._alpha <= 0:
+            return
+        p = QPainter(self)
+        p.fillRect(self.rect(), QColor(6, 12, 20, self._alpha))
+
+
 class PhoneShell(QMainWindow):
     """Digivice: two-row home, radial folders, hard-button nav apps."""
 
@@ -97,6 +131,10 @@ class PhoneShell(QMainWindow):
         self.on_browser: Optional[Callable[[], None]] = None
         self._net_busy = False
         self.net_status.connect(self._apply_net_status)
+        self._trans_busy = False
+        self._trans_anim: Optional[QPropertyAnimation] = None
+        self._trans_pending: Optional[str] = None
+        self._trans_phase = ""
 
         root = QWidget()
         root.setObjectName("phoneRoot")
@@ -186,6 +224,7 @@ class PhoneShell(QMainWindow):
         outer.addWidget(self.stack, 1)
 
         self.setCentralWidget(root)
+        self._fade_veil = _FadeVeil(root)
         self._toasts = ToastHost(root)
         self._toasts.raise_()
         self._incoming = IncomingCallOverlay(root)
@@ -194,8 +233,9 @@ class PhoneShell(QMainWindow):
         self._active_call.raise_()
 
         self.register_page("home", self._build_home())
-        self.go("home", replace=True)
+        self.go("home", replace=True, animate=False)
         self.apply_wallpaper()
+        QTimer.singleShot(0, self._sync_fade_veil_geom)
 
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._tick_clock)
@@ -518,25 +558,41 @@ class PhoneShell(QMainWindow):
         self.pages[key] = widget
         self.stack.addWidget(widget)
 
-    def go(self, key: str, replace: bool = False) -> None:
-        if key not in self.pages:
-            return
-        if replace:
-            self._nav = [key]
-        else:
-            if not self._nav or self._nav[-1] != key:
-                self._nav.append(key)
-        self.stack.setCurrentWidget(self.pages[key])
+    def _sync_fade_veil_geom(self) -> None:
+        try:
+            self._fade_veil.setGeometry(self.stack.geometry())
+        except Exception:
+            pass
+
+    def resizeEvent(self, event) -> None:  # noqa: N802
+        super().resizeEvent(event)
+        self._sync_fade_veil_geom()
+
+    def _raise_overlays(self) -> None:
+        try:
+            self._fade_veil.raise_()
+            self._toasts.raise_()
+            self._incoming.raise_()
+            self._active_call.raise_()
+        except Exception:
+            pass
+
+    def _focus_page(self, key: str) -> None:
         if key == "home" and self._home:
             self._home.setFocus(Qt.OtherFocusReason)
         elif key in self._radials:
             self._radials[key].setFocus(Qt.OtherFocusReason)
         elif key in _GAMEPAD_PAGES:
-            # Game boards take focus themselves on showEvent; don't land on Back chrome
             pass
-        else:
-            # Keep focus on the page control (do NOT steal to shell — breaks Confirm/lists)
+        elif key in self.pages:
             digi_nav.ensure_page_focus(self.pages[key])
+
+    def _apply_page_now(self, key: str) -> None:
+        """Swap stack page + focus + on_page_show (no animation)."""
+        if key not in self.pages:
+            return
+        self.stack.setCurrentWidget(self.pages[key])
+        self._focus_page(key)
         page = self.pages[key]
         on_show = getattr(page, "on_page_show", None)
         if callable(on_show):
@@ -545,6 +601,82 @@ class PhoneShell(QMainWindow):
             except Exception:
                 pass
         self._sync_title()
+
+    def _switch_page(self, key: str, *, animate: bool = True) -> None:
+        """Fade through a soft veil when changing Digivice screens."""
+        if key not in self.pages:
+            return
+        if self.stack.currentWidget() is self.pages[key]:
+            self._apply_page_now(key)
+            return
+        # Rapid nav while a fade is running: jump, then queue one more if needed
+        if self._trans_busy or not animate:
+            self._trans_pending = None
+            if self._trans_anim is not None:
+                try:
+                    self._trans_anim.finished.disconnect()
+                except Exception:
+                    pass
+                self._trans_anim.stop()
+                self._trans_anim = None
+            self._trans_busy = False
+            self._trans_phase = ""
+            try:
+                self._fade_veil.veil_alpha = 0
+            except Exception:
+                pass
+            self._apply_page_now(key)
+            return
+
+        self._trans_busy = True
+        self._trans_pending = None
+        self._trans_phase = "in"
+        self._sync_fade_veil_geom()
+        self._raise_overlays()
+        target = key
+
+        anim = QPropertyAnimation(self._fade_veil, b"veil_alpha", self)
+        anim.setDuration(90)
+        anim.setStartValue(0)
+        anim.setEndValue(160)
+        anim.setEasingCurve(QEasingCurve.InQuad)
+
+        def _mid() -> None:
+            self._apply_page_now(target)
+            self._trans_phase = "out"
+            self._raise_overlays()
+            out = QPropertyAnimation(self._fade_veil, b"veil_alpha", self)
+            out.setDuration(120)
+            out.setStartValue(160)
+            out.setEndValue(0)
+            out.setEasingCurve(QEasingCurve.OutQuad)
+
+            def _done() -> None:
+                self._trans_anim = None
+                self._trans_busy = False
+                self._trans_phase = ""
+                pending = self._trans_pending
+                self._trans_pending = None
+                if pending and pending in self.pages:
+                    self._switch_page(pending, animate=True)
+
+            out.finished.connect(_done)
+            self._trans_anim = out
+            out.start()
+
+        anim.finished.connect(_mid)
+        self._trans_anim = anim
+        anim.start()
+
+    def go(self, key: str, replace: bool = False, *, animate: bool = True) -> None:
+        if key not in self.pages:
+            return
+        if replace:
+            self._nav = [key]
+        else:
+            if not self._nav or self._nav[-1] != key:
+                self._nav.append(key)
+        self._switch_page(key, animate=animate)
 
     def back(self) -> None:
         # App pages can consume Back (e.g. SMS thread → inbox)
@@ -561,19 +693,10 @@ class PhoneShell(QMainWindow):
         if len(self._nav) > 1:
             self._nav.pop()
             key = self._nav[-1]
-            self.stack.setCurrentWidget(self.pages[key])
-            if key == "home" and self._home:
-                self._home.setFocus(Qt.OtherFocusReason)
-            elif key in self._radials:
-                self._radials[key].setFocus(Qt.OtherFocusReason)
-            elif key in _GAMEPAD_PAGES:
-                pass
-            else:
-                digi_nav.ensure_page_focus(self.pages[key])
+            self._switch_page(key, animate=True)
         else:
             self.go("home", replace=True)
             return
-        self._sync_title()
 
     def _leave_current_page(self) -> None:
         """Stop overlays / emulators before ripping the nav stack away (Home)."""

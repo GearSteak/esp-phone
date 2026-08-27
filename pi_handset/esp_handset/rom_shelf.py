@@ -176,28 +176,57 @@ class RomShelf(QWidget):
     def count(self) -> int:
         return len(self._entries)
 
+    def _commit_pending(self) -> None:
+        """Apply in-flight index so interrupting a scroll never snaps backward."""
+        if getattr(self, "_pending_index", None) is None:
+            return
+        if self._pending_index != self._index:
+            self._index = int(self._pending_index)
+            self.index_changed.emit(self._index)
+        self._shift = 0.0
+
+    def _warm_covers(self, center: int) -> None:
+        """Decode neighbor art before the slide so paint stays smooth."""
+        n = len(self._entries)
+        if n == 0:
+            return
+        for off in (-2, -1, 0, 1, 2):
+            if n < abs(off) + 1 and off != 0:
+                continue
+            entry = self._entries[(center + off) % n]
+            try:
+                self._pixmap_for(entry, 96 if off == 0 else 56, 84 if off == 0 else 50)
+            except Exception:
+                pass
+
     def move_by(self, delta: int) -> bool:
         if not self._entries or delta == 0:
             return False
         n = len(self._entries)
         if n == 1:
             return True
+        # Mid-scroll press: finish the current step, then animate the next.
         if self._anim is not None:
+            try:
+                self._anim.finished.disconnect()
+            except Exception:
+                pass
             self._anim.stop()
-            self._shift = 0.0
+            self._anim = None
+            self._commit_pending()
         direction = 1 if delta > 0 else -1
         self._pending_index = (self._index + direction) % n
+        self._warm_covers(self._pending_index)
         self._anim = QPropertyAnimation(self, b"shift", self)
-        self._anim.setDuration(150)
+        self._anim.setDuration(200)
         self._anim.setStartValue(0.0)
         self._anim.setEndValue(float(direction))
         self._anim.setEasingCurve(QEasingCurve.OutCubic)
 
         def _done() -> None:
-            self._index = self._pending_index
-            self._shift = 0.0
+            self._anim = None
+            self._commit_pending()
             self.update()
-            self.index_changed.emit(self._index)
 
         self._anim.finished.connect(_done)
         self._anim.start()

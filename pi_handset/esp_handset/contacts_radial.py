@@ -136,18 +136,27 @@ class ContactsRadial(QWidget):
         if not group or delta == 0:
             return False
         n = len(group)
+        # Mid-scroll press: commit in-flight step so we never snap backward.
         if self._anim is not None:
+            try:
+                self._anim.finished.disconnect()
+            except Exception:
+                pass
             self._anim.stop()
+            self._anim = None
+            pending = getattr(self, "_pending_contact", self._contact_i)
+            self._contact_i = int(pending) % n
             self._shift = 0.0
         direction = 1 if delta > 0 else -1
         self._pending_contact = (self._contact_i + direction) % n
         self._anim = QPropertyAnimation(self, b"shift", self)
-        self._anim.setDuration(140)
+        self._anim.setDuration(180)
         self._anim.setStartValue(0.0)
         self._anim.setEndValue(float(direction))
         self._anim.setEasingCurve(QEasingCurve.OutCubic)
 
         def _done() -> None:
+            self._anim = None
             self._contact_i = self._pending_contact
             self._shift = 0.0
             self.update()
