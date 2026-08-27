@@ -30,6 +30,7 @@ _CACHE_TTL = 2.0
 @dataclass
 class MenuAssets:
     background: Optional[Path] = None
+    logo: Optional[Path] = None
     music: Optional[Path] = None
     select_sound: Optional[Path] = None
 
@@ -88,6 +89,7 @@ class Cartridge:
     title: str
     kinds: Set[str]
     menu: MenuAssets = field(default_factory=MenuAssets)
+    logo: Optional[Path] = None
     games: List[CartGame] = field(default_factory=list)
     movies: List[CartMovie] = field(default_factory=list)
     tv: List[CartShow] = field(default_factory=list)
@@ -123,6 +125,7 @@ def _menu_assets(root: Path, block: Any) -> MenuAssets:
     out = MenuAssets()
     for key, attr in (
         ("background", "background"),
+        ("logo", "logo"),
         ("music", "music"),
         ("select_sound", "select_sound"),
     ):
@@ -134,6 +137,25 @@ def _menu_assets(root: Path, block: Any) -> MenuAssets:
             except ValueError:
                 pass
     return out
+
+
+def _resolve_logo(root: Path, data: Dict[str, Any], menu: MenuAssets) -> Optional[Path]:
+    """Logo for DVD menu: JSON logo → menu.logo → menu/logo.png → logo.png."""
+    raw = data.get("logo")
+    if isinstance(raw, str) and raw.strip():
+        try:
+            p = _resolve(root, raw.strip())
+            if p.is_file():
+                return p
+        except ValueError:
+            pass
+    if menu.logo is not None and menu.logo.is_file():
+        return menu.logo
+    for rel in ("menu/logo.png", "menu/logo.jpg", "logo.png", "logo.jpg"):
+        p = root / rel
+        if p.is_file():
+            return p
+    return None
 
 
 def _parse_manifest(root: Path, data: Dict[str, Any]) -> Cartridge:
@@ -156,11 +178,13 @@ def _parse_manifest(root: Path, data: Dict[str, Any]) -> Cartridge:
         if data.get("audiobooks"):
             kinds.add("audiobooks")
 
+    menu = _menu_assets(root, data.get("menu"))
     cart = Cartridge(
         root=root,
         title=title,
         kinds=kinds,
-        menu=_menu_assets(root, data.get("menu")),
+        menu=menu,
+        logo=_resolve_logo(root, data, menu),
         raw=data,
     )
 

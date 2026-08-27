@@ -81,8 +81,10 @@ Minimal **games-only** cart:
   "version": 1,
   "title": "Movie Night",
   "kinds": ["movies", "games"],
+  "logo": "menu/logo.png",
   "menu": {
     "background": "menu/bg.png",
+    "logo": "menu/logo.png",
     "music": "menu/theme.ogg",
     "select_sound": "menu/select.wav"
   },
@@ -92,6 +94,7 @@ Minimal **games-only** cart:
       "path": "movies/example/feature.mkv",
       "menu": {
         "background": "movies/example/menu/bg.png",
+        "logo": "movies/example/menu/logo.png",
         "music": "movies/example/menu/theme.ogg"
       },
       "extras": [
@@ -144,8 +147,10 @@ Minimal **games-only** cart:
 |---------------|------------|
 | `games` | **Games** — cart titles only; Confirm boots ROM |
 | `music` | **Media → Music** |
-| `movies` | **Home Media** → cart title → DVD-style menu (Play / Extras) |
-| `tv` | **Home Media** → cart title → show / season / episode menus |
+| `movies` | **Home Media** → cart title → logo + name + **Play** / **Extras** |
+| `tv` | **Home Media** → cart title → logo + name + **Play** / season list |
+
+**Logo:** put `menu/logo.png` (or `"logo": "…"` / `"menu": { "logo": "…" }` in `cartridge.json`). Shown above the title on the DVD screen. No “DVD menu” subtitle.
 | `audiobooks` | **Media → Audiobooks** |
 
 - **No cart** → SD libraries as today

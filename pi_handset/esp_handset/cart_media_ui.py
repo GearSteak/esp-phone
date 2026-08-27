@@ -6,11 +6,13 @@ import subprocess
 from pathlib import Path
 from typing import Callable, List, Optional, Tuple
 
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtGui import QPixmap
 from PyQt5.QtWidgets import (
+    QHBoxLayout,
     QLabel,
     QListWidgetItem,
+    QPushButton,
     QVBoxLayout,
     QWidget,
 )
@@ -22,7 +24,7 @@ from esp_handset.cartridge import (
     refresh,
     takeover_media_kind,
 )
-from esp_handset.media_ui import digivice_play, media_list, _MUTED, _TEXT, _ACCENT
+from esp_handset.media_ui import digivice_play, media_btn, media_list, _TEXT
 from esp_handset.pages import page_chrome
 
 _menu_audio: Optional[subprocess.Popen] = None
@@ -98,9 +100,19 @@ def _pick_menu(*assets: MenuAssets) -> MenuAssets:
     for a in assets:
         if a is None:
             continue
-        if a.background or a.music or a.select_sound:
+        if a.background or a.logo or a.music or a.select_sound:
             return a
     return MenuAssets()
+
+
+def _pick_logo(assets: MenuAssets, cart: Optional[Cartridge]) -> Optional[Path]:
+    if assets.logo is not None and assets.logo.is_file():
+        return assets.logo
+    if cart is not None and cart.logo is not None and cart.logo.is_file():
+        return cart.logo
+    if cart is not None and cart.menu.logo is not None and cart.menu.logo.is_file():
+        return cart.menu.logo
+    return None
 
 
 def media_cart_active() -> bool:
@@ -121,96 +133,173 @@ def media_home_title() -> Optional[str]:
     return t[:18]
 
 
+def _small_menu_btn(text: str) -> QPushButton:
+    b = media_btn(text, primary=False)
+    b.setMinimumHeight(26)
+    b.setMaximumHeight(28)
+    b.setStyleSheet(
+        "QPushButton { font-size:10px; font-weight:700; padding:3px 8px;"
+        " color:#e8eef5; background:#1a2430; border:1px solid #3a4a5a;"
+        " border-radius:6px; min-width:64px; }"
+        'QPushButton[digiFocus="1"] { border:2px solid #FFE600; }'
+    )
+    return b
+
+
 def make_cart_media_page(on_back: Callable[[], None]) -> QWidget:
-    """DVD-style hub: title pick (if needed) → Play / Extras / seasons."""
+    """DVD hub: logo + name + Play/Extras (no 'DVD menu' chrome)."""
     del on_back
 
     body = QWidget()
     body.setStyleSheet("background:#05080c;")
     root = QVBoxLayout(body)
-    root.setContentsMargins(0, 0, 0, 0)
-    root.setSpacing(0)
+    root.setContentsMargins(6, 4, 6, 4)
+    root.setSpacing(4)
 
     bg = QLabel()
     bg.setAlignment(Qt.AlignCenter)
-    bg.setMinimumHeight(120)
-    bg.setStyleSheet("background:#0a1018;")
+    bg.setMinimumHeight(70)
+    bg.setStyleSheet("background:transparent;")
     bg.setScaledContents(False)
-    root.addWidget(bg, 3)
 
-    title_lab = QLabel("")
-    title_lab.setAlignment(Qt.AlignCenter)
-    title_lab.setWordWrap(True)
-    title_lab.setStyleSheet(
-        f"font-size:13px; font-weight:700; color:{_TEXT};"
-        " background:rgba(0,0,0,160); padding:4px 6px;"
+    logo_lab = QLabel()
+    logo_lab.setAlignment(Qt.AlignCenter)
+    logo_lab.setMinimumHeight(72)
+    logo_lab.setMaximumHeight(110)
+    logo_lab.setStyleSheet("background:transparent;")
+
+    name_lab = QLabel("")
+    name_lab.setAlignment(Qt.AlignCenter)
+    name_lab.setWordWrap(True)
+    name_lab.setStyleSheet(
+        f"font-size:12px; font-weight:700; color:{_TEXT}; background:transparent;"
+        " padding:0 4px;"
     )
-    root.addWidget(title_lab)
 
-    hint = QLabel("")
-    hint.setAlignment(Qt.AlignCenter)
-    hint.setStyleSheet(f"font-size:9px; color:{_MUTED}; padding:0 4px 2px;")
-    root.addWidget(hint)
+    # Main DVD actions — two small buttons
+    btn_row = QWidget()
+    btn_lay = QHBoxLayout(btn_row)
+    btn_lay.setContentsMargins(8, 0, 8, 0)
+    btn_lay.setSpacing(8)
+    play_btn = _small_menu_btn("Play")
+    extras_btn = _small_menu_btn("Extras")
+    btn_lay.addStretch(1)
+    btn_lay.addWidget(play_btn)
+    btn_lay.addWidget(extras_btn)
+    btn_lay.addStretch(1)
 
     lst = media_list()
-    lst.setMaximumHeight(130)
-    lst.setStyleSheet(
-        lst.styleSheet()
-        + f" QListWidget {{ background:rgba(10,16,24,220); border:none;"
-        f" border-top:1px solid {_ACCENT}; }}"
-    )
-    root.addWidget(lst, 2)
+    lst.setMaximumHeight(120)
+    lst.hide()
 
-    # Navigation stack: ("titles",) | ("movie", idx) | ("extras", idx) |
-    # ("show", idx) | ("season", show_i, season_i)
+    root.addStretch(1)
+    root.addWidget(bg, 0)
+    root.addWidget(logo_lab, 0)
+    root.addWidget(name_lab, 0)
+    root.addWidget(btn_row, 0)
+    root.addWidget(lst, 1)
+    root.addStretch(1)
+
     stack: List[Tuple] = []
     state = {"cart": None}  # type: ignore[var-annotated]
-    actions: List[Tuple[str, Callable[[], None]]] = []
+    actions: List[Callable[[], None]] = []
+    play_cb: Optional[Callable[[], None]] = None
+    extras_cb: Optional[Callable[[], None]] = None
+
+    def _clear_logo() -> None:
+        logo_lab.clear()
+        logo_lab.setText("")
+
+    def _set_logo(path: Optional[Path]) -> None:
+        if path is None or not path.is_file():
+            _clear_logo()
+            return
+        pm = QPixmap(str(path))
+        if pm.isNull():
+            _clear_logo()
+            return
+        w = max(logo_lab.width(), 160)
+        h = max(logo_lab.height(), 72)
+        scaled = pm.scaled(w, h, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        logo_lab.setPixmap(scaled)
 
     def _set_bg(assets: MenuAssets) -> None:
         path = assets.background
         if path is not None and path.is_file():
             pm = QPixmap(str(path))
             if not pm.isNull():
-                # Scale to label; KeepAspectRatioByExpanding for cover feel
                 scaled = pm.scaled(
-                    max(bg.width(), 240),
-                    max(bg.height(), 160),
-                    Qt.KeepAspectRatioByExpanding,
+                    max(body.width(), 220),
+                    max(body.height() // 3, 80),
+                    Qt.KeepAspectRatio,
                     Qt.SmoothTransformation,
                 )
                 bg.setPixmap(scaled)
+                bg.show()
                 return
         bg.clear()
-        bg.setText("")
-        bg.setStyleSheet("background:#0a1018;")
+        bg.hide()
 
-    def _fill(items: List[str], acts: List[Callable[[], None]]) -> None:
+    def _show_dvd_chrome(show: bool) -> None:
+        logo_lab.setVisible(show)
+        name_lab.setVisible(show)
+        btn_row.setVisible(show)
+        if show:
+            lst.hide()
+        else:
+            logo_lab.hide()
+            name_lab.hide()
+            btn_row.hide()
+            lst.show()
+
+    def _fill_list(items: List[str], acts: List[Callable[[], None]]) -> None:
         nonlocal actions
-        actions = [(items[i], acts[i]) for i in range(len(items))]
+        actions = list(acts)
         lst.clear()
         for label in items:
             lst.addItem(QListWidgetItem(label))
         if items:
             lst.setCurrentRow(0)
+        _show_dvd_chrome(False)
+
+    def _wire_dvd_buttons(
+        *,
+        name: str,
+        logo: Optional[Path],
+        assets: MenuAssets,
+        on_play: Callable[[], None],
+        on_extras: Optional[Callable[[], None]],
+    ) -> None:
+        nonlocal play_cb, extras_cb
+        _set_bg(assets)
+        _set_logo(logo)
+        name_lab.setText(name)
+        play_cb = on_play
+        extras_cb = on_extras
+        play_btn.setEnabled(True)
+        if on_extras is not None:
+            extras_btn.show()
+            extras_btn.setEnabled(True)
+        else:
+            extras_btn.hide()
+        _show_dvd_chrome(True)
 
     def _go_titles() -> None:
         cart: Optional[Cartridge] = state["cart"]
         stack.clear()
         stack.append(("titles",))
         if cart is None:
-            title_lab.setText("No cart")
-            hint.setText("Insert a media cartridge")
-            _set_bg(MenuAssets())
             stop_menu_audio()
-            _fill([], [])
+            _set_bg(MenuAssets())
+            _clear_logo()
+            name_lab.setText("No cart")
+            _show_dvd_chrome(True)
+            play_btn.setEnabled(False)
+            extras_btn.hide()
             return
         assets = cart.menu
         _set_bg(assets)
         start_menu_audio(assets.music)
-        title_lab.setText(cart.title)
-        hint.setText("Select a title")
-
         labels: List[str] = []
         callbacks: List[Callable[[], None]] = []
         for i, m in enumerate(cart.movies):
@@ -220,12 +309,9 @@ def make_cart_media_page(on_back: Callable[[], None]) -> QWidget:
             labels.append(s.title)
             callbacks.append(lambda i=i: _go_show(i))
         if len(labels) == 1:
-            # Single title → skip picker, open its menu
             callbacks[0]()
             return
-        if not labels:
-            hint.setText("Cart has no movies/TV")
-        _fill(labels, callbacks)
+        _fill_list(labels or ["(empty cart)"], callbacks or [lambda: None])
 
     def _go_movie(idx: int) -> None:
         cart: Optional[Cartridge] = state["cart"]
@@ -234,22 +320,21 @@ def make_cart_media_page(on_back: Callable[[], None]) -> QWidget:
         movie = cart.movies[idx]
         stack[:] = [("titles",), ("movie", idx)]
         assets = _pick_menu(movie.menu, cart.menu)
-        _set_bg(assets)
         start_menu_audio(assets.music or cart.menu.music)
-        title_lab.setText(movie.title)
-        hint.setText("DVD menu")
+        logo = _pick_logo(movie.menu, cart)
 
-        labels = ["▶  Play"]
-        callbacks: List[Callable[[], None]] = [
-            lambda p=movie.path: _play_feature(p) if p.is_file() else None
-        ]
-        if movie.extras:
-            labels.append("★  Extras")
-            callbacks.append(lambda i=idx: _go_extras(i))
-        if len(cart.movies) + len(cart.tv) > 1:
-            labels.append("←  Titles")
-            callbacks.append(_go_titles)
-        _fill(labels, callbacks)
+        def on_play(p=movie.path) -> None:
+            if p.is_file():
+                _play_feature(p)
+
+        on_ex = (lambda i=idx: _go_extras(i)) if movie.extras else None
+        _wire_dvd_buttons(
+            name=movie.title,
+            logo=logo,
+            assets=assets,
+            on_play=on_play,
+            on_extras=on_ex,
+        )
 
     def _go_extras(idx: int) -> None:
         cart: Optional[Cartridge] = state["cart"]
@@ -259,8 +344,6 @@ def make_cart_media_page(on_back: Callable[[], None]) -> QWidget:
         stack.append(("extras", idx))
         assets = _pick_menu(movie.menu, cart.menu)
         _set_bg(assets)
-        title_lab.setText(f"{movie.title} · Extras")
-        hint.setText("Special features")
         labels: List[str] = []
         callbacks: List[Callable[[], None]] = []
         for ex in movie.extras:
@@ -268,9 +351,9 @@ def make_cart_media_page(on_back: Callable[[], None]) -> QWidget:
             callbacks.append(
                 lambda p=ex.path: _play_feature(p) if p.is_file() else None
             )
-        labels.append("←  Back")
+        labels.append("← Back")
         callbacks.append(lambda i=idx: _go_movie(i))
-        _fill(labels, callbacks)
+        _fill_list(labels, callbacks)
 
     def _go_show(idx: int) -> None:
         cart: Optional[Cartridge] = state["cart"]
@@ -279,28 +362,38 @@ def make_cart_media_page(on_back: Callable[[], None]) -> QWidget:
         show = cart.tv[idx]
         stack[:] = [("titles",), ("show", idx)]
         assets = _pick_menu(show.menu, cart.menu)
-        _set_bg(assets)
         start_menu_audio(assets.music or cart.menu.music)
-        title_lab.setText(show.title)
-        hint.setText("Seasons")
-        labels: List[str] = []
-        callbacks: List[Callable[[], None]] = []
-        # Play from first episode
         first = None
         if show.seasons and show.seasons[0].episodes:
             first = show.seasons[0].episodes[0].path
-        if first is not None:
-            labels.append("▶  Play")
-            callbacks.append(
-                lambda p=first: _play_feature(p) if p.is_file() else None
-            )
+
+        def on_play(p=first) -> None:
+            if p is not None and p.is_file():
+                _play_feature(p)
+
+        # TV: Play = first ep; Extras → season list
+        _wire_dvd_buttons(
+            name=show.title,
+            logo=_pick_logo(show.menu, cart),
+            assets=assets,
+            on_play=on_play,
+            on_extras=lambda i=idx: _go_show_seasons(i),
+        )
+
+    def _go_show_seasons(idx: int) -> None:
+        cart: Optional[Cartridge] = state["cart"]
+        if cart is None or not (0 <= idx < len(cart.tv)):
+            return
+        show = cart.tv[idx]
+        stack.append(("seasons", idx))
+        labels: List[str] = []
+        callbacks: List[Callable[[], None]] = []
         for si, season in enumerate(show.seasons):
             labels.append(season.title)
             callbacks.append(lambda s=idx, se=si: _go_season(s, se))
-        if len(cart.movies) + len(cart.tv) > 1:
-            labels.append("←  Titles")
-            callbacks.append(_go_titles)
-        _fill(labels, callbacks)
+        labels.append("← Back")
+        callbacks.append(lambda i=idx: _go_show(i))
+        _fill_list(labels, callbacks)
 
     def _go_season(show_i: int, season_i: int) -> None:
         cart: Optional[Cartridge] = state["cart"]
@@ -311,10 +404,6 @@ def make_cart_media_page(on_back: Callable[[], None]) -> QWidget:
             return
         season = show.seasons[season_i]
         stack.append(("season", show_i, season_i))
-        assets = _pick_menu(show.menu, cart.menu)
-        _set_bg(assets)
-        title_lab.setText(f"{show.title} · {season.title}")
-        hint.setText("Episodes")
         labels: List[str] = []
         callbacks: List[Callable[[], None]] = []
         for ep in season.episodes:
@@ -322,14 +411,26 @@ def make_cart_media_page(on_back: Callable[[], None]) -> QWidget:
             callbacks.append(
                 lambda p=ep.path: _play_feature(p) if p.is_file() else None
             )
-        labels.append("←  Back")
-        callbacks.append(lambda s=show_i: _go_show(s))
-        _fill(labels, callbacks)
+        labels.append("← Back")
+        callbacks.append(lambda s=show_i: _go_show_seasons(s))
+        _fill_list(labels, callbacks)
 
-    def do_activate(_item=None) -> None:
+    def do_list_activate(_item=None) -> None:
         row = lst.currentRow()
         if 0 <= row < len(actions):
-            actions[row][1]()
+            actions[row]()
+
+    def on_play_clicked() -> None:
+        if play_cb:
+            play_cb()
+
+    def on_extras_clicked() -> None:
+        if extras_cb:
+            extras_cb()
+
+    play_btn.clicked.connect(on_play_clicked)
+    extras_btn.clicked.connect(on_extras_clicked)
+    lst.itemActivated.connect(do_list_activate)
 
     def rebuild() -> None:
         refresh(force=True)
@@ -339,13 +440,14 @@ def make_cart_media_page(on_back: Callable[[], None]) -> QWidget:
         ):
             state["cart"] = None
             stop_menu_audio()
-            title_lab.setText("No media cart")
-            hint.setText("Media folder is available from home")
             _set_bg(MenuAssets())
-            _fill([], [])
+            _clear_logo()
+            name_lab.setText("No media cart")
+            _show_dvd_chrome(True)
+            play_btn.setEnabled(False)
+            extras_btn.hide()
             return
         state["cart"] = cart
-        # Prefer movie menu if single movie matches cart branding
         if len(cart.movies) == 1 and not cart.tv:
             _go_movie(0)
         elif len(cart.tv) == 1 and not cart.movies:
@@ -353,41 +455,29 @@ def make_cart_media_page(on_back: Callable[[], None]) -> QWidget:
         else:
             _go_titles()
 
-    lst.itemActivated.connect(do_activate)
-    # Confirm on Digivice often uses Enter / Return via digi_nav on buttons;
-    # also double-activate via itemClicked for touch
-    lst.itemClicked.connect(lambda _=None: None)
-
     def on_page_show() -> None:
         rebuild()
 
-        def _refresh_bg() -> None:
+        def _refresh_art() -> None:
             try:
                 top = stack[-1] if stack else ("titles",)
                 cart = state["cart"]
-                if cart is None:
+                if cart is None or top[0] not in ("movie", "show"):
                     return
                 if top[0] == "movie" and 0 <= top[1] < len(cart.movies):
                     m = cart.movies[top[1]]
-                    _set_bg(_pick_menu(m.menu, cart.menu))
-                elif top[0] in ("show", "season", "extras"):
-                    if top[0] == "extras" and 0 <= top[1] < len(cart.movies):
-                        m = cart.movies[top[1]]
-                        _set_bg(_pick_menu(m.menu, cart.menu))
-                    elif top[0] == "show" and 0 <= top[1] < len(cart.tv):
-                        _set_bg(_pick_menu(cart.tv[top[1]].menu, cart.menu))
-                    elif top[0] == "season":
-                        si = top[1]
-                        if 0 <= si < len(cart.tv):
-                            _set_bg(_pick_menu(cart.tv[si].menu, cart.menu))
-                else:
-                    _set_bg(cart.menu)
+                    assets = _pick_menu(m.menu, cart.menu)
+                    _set_bg(assets)
+                    _set_logo(_pick_logo(m.menu, cart))
+                elif top[0] == "show" and 0 <= top[1] < len(cart.tv):
+                    s = cart.tv[top[1]]
+                    assets = _pick_menu(s.menu, cart.menu)
+                    _set_bg(assets)
+                    _set_logo(_pick_logo(s.menu, cart))
             except Exception:
                 pass
 
-        from PyQt5.QtCore import QTimer
-
-        QTimer.singleShot(50, _refresh_bg)
+        QTimer.singleShot(50, _refresh_art)
 
     def on_navigate_away() -> None:
         stop_menu_audio()
@@ -395,13 +485,16 @@ def make_cart_media_page(on_back: Callable[[], None]) -> QWidget:
     def on_hardware_back() -> bool:
         if len(stack) <= 1:
             stop_menu_audio()
-            return False  # shell pops to home
+            return False
         kind = stack[-1][0]
         if kind == "extras":
             _go_movie(stack[-1][1])
             return True
-        if kind == "season":
+        if kind == "seasons":
             _go_show(stack[-1][1])
+            return True
+        if kind == "season":
+            _go_show_seasons(stack[-1][1])
             return True
         if kind in ("movie", "show"):
             cart = state["cart"]
@@ -418,12 +511,20 @@ def make_cart_media_page(on_back: Callable[[], None]) -> QWidget:
     chrome.on_navigate_away = on_navigate_away  # type: ignore[attr-defined]
     chrome.on_hardware_back = on_hardware_back  # type: ignore[attr-defined]
 
-    # Digivice Confirm on list: shell digi_nav will focus list; map Return
     def digi_activate() -> bool:
-        do_activate()
+        if btn_row.isVisible():
+            # Prefer focused button; else Play
+            fw = body.focusWidget()
+            if fw is extras_btn and extras_btn.isVisible() and extras_cb:
+                on_extras_clicked()
+                return True
+            if play_cb:
+                on_play_clicked()
+                return True
+            return True
+        do_list_activate()
         return True
 
     chrome.digi_activate = digi_activate  # type: ignore[attr-defined]
     body.digi_activate = digi_activate  # type: ignore[attr-defined]
-    lst.setProperty("digiPad", False)
     return chrome
