@@ -529,6 +529,9 @@ def build_app(bridge: Optional[EspBridge], modem: Optional[Sim7600]) -> PhoneShe
     )
     shell.register_page("set_about", pages.make_about_page(modem, back))
     shell.register_page("set_update", pages.make_update_page(back))
+    from esp_handset.jellyfin_ui import make_jellyfin_page
+
+    shell.register_page("set_jellyfin", make_jellyfin_page(back))
     shell.register_page("set_mouse", pages.make_mouse_page(back))
     shell.register_page(
         "set_debug",

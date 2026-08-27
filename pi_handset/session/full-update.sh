@@ -112,6 +112,19 @@ if [[ -f "$PREFIX/session/digivice-ensure-browser.sh" ]] || [[ -f "$(dirname "$0
   bash /usr/local/bin/digivice-ensure-browser 2>&1 | tee -a "$LOG" | tail -n 20 || true
 fi
 
+# Jellyfin Share (Fire TV / LAN)
+log "apt/ensure: Digivice Jellyfin…"
+ENSURE_JF="$(dirname "$0")/digivice-ensure-jellyfin.sh"
+[[ -f "$PREFIX/session/digivice-ensure-jellyfin.sh" ]] && ENSURE_JF="$PREFIX/session/digivice-ensure-jellyfin.sh"
+if [[ -f "$ENSURE_JF" ]]; then
+  install -m 755 "$ENSURE_JF" /usr/local/bin/digivice-ensure-jellyfin
+  [[ -f "$(dirname "$ENSURE_JF")/digivice-jellyfin-ctl.sh" ]] \
+    && install -m 755 "$(dirname "$ENSURE_JF")/digivice-jellyfin-ctl.sh" /usr/local/bin/digivice-jellyfin-ctl
+  SUDO_USER="$USER_NAME" DIGI_GUI_USER="$USER_NAME" \
+    bash /usr/local/bin/digivice-ensure-jellyfin 2>&1 | tee -a "$LOG" | tail -n 40 \
+    || log "WARN: digivice-ensure-jellyfin failed"
+fi
+
 # VoIP — separate apt so a failed GPIO/imagemagick pkg can't skip Linphone
 log "apt: linphone-cli (VoIP)…"
 export DEBIAN_FRONTEND=noninteractive

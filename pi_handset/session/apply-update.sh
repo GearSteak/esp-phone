@@ -113,6 +113,8 @@ install_live_from_repo() {
     "ensure-cardkb.sh:digivice-ensure-cardkb" \
     "digivice-cardkb-ctl.sh:digivice-cardkb-ctl" \
     "digivice-ensure-browser.sh:digivice-ensure-browser" \
+    "digivice-ensure-jellyfin.sh:digivice-ensure-jellyfin" \
+    "digivice-jellyfin-ctl.sh:digivice-jellyfin-ctl" \
     "ensure-linphone.sh:digivice-ensure-linphone" \
     "digivice-sip-sync.sh:digivice-sip-sync" \
     "ensure-libretro-cores.sh:digivice-libretro-cores" \
@@ -196,6 +198,8 @@ if [[ -d "$STAGE" && -f "$STAGE/.ready" ]]; then
     ensure-cardkb.sh:digivice-ensure-cardkb \
     digivice-cardkb-ctl.sh:digivice-cardkb-ctl \
     digivice-ensure-browser.sh:digivice-ensure-browser \
+    digivice-ensure-jellyfin.sh:digivice-ensure-jellyfin \
+    digivice-jellyfin-ctl.sh:digivice-jellyfin-ctl \
     ensure-libretro-cores.sh:digivice-libretro-cores \
     digivice-linphonecsh.sh:digivice-linphonecsh \
     digivice-linphonec.sh:digivice-linphonec \
@@ -317,6 +321,9 @@ $USER_NAME ALL=(root) NOPASSWD: /bin/systemctl stop cardkb-inputd
 $USER_NAME ALL=(root) NOPASSWD: /bin/systemctl stop cardkb-inputd.service
 $USER_NAME ALL=(root) NOPASSWD: /bin/systemctl start cardkb-inputd
 $USER_NAME ALL=(root) NOPASSWD: /bin/systemctl start cardkb-inputd.service
+$USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-ensure-browser
+$USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-ensure-jellyfin
+$USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-jellyfin-ctl
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-ensure-linphone
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-libretro-cores
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-ensure-gb
@@ -335,10 +342,12 @@ $USER_NAME ALL=(root) NOPASSWD: $PREFIX/session/power.sh
 $USER_NAME ALL=(root) NOPASSWD: $PREFIX/session/ensure-buttons.sh
 $USER_NAME ALL=(root) NOPASSWD: $PREFIX/session/ensure-cardkb.sh
 $USER_NAME ALL=(root) NOPASSWD: $PREFIX/session/ensure-linphone.sh
+$USER_NAME ALL=(root) NOPASSWD: $PREFIX/session/digivice-ensure-jellyfin.sh
+$USER_NAME ALL=(root) NOPASSWD: $PREFIX/session/digivice-jellyfin-ctl.sh
 $USER_NAME ALL=(root) NOPASSWD: $PREFIX/session/ensure-libretro-cores.sh
 EOF
   chmod 440 /etc/sudoers.d/esp-handset-update
-  log "sudoers restored (incl. digivice-ensure-linphone)"
+  log "sudoers restored (incl. jellyfin / browser)"
 fi
 
 # VoIP: Digivice Settings→Update never ran apt — install linphone here
@@ -409,6 +418,17 @@ else
   apt-get update -qq >>"$LOG" 2>&1 || true
   apt-get install -y python3-pyqt5.qtwebkit >>"$LOG" 2>&1 || true
   apt-get install -y python3-pyqt5.qtwebengine >>"$LOG" 2>&1 || true
+fi
+
+# Jellyfin — Digivice Share (serve Videos/Music/cart to Fire TV)
+if [[ -f "$PREFIX/session/digivice-ensure-jellyfin.sh" ]]; then
+  install -m 755 "$PREFIX/session/digivice-ensure-jellyfin.sh" /usr/local/bin/digivice-ensure-jellyfin
+  [[ -f "$PREFIX/session/digivice-jellyfin-ctl.sh" ]] \
+    && install -m 755 "$PREFIX/session/digivice-jellyfin-ctl.sh" /usr/local/bin/digivice-jellyfin-ctl
+  log "Ensuring Jellyfin (Share → Fire TV)…"
+  SUDO_USER="$USER_NAME" DIGI_GUI_USER="$USER_NAME" \
+    bash /usr/local/bin/digivice-ensure-jellyfin >>"$LOG" 2>&1 \
+    || log "WARN: digivice-ensure-jellyfin failed — check $LOG"
 fi
 
 # In-UI NES/GB/… cores — Settings→Update never fetched these before
