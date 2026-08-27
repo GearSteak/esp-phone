@@ -49,11 +49,20 @@ class CartExtra:
 
 
 @dataclass
+class CartScene:
+    """Chapter / scene marker — start time in seconds."""
+
+    title: str
+    start_sec: float
+
+
+@dataclass
 class CartMovie:
     title: str
     path: Path
     menu: MenuAssets = field(default_factory=MenuAssets)
     extras: List[CartExtra] = field(default_factory=list)
+    scenes: List[CartScene] = field(default_factory=list)
 
 
 @dataclass
@@ -136,6 +145,54 @@ def _menu_assets(root: Path, block: Any) -> MenuAssets:
                 setattr(out, attr, p)
             except ValueError:
                 pass
+    return out
+
+
+def _parse_timecode(raw: Any) -> Optional[float]:
+    """Accept seconds (number/str) or H:MM:SS / M:SS."""
+    if raw is None:
+        return None
+    if isinstance(raw, (int, float)):
+        return max(0.0, float(raw))
+    s = str(raw).strip().lower()
+    if not s:
+        return None
+    if s.endswith("s") and ":" not in s:
+        try:
+            return max(0.0, float(s[:-1]))
+        except ValueError:
+            return None
+    if ":" in s:
+        parts = s.split(":")
+        try:
+            nums = [float(p) for p in parts]
+        except ValueError:
+            return None
+        if len(nums) == 3:
+            return max(0.0, nums[0] * 3600 + nums[1] * 60 + nums[2])
+        if len(nums) == 2:
+            return max(0.0, nums[0] * 60 + nums[1])
+        return None
+    try:
+        return max(0.0, float(s))
+    except ValueError:
+        return None
+
+
+def _parse_scenes(block: Any) -> List[CartScene]:
+    out: List[CartScene] = []
+    if not isinstance(block, list):
+        return out
+    for i, entry in enumerate(block):
+        if not isinstance(entry, dict):
+            continue
+        title = str(entry.get("title") or f"Scene {i + 1}").strip()
+        start = _parse_timecode(
+            entry.get("time", entry.get("start", entry.get("at")))
+        )
+        if start is None:
+            continue
+        out.append(CartScene(title=title, start_sec=start))
     return out
 
 
@@ -232,6 +289,7 @@ def _parse_manifest(root: Path, data: Dict[str, Any]) -> Cartridge:
                 path=path,
                 menu=_menu_assets(root, entry.get("menu")),
                 extras=extras,
+                scenes=_parse_scenes(entry.get("scenes")),
             )
         )
 

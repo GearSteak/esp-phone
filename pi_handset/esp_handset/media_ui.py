@@ -112,17 +112,21 @@ def _pretty_size(n: int) -> str:
     return f"{n / (1024 * 1024):.1f} MB"
 
 
-def digivice_play(path: Path) -> bool:
-    """Play media Digivice-friendly: Back/Escape quits; Pi hwdec; OK on HDMI too."""
+def digivice_play(path: Path, *, start_sec: Optional[float] = None) -> bool:
+    """Play media Digivice-friendly: Back/Escape quits; Pi hwdec; OK on HDMI too.
+
+    ``start_sec`` seeks to a scene/chapter (mpv --start=).
+    """
     from shutil import which
     import subprocess
+    import platform
 
     path = Path(path)
     if not path.is_file():
         return False
 
     # Prefer mpv (not xdg-open → VLC). Digivice Back is Escape via buttons_inputd.
-    # hwdec for SPI + HDMI — do not force 240×320 scale (HDMI may be connected).
+    # HDMI/SPI: push hardware decode hard — MKV is a container; codec is what matters.
     if which("mpv"):
         conf = Path.home() / ".cache" / "digivice-mpv-input.conf"
         try:
@@ -139,18 +143,69 @@ def digivice_play(path: Path) -> bool:
         cmd = [
             "mpv",
             "--fullscreen",
-            "--really-quiet",
             "--osd-level=0",
             "--no-terminal",
             "--keep-open=no",
-            "--hwdec=auto-safe",
+            # auto (not auto-safe) — need real V4L2/DRM decode on Pi for 1080p
+            "--hwdec=auto",
+            "--hwdec-codecs=all",
             "--vo=gpu",
+            "--gpu-context=auto",
+            "--gpu-hwdec-interop=auto",
             "--framedrop=vo",
+            "--video-latency-hacks=yes",
             "--cache=yes",
-            "--demuxer-max-bytes=67108864",
+            "--demuxer-readahead-secs=20",
+            "--demuxer-max-bytes=157286400",
+            "--vd-lavc-threads=0",
+            "--audio-buffer=0.15",
+            # Prefer cheap scaling if GPU is busy (SPI or weak decode)
+            "--scale=bilinear",
+            "--cscale=bilinear",
+            "--dscale=bilinear",
+            "--correct-downscaling=no",
+            "--sigmoid-upscaling=no",
+            "--hdr-compute-peak=no",
         ]
+        # Raspberry Pi: try V4L2 M2M first via hwdec-codecs; also hint profile
+        machine = (platform.machine() or "").lower()
+        if machine in ("aarch64", "armv7l", "armv6l"):
+            cmd.extend(
+                [
+                    "--hwdec-extra-frames=8",
+                    "--video-sync=display-vdrop",
+                ]
+            )
+        if start_sec is not None and start_sec > 0:
+            cmd.append(f"--start={start_sec}")
         if conf is not None:
             cmd.append(f"--input-conf={conf}")
+        cmd.append(str(path))
+        log_path = Path.home() / ".esp-handset" / "mpv-last.log"
+        try:
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            log_f = open(log_path, "w", encoding="utf-8")
+            log_f.write(" ".join(cmd) + "\n\n")
+            log_f.flush()
+        except OSError:
+            log_f = subprocess.DEVNULL
+        subprocess.Popen(
+            cmd,
+            stdout=subprocess.DEVNULL,
+            stderr=log_f,
+            start_new_session=True,
+        )
+        return True
+    if which("ffplay"):
+        cmd = [
+            "ffplay",
+            "-fs",
+            "-autoexit",
+            "-window_title",
+            "Digivice",
+        ]
+        if start_sec is not None and start_sec > 0:
+            cmd.extend(["-ss", str(start_sec)])
         cmd.append(str(path))
         subprocess.Popen(
             cmd,
@@ -159,34 +214,22 @@ def digivice_play(path: Path) -> bool:
             start_new_session=True,
         )
         return True
-    if which("ffplay"):
-        subprocess.Popen(
-            [
-                "ffplay",
-                "-fs",
-                "-autoexit",
-                "-window_title",
-                "Digivice",
-                str(path),
-            ],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            start_new_session=True,
-        )
-        return True
     if which("vlc"):
         # Avoid Qt fullscreen tip about needing an Escape key
+        cmd = [
+            "vlc",
+            "--fullscreen",
+            "--play-and-exit",
+            "--no-video-title-show",
+            "--no-qt-fs-controller",
+            "--qt-notification=0",
+            "--no-osd",
+        ]
+        if start_sec is not None and start_sec > 0:
+            cmd.append(f"--start-time={int(start_sec)}")
+        cmd.append(str(path))
         subprocess.Popen(
-            [
-                "vlc",
-                "--fullscreen",
-                "--play-and-exit",
-                "--no-video-title-show",
-                "--no-qt-fs-controller",
-                "--qt-notification=0",
-                "--no-osd",
-                str(path),
-            ],
+            cmd,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             start_new_session=True,
@@ -201,6 +244,87 @@ def digivice_play(path: Path) -> bool:
         )
         return True
     return False
+
+
+def list_media_chapters(path: Path) -> List[Tuple[str, float]]:
+    """Read embedded chapters via ffprobe — [(title, start_sec), ...]."""
+    from shutil import which
+    import json
+    import subprocess
+
+    path = Path(path)
+    if not path.is_file() or not which("ffprobe"):
+        return []
+    try:
+        out = subprocess.check_output(
+            [
+                "ffprobe",
+                "-v",
+                "quiet",
+                "-print_format",
+                "json",
+                "-show_chapters",
+                str(path),
+            ],
+            timeout=12,
+            text=True,
+        )
+        data = json.loads(out or "{}")
+    except Exception:
+        return []
+    scenes: List[Tuple[str, float]] = []
+    for i, ch in enumerate(data.get("chapters") or []):
+        if not isinstance(ch, dict):
+            continue
+        try:
+            start = float(ch.get("start_time") or 0)
+        except (TypeError, ValueError):
+            continue
+        tags = ch.get("tags") if isinstance(ch.get("tags"), dict) else {}
+        title = str((tags or {}).get("title") or f"Scene {i + 1}").strip()
+        scenes.append((title, max(0.0, start)))
+    return scenes
+
+
+def probe_video_codec(path: Path) -> str:
+    """Best-effort codec name for diagnostics (e.g. h264, hevc)."""
+    from shutil import which
+    import json
+    import subprocess
+
+    path = Path(path)
+    if not path.is_file() or not which("ffprobe"):
+        return ""
+    try:
+        out = subprocess.check_output(
+            [
+                "ffprobe",
+                "-v",
+                "quiet",
+                "-select_streams",
+                "v:0",
+                "-show_entries",
+                "stream=codec_name,width,height",
+                "-of",
+                "json",
+                str(path),
+            ],
+            timeout=8,
+            text=True,
+        )
+        data = json.loads(out or "{}")
+        streams = data.get("streams") or []
+        if not streams:
+            return ""
+        s0 = streams[0]
+        codec = str(s0.get("codec_name") or "")
+        w = s0.get("width")
+        h = s0.get("height")
+        if w and h:
+            return f"{codec} {w}x{h}"
+        return codec
+    except Exception:
+        return ""
 
 
 def _cart_video_entries():

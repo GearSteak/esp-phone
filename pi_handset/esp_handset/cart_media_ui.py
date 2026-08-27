@@ -24,7 +24,13 @@ from esp_handset.cartridge import (
     refresh,
     takeover_media_kind,
 )
-from esp_handset.media_ui import digivice_play, media_btn, media_list, _TEXT
+from esp_handset.media_ui import (
+    digivice_play,
+    list_media_chapters,
+    media_btn,
+    media_list,
+    _TEXT,
+)
 from esp_handset.pages import page_chrome
 
 _menu_audio: Optional[subprocess.Popen] = None
@@ -91,9 +97,9 @@ def start_menu_audio(path: Optional[Path]) -> None:
         )
 
 
-def _play_feature(path: Path) -> None:
+def _play_feature(path: Path, start_sec: Optional[float] = None) -> None:
     stop_menu_audio()
-    digivice_play(path)
+    digivice_play(path, start_sec=start_sec)
 
 
 def _pick_menu(*assets: MenuAssets) -> MenuAssets:
@@ -140,7 +146,7 @@ def _small_menu_btn(text: str) -> QPushButton:
     b.setStyleSheet(
         "QPushButton { font-size:10px; font-weight:700; padding:3px 8px;"
         " color:#e8eef5; background:#1a2430; border:1px solid #3a4a5a;"
-        " border-radius:6px; min-width:64px; }"
+        " border-radius:6px; min-width:52px; }"
         'QPushButton[digiFocus="1"] { border:2px solid #FFE600; }'
     )
     return b
@@ -183,9 +189,11 @@ def make_cart_media_page(on_back: Callable[[], None]) -> QWidget:
     btn_lay.setSpacing(8)
     play_btn = _small_menu_btn("Play")
     extras_btn = _small_menu_btn("Extras")
+    scenes_btn = _small_menu_btn("Scenes")
     btn_lay.addStretch(1)
     btn_lay.addWidget(play_btn)
     btn_lay.addWidget(extras_btn)
+    btn_lay.addWidget(scenes_btn)
     btn_lay.addStretch(1)
 
     lst = media_list()
@@ -205,6 +213,7 @@ def make_cart_media_page(on_back: Callable[[], None]) -> QWidget:
     actions: List[Callable[[], None]] = []
     play_cb: Optional[Callable[[], None]] = None
     extras_cb: Optional[Callable[[], None]] = None
+    scenes_cb: Optional[Callable[[], None]] = None
 
     def _clear_logo() -> None:
         logo_lab.clear()
@@ -269,19 +278,26 @@ def make_cart_media_page(on_back: Callable[[], None]) -> QWidget:
         assets: MenuAssets,
         on_play: Callable[[], None],
         on_extras: Optional[Callable[[], None]],
+        on_scenes: Optional[Callable[[], None]] = None,
     ) -> None:
-        nonlocal play_cb, extras_cb
+        nonlocal play_cb, extras_cb, scenes_cb
         _set_bg(assets)
         _set_logo(logo)
         name_lab.setText(name)
         play_cb = on_play
         extras_cb = on_extras
+        scenes_cb = on_scenes
         play_btn.setEnabled(True)
         if on_extras is not None:
             extras_btn.show()
             extras_btn.setEnabled(True)
         else:
             extras_btn.hide()
+        if on_scenes is not None:
+            scenes_btn.show()
+            scenes_btn.setEnabled(True)
+        else:
+            scenes_btn.hide()
         _show_dvd_chrome(True)
 
     def _go_titles() -> None:
@@ -296,6 +312,7 @@ def make_cart_media_page(on_back: Callable[[], None]) -> QWidget:
             _show_dvd_chrome(True)
             play_btn.setEnabled(False)
             extras_btn.hide()
+            scenes_btn.hide()
             return
         assets = cart.menu
         _set_bg(assets)
@@ -313,6 +330,15 @@ def make_cart_media_page(on_back: Callable[[], None]) -> QWidget:
             return
         _fill_list(labels or ["(empty cart)"], callbacks or [lambda: None])
 
+    def _movie_scenes(movie) -> List[Tuple[str, float]]:
+        """JSON scenes first; else embedded MKV/MP4 chapters."""
+        out: List[Tuple[str, float]] = [
+            (s.title, s.start_sec) for s in (movie.scenes or [])
+        ]
+        if out:
+            return out
+        return list_media_chapters(movie.path)
+
     def _go_movie(idx: int) -> None:
         cart: Optional[Cartridge] = state["cart"]
         if cart is None or not (0 <= idx < len(cart.movies)):
@@ -328,13 +354,37 @@ def make_cart_media_page(on_back: Callable[[], None]) -> QWidget:
                 _play_feature(p)
 
         on_ex = (lambda i=idx: _go_extras(i)) if movie.extras else None
+        scenes = _movie_scenes(movie)
+        on_sc = (lambda i=idx: _go_scenes(i)) if scenes else None
         _wire_dvd_buttons(
             name=movie.title,
             logo=logo,
             assets=assets,
             on_play=on_play,
             on_extras=on_ex,
+            on_scenes=on_sc,
         )
+
+    def _go_scenes(idx: int) -> None:
+        cart: Optional[Cartridge] = state["cart"]
+        if cart is None or not (0 <= idx < len(cart.movies)):
+            return
+        movie = cart.movies[idx]
+        stack.append(("scenes", idx))
+        assets = _pick_menu(movie.menu, cart.menu)
+        _set_bg(assets)
+        labels: List[str] = []
+        callbacks: List[Callable[[], None]] = []
+        for title, start in _movie_scenes(movie):
+            labels.append(title)
+            callbacks.append(
+                lambda p=movie.path, t=start: _play_feature(p, start_sec=t)
+                if p.is_file()
+                else None
+            )
+        labels.append("← Back")
+        callbacks.append(lambda i=idx: _go_movie(i))
+        _fill_list(labels, callbacks)
 
     def _go_extras(idx: int) -> None:
         cart: Optional[Cartridge] = state["cart"]
@@ -378,6 +428,7 @@ def make_cart_media_page(on_back: Callable[[], None]) -> QWidget:
             assets=assets,
             on_play=on_play,
             on_extras=lambda i=idx: _go_show_seasons(i),
+            on_scenes=None,
         )
 
     def _go_show_seasons(idx: int) -> None:
@@ -428,8 +479,13 @@ def make_cart_media_page(on_back: Callable[[], None]) -> QWidget:
         if extras_cb:
             extras_cb()
 
+    def on_scenes_clicked() -> None:
+        if scenes_cb:
+            scenes_cb()
+
     play_btn.clicked.connect(on_play_clicked)
     extras_btn.clicked.connect(on_extras_clicked)
+    scenes_btn.clicked.connect(on_scenes_clicked)
     lst.itemActivated.connect(do_list_activate)
 
     def rebuild() -> None:
@@ -446,6 +502,7 @@ def make_cart_media_page(on_back: Callable[[], None]) -> QWidget:
             _show_dvd_chrome(True)
             play_btn.setEnabled(False)
             extras_btn.hide()
+            scenes_btn.hide()
             return
         state["cart"] = cart
         if len(cart.movies) == 1 and not cart.tv:
@@ -490,6 +547,9 @@ def make_cart_media_page(on_back: Callable[[], None]) -> QWidget:
         if kind == "extras":
             _go_movie(stack[-1][1])
             return True
+        if kind == "scenes":
+            _go_movie(stack[-1][1])
+            return True
         if kind == "seasons":
             _go_show(stack[-1][1])
             return True
@@ -513,8 +573,10 @@ def make_cart_media_page(on_back: Callable[[], None]) -> QWidget:
 
     def digi_activate() -> bool:
         if btn_row.isVisible():
-            # Prefer focused button; else Play
             fw = body.focusWidget()
+            if fw is scenes_btn and scenes_btn.isVisible() and scenes_cb:
+                on_scenes_clicked()
+                return True
             if fw is extras_btn and extras_btn.isVisible() and extras_cb:
                 on_extras_clicked()
                 return True

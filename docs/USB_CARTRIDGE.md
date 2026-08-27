@@ -151,6 +151,18 @@ Minimal **games-only** cart:
 | `tv` | **Home Media** → cart title → logo + name + **Play** / season list |
 
 **Logo:** put `menu/logo.png` (or `"logo": "…"` / `"menu": { "logo": "…" }` in `cartridge.json`). Shown above the title on the DVD screen. No “DVD menu” subtitle.
+
+**Scenes:** optional `scenes` on a movie, or embedded chapters in the MKV/MP4 (ffprobe). A **Scenes** button appears when either exists.
+
+```json
+"scenes": [
+  { "title": "Opening", "time": "0:00" },
+  { "title": "Main titles", "time": "0:02:15" },
+  { "title": "End credits", "time": "1:28:00" }
+]
+```
+
+`time` may be `H:MM:SS`, `M:SS`, or seconds.
 | `audiobooks` | **Media → Audiobooks** |
 
 - **No cart** → SD libraries as today
