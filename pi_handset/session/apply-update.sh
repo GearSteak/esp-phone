@@ -112,6 +112,7 @@ install_live_from_repo() {
     "ensure-buttons.sh:digivice-ensure-buttons" \
     "ensure-cardkb.sh:digivice-ensure-cardkb" \
     "digivice-cardkb-ctl.sh:digivice-cardkb-ctl" \
+    "digivice-ensure-browser.sh:digivice-ensure-browser" \
     "ensure-linphone.sh:digivice-ensure-linphone" \
     "digivice-sip-sync.sh:digivice-sip-sync" \
     "ensure-libretro-cores.sh:digivice-libretro-cores" \
@@ -194,6 +195,7 @@ if [[ -d "$STAGE" && -f "$STAGE/.ready" ]]; then
     ensure-linphone.sh:digivice-ensure-linphone \
     ensure-cardkb.sh:digivice-ensure-cardkb \
     digivice-cardkb-ctl.sh:digivice-cardkb-ctl \
+    digivice-ensure-browser.sh:digivice-ensure-browser \
     ensure-libretro-cores.sh:digivice-libretro-cores \
     digivice-linphonecsh.sh:digivice-linphonecsh \
     digivice-linphonec.sh:digivice-linphonec \
