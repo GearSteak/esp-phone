@@ -113,20 +113,76 @@ def _pretty_size(n: int) -> str:
 
 
 def digivice_play(path: Path, *, start_sec: Optional[float] = None) -> bool:
-    """Play media Digivice-friendly: Back/Escape quits; Pi hwdec; OK on HDMI too.
+    """Play media Digivice-friendly: hand off HDMI, Pi hwdec, Back/Escape quits.
 
-    ``start_sec`` seeks to a scene/chapter (mpv --start=).
+    Digivice normally paints a stay-on-top HDMI host at ~30fps — that must pause
+    or mpv cannot use the display / GPU. ``start_sec`` seeks to a scene/chapter.
     """
     from shutil import which
     import subprocess
     import platform
+    import threading
 
     path = Path(path)
     if not path.is_file():
         return False
 
-    # Prefer mpv (not xdg-open → VLC). Digivice Back is Escape via buttons_inputd.
-    # HDMI/SPI: push hardware decode hard — MKV is a container; codec is what matters.
+    codec_info = ""
+    try:
+        codec_info = probe_video_codec(path)
+    except Exception:
+        codec_info = ""
+
+    def _handoff_begin() -> None:
+        try:
+            from PyQt5.QtWidgets import QApplication
+
+            app = QApplication.instance()
+            if app is None:
+                return
+            for w in app.topLevelWidgets():
+                ctl = getattr(w, "_kiosk_controller", None) or getattr(
+                    w, "_multi_presenter", None
+                )
+                if ctl is not None and hasattr(ctl, "begin_media_handoff"):
+                    ctl.begin_media_handoff()
+                    return
+        except Exception:
+            pass
+
+    def _handoff_end() -> None:
+        try:
+            from PyQt5.QtWidgets import QApplication
+            from PyQt5.QtCore import QTimer
+
+            app = QApplication.instance()
+            if app is None:
+                return
+
+            def _restore() -> None:
+                for w in app.topLevelWidgets():
+                    ctl = getattr(w, "_kiosk_controller", None) or getattr(
+                        w, "_multi_presenter", None
+                    )
+                    if ctl is not None and hasattr(ctl, "end_media_handoff"):
+                        ctl.end_media_handoff()
+                        return
+
+            # Always bounce back onto the Qt thread
+            QTimer.singleShot(0, _restore)
+        except Exception:
+            pass
+
+    def _watch(proc: subprocess.Popen) -> None:
+        try:
+            proc.wait()
+        except Exception:
+            pass
+        _handoff_end()
+
+    _handoff_begin()
+
+    # Prefer mpv. Digivice Back is Escape via buttons_inputd.
     if which("mpv"):
         conf = Path.home() / ".cache" / "digivice-mpv-input.conf"
         try:
@@ -140,14 +196,24 @@ def digivice_play(path: Path, *, start_sec: Optional[float] = None) -> bool:
                 )
             except OSError:
                 conf = None
+
+        machine = (platform.machine() or "").lower()
+        on_pi = machine in ("aarch64", "armv7l", "armv6l")
+
+        # Pi: try V4L2 first (auto often soft-decodes). Comma list = fallback chain.
+        if on_pi:
+            hwdec = "v4l2m2m,v4l2m2m-copy,drm,auto"
+        else:
+            hwdec = "auto"
+
         cmd = [
             "mpv",
             "--fullscreen",
-            "--osd-level=0",
+            "--ontop",
+            "--osd-level=1",
             "--no-terminal",
             "--keep-open=no",
-            # auto (not auto-safe) — need real V4L2/DRM decode on Pi for 1080p
-            "--hwdec=auto",
+            f"--hwdec={hwdec}",
             "--hwdec-codecs=all",
             "--vo=gpu",
             "--gpu-context=auto",
@@ -155,24 +221,22 @@ def digivice_play(path: Path, *, start_sec: Optional[float] = None) -> bool:
             "--framedrop=vo",
             "--video-latency-hacks=yes",
             "--cache=yes",
-            "--demuxer-readahead-secs=20",
-            "--demuxer-max-bytes=157286400",
+            "--demuxer-readahead-secs=30",
+            "--demuxer-max-bytes=268435456",
             "--vd-lavc-threads=0",
-            "--audio-buffer=0.15",
-            # Prefer cheap scaling if GPU is busy (SPI or weak decode)
+            "--audio-buffer=0.2",
             "--scale=bilinear",
             "--cscale=bilinear",
             "--dscale=bilinear",
             "--correct-downscaling=no",
             "--sigmoid-upscaling=no",
             "--hdr-compute-peak=no",
+            "--msg-level=vd=warn,ffmpeg=warn",
         ]
-        # Raspberry Pi: try V4L2 M2M first via hwdec-codecs; also hint profile
-        machine = (platform.machine() or "").lower()
-        if machine in ("aarch64", "armv7l", "armv6l"):
+        if on_pi:
             cmd.extend(
                 [
-                    "--hwdec-extra-frames=8",
+                    "--hwdec-extra-frames=12",
                     "--video-sync=display-vdrop",
                 ]
             )
@@ -181,21 +245,30 @@ def digivice_play(path: Path, *, start_sec: Optional[float] = None) -> bool:
         if conf is not None:
             cmd.append(f"--input-conf={conf}")
         cmd.append(str(path))
+
         log_path = Path.home() / ".esp-handset" / "mpv-last.log"
         try:
             log_path.parent.mkdir(parents=True, exist_ok=True)
             log_f = open(log_path, "w", encoding="utf-8")
+            log_f.write(f"codec={codec_info or '?'}\n")
             log_f.write(" ".join(cmd) + "\n\n")
             log_f.flush()
         except OSError:
             log_f = subprocess.DEVNULL
-        subprocess.Popen(
-            cmd,
-            stdout=subprocess.DEVNULL,
-            stderr=log_f,
-            start_new_session=True,
-        )
+
+        try:
+            proc = subprocess.Popen(
+                cmd,
+                stdout=subprocess.DEVNULL,
+                stderr=log_f,
+                start_new_session=True,
+            )
+        except Exception:
+            _handoff_end()
+            return False
+        threading.Thread(target=_watch, args=(proc,), daemon=True).start()
         return True
+
     if which("ffplay"):
         cmd = [
             "ffplay",
@@ -206,16 +279,26 @@ def digivice_play(path: Path, *, start_sec: Optional[float] = None) -> bool:
         ]
         if start_sec is not None and start_sec > 0:
             cmd.extend(["-ss", str(start_sec)])
+        # Pi ffmpeg often has v4l2m2m decoders
+        if "hevc" in (codec_info or "").lower() or "h265" in (codec_info or "").lower():
+            cmd.extend(["-c:v", "hevc_v4l2m2m"])
+        elif "h264" in (codec_info or "").lower() or "avc" in (codec_info or "").lower():
+            cmd.extend(["-c:v", "h264_v4l2m2m"])
         cmd.append(str(path))
-        subprocess.Popen(
-            cmd,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            start_new_session=True,
-        )
+        try:
+            proc = subprocess.Popen(
+                cmd,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+        except Exception:
+            _handoff_end()
+            return False
+        threading.Thread(target=_watch, args=(proc,), daemon=True).start()
         return True
+
     if which("vlc"):
-        # Avoid Qt fullscreen tip about needing an Escape key
         cmd = [
             "vlc",
             "--fullscreen",
@@ -224,17 +307,25 @@ def digivice_play(path: Path, *, start_sec: Optional[float] = None) -> bool:
             "--no-qt-fs-controller",
             "--qt-notification=0",
             "--no-osd",
+            "--avcodec-hw=any",
         ]
         if start_sec is not None and start_sec > 0:
             cmd.append(f"--start-time={int(start_sec)}")
         cmd.append(str(path))
-        subprocess.Popen(
-            cmd,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            start_new_session=True,
-        )
+        try:
+            proc = subprocess.Popen(
+                cmd,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+        except Exception:
+            _handoff_end()
+            return False
+        threading.Thread(target=_watch, args=(proc,), daemon=True).start()
         return True
+
+    _handoff_end()
     if which("xdg-open"):
         subprocess.Popen(
             ["xdg-open", str(path)],

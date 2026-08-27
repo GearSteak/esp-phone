@@ -386,6 +386,8 @@ class MultiDisplayKiosk:
         QTimer.singleShot(1500, self._raise_hosts)
 
     def _raise_hosts(self) -> None:
+        if getattr(self, "_media_handoff", False):
+            return
         self.source.lower()
         for h in self.hosts:
             try:
@@ -401,7 +403,58 @@ class MultiDisplayKiosk:
             except Exception:
                 pass
 
+    def begin_media_handoff(self) -> None:
+        """Release HDMI/SPI so mpv (or similar) can own the display."""
+        self._media_handoff = True
+        set_heavy_ui(True)
+        try:
+            self._timer.stop()
+        except Exception:
+            pass
+        if self.spi is not None:
+            try:
+                if self.spi._timer is not None:
+                    self.spi._timer.stop()
+            except Exception:
+                pass
+        for h in self.hosts:
+            try:
+                h.hide()
+            except Exception:
+                pass
+        try:
+            self.source.lower()
+        except Exception:
+            pass
+        print("[handset] media handoff ON — HDMI hosts hidden for player", flush=True)
+
+    def end_media_handoff(self) -> None:
+        """Restore Digivice HDMI/SPI after external player exits."""
+        if not getattr(self, "_media_handoff", False):
+            return
+        self._media_handoff = False
+        set_heavy_ui(False)
+        for h in self.hosts:
+            try:
+                h.place()
+            except Exception:
+                pass
+        if self.spi is not None and getattr(self.spi, "_active", False):
+            try:
+                if self.spi._timer is not None:
+                    self.spi._timer.start()
+            except Exception:
+                pass
+        try:
+            self._timer.start()
+        except Exception:
+            pass
+        self._raise_hosts()
+        print("[handset] media handoff OFF — Digivice hosts restored", flush=True)
+
     def _tick(self) -> None:
+        if getattr(self, "_media_handoff", False):
+            return
         global _heavy_skip
         if _heavy_ui:
             _heavy_skip = (_heavy_skip + 1) % 2
