@@ -29,7 +29,6 @@ from esp_handset.media_ui import (
     list_media_chapters,
     media_btn,
     media_list,
-    _TEXT,
 )
 from esp_handset.pages import page_chrome
 
@@ -139,6 +138,16 @@ def media_home_title() -> Optional[str]:
     return t[:18]
 
 
+def media_home_logo() -> Optional[Path]:
+    """Logo for home Media center stage (above the cart name)."""
+    if not media_cart_active():
+        return None
+    cart = current()
+    if cart is None:
+        return None
+    return _pick_logo(cart.menu, cart)
+
+
 def _small_menu_btn(text: str) -> QPushButton:
     b = media_btn(text, primary=False)
     b.setMinimumHeight(26)
@@ -153,7 +162,7 @@ def _small_menu_btn(text: str) -> QPushButton:
 
 
 def make_cart_media_page(on_back: Callable[[], None]) -> QWidget:
-    """DVD hub: logo + name + Play/Extras (no 'DVD menu' chrome)."""
+    """DVD hub: optional bg + Play / Extras / Scenes (logo+name are on home Media)."""
     del on_back
 
     body = QWidget()
@@ -164,28 +173,13 @@ def make_cart_media_page(on_back: Callable[[], None]) -> QWidget:
 
     bg = QLabel()
     bg.setAlignment(Qt.AlignCenter)
-    bg.setMinimumHeight(70)
-    bg.setStyleSheet("background:transparent;")
+    bg.setMinimumHeight(100)
+    bg.setStyleSheet("background:#0a1018;")
     bg.setScaledContents(False)
 
-    logo_lab = QLabel()
-    logo_lab.setAlignment(Qt.AlignCenter)
-    logo_lab.setMinimumHeight(72)
-    logo_lab.setMaximumHeight(110)
-    logo_lab.setStyleSheet("background:transparent;")
-
-    name_lab = QLabel("")
-    name_lab.setAlignment(Qt.AlignCenter)
-    name_lab.setWordWrap(True)
-    name_lab.setStyleSheet(
-        f"font-size:12px; font-weight:700; color:{_TEXT}; background:transparent;"
-        " padding:0 4px;"
-    )
-
-    # Main DVD actions — two small buttons
     btn_row = QWidget()
     btn_lay = QHBoxLayout(btn_row)
-    btn_lay.setContentsMargins(8, 0, 8, 0)
+    btn_lay.setContentsMargins(8, 0, 8, 4)
     btn_lay.setSpacing(8)
     play_btn = _small_menu_btn("Play")
     extras_btn = _small_menu_btn("Extras")
@@ -197,16 +191,12 @@ def make_cart_media_page(on_back: Callable[[], None]) -> QWidget:
     btn_lay.addStretch(1)
 
     lst = media_list()
-    lst.setMaximumHeight(120)
+    lst.setMaximumHeight(140)
     lst.hide()
 
-    root.addStretch(1)
-    root.addWidget(bg, 0)
-    root.addWidget(logo_lab, 0)
-    root.addWidget(name_lab, 0)
+    root.addWidget(bg, 1)
     root.addWidget(btn_row, 0)
     root.addWidget(lst, 1)
-    root.addStretch(1)
 
     stack: List[Tuple] = []
     state = {"cart": None}  # type: ignore[var-annotated]
@@ -215,23 +205,6 @@ def make_cart_media_page(on_back: Callable[[], None]) -> QWidget:
     extras_cb: Optional[Callable[[], None]] = None
     scenes_cb: Optional[Callable[[], None]] = None
 
-    def _clear_logo() -> None:
-        logo_lab.clear()
-        logo_lab.setText("")
-
-    def _set_logo(path: Optional[Path]) -> None:
-        if path is None or not path.is_file():
-            _clear_logo()
-            return
-        pm = QPixmap(str(path))
-        if pm.isNull():
-            _clear_logo()
-            return
-        w = max(logo_lab.width(), 160)
-        h = max(logo_lab.height(), 72)
-        scaled = pm.scaled(w, h, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-        logo_lab.setPixmap(scaled)
-
     def _set_bg(assets: MenuAssets) -> None:
         path = assets.background
         if path is not None and path.is_file():
@@ -239,25 +212,23 @@ def make_cart_media_page(on_back: Callable[[], None]) -> QWidget:
             if not pm.isNull():
                 scaled = pm.scaled(
                     max(body.width(), 220),
-                    max(body.height() // 3, 80),
-                    Qt.KeepAspectRatio,
+                    max(body.height() - 40, 120),
+                    Qt.KeepAspectRatioByExpanding,
                     Qt.SmoothTransformation,
                 )
                 bg.setPixmap(scaled)
                 bg.show()
                 return
         bg.clear()
-        bg.hide()
+        bg.setStyleSheet("background:#0a1018;")
+        bg.show()
 
     def _show_dvd_chrome(show: bool) -> None:
-        logo_lab.setVisible(show)
-        name_lab.setVisible(show)
         btn_row.setVisible(show)
         if show:
             lst.hide()
+            bg.show()
         else:
-            logo_lab.hide()
-            name_lab.hide()
             btn_row.hide()
             lst.show()
 
@@ -273,8 +244,6 @@ def make_cart_media_page(on_back: Callable[[], None]) -> QWidget:
 
     def _wire_dvd_buttons(
         *,
-        name: str,
-        logo: Optional[Path],
         assets: MenuAssets,
         on_play: Callable[[], None],
         on_extras: Optional[Callable[[], None]],
@@ -282,8 +251,6 @@ def make_cart_media_page(on_back: Callable[[], None]) -> QWidget:
     ) -> None:
         nonlocal play_cb, extras_cb, scenes_cb
         _set_bg(assets)
-        _set_logo(logo)
-        name_lab.setText(name)
         play_cb = on_play
         extras_cb = on_extras
         scenes_cb = on_scenes
@@ -307,8 +274,6 @@ def make_cart_media_page(on_back: Callable[[], None]) -> QWidget:
         if cart is None:
             stop_menu_audio()
             _set_bg(MenuAssets())
-            _clear_logo()
-            name_lab.setText("No cart")
             _show_dvd_chrome(True)
             play_btn.setEnabled(False)
             extras_btn.hide()
@@ -331,7 +296,6 @@ def make_cart_media_page(on_back: Callable[[], None]) -> QWidget:
         _fill_list(labels or ["(empty cart)"], callbacks or [lambda: None])
 
     def _movie_scenes(movie) -> List[Tuple[str, float]]:
-        """JSON scenes first; else embedded MKV/MP4 chapters."""
         out: List[Tuple[str, float]] = [
             (s.title, s.start_sec) for s in (movie.scenes or [])
         ]
@@ -347,7 +311,6 @@ def make_cart_media_page(on_back: Callable[[], None]) -> QWidget:
         stack[:] = [("titles",), ("movie", idx)]
         assets = _pick_menu(movie.menu, cart.menu)
         start_menu_audio(assets.music or cart.menu.music)
-        logo = _pick_logo(movie.menu, cart)
 
         def on_play(p=movie.path) -> None:
             if p.is_file():
@@ -357,8 +320,6 @@ def make_cart_media_page(on_back: Callable[[], None]) -> QWidget:
         scenes = _movie_scenes(movie)
         on_sc = (lambda i=idx: _go_scenes(i)) if scenes else None
         _wire_dvd_buttons(
-            name=movie.title,
-            logo=logo,
             assets=assets,
             on_play=on_play,
             on_extras=on_ex,
@@ -421,10 +382,7 @@ def make_cart_media_page(on_back: Callable[[], None]) -> QWidget:
             if p is not None and p.is_file():
                 _play_feature(p)
 
-        # TV: Play = first ep; Extras → season list
         _wire_dvd_buttons(
-            name=show.title,
-            logo=_pick_logo(show.menu, cart),
             assets=assets,
             on_play=on_play,
             on_extras=lambda i=idx: _go_show_seasons(i),
@@ -497,8 +455,6 @@ def make_cart_media_page(on_back: Callable[[], None]) -> QWidget:
             state["cart"] = None
             stop_menu_audio()
             _set_bg(MenuAssets())
-            _clear_logo()
-            name_lab.setText("No media cart")
             _show_dvd_chrome(True)
             play_btn.setEnabled(False)
             extras_btn.hide()
@@ -523,14 +479,10 @@ def make_cart_media_page(on_back: Callable[[], None]) -> QWidget:
                     return
                 if top[0] == "movie" and 0 <= top[1] < len(cart.movies):
                     m = cart.movies[top[1]]
-                    assets = _pick_menu(m.menu, cart.menu)
-                    _set_bg(assets)
-                    _set_logo(_pick_logo(m.menu, cart))
+                    _set_bg(_pick_menu(m.menu, cart.menu))
                 elif top[0] == "show" and 0 <= top[1] < len(cart.tv):
                     s = cart.tv[top[1]]
-                    assets = _pick_menu(s.menu, cart.menu)
-                    _set_bg(assets)
-                    _set_logo(_pick_logo(s.menu, cart))
+                    _set_bg(_pick_menu(s.menu, cart.menu))
             except Exception:
                 pass
 

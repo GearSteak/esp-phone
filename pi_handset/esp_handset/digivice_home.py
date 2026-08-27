@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from typing import Callable, List, Optional
+from typing import Callable, Dict, List, Optional
 
 from PyQt5.QtCore import Qt, QPoint, pyqtSignal
-from PyQt5.QtGui import QFont, QPainter, QColor, QPen, QPolygon
+from PyQt5.QtGui import QFont, QPainter, QColor, QPen, QPixmap, QPolygon
 from PyQt5.QtWidgets import QWidget
 
 from esp_handset.shell_data import AppEntry
@@ -31,6 +31,8 @@ class DigiviceHome(QWidget):
         self._top_n = max(1, min(top_count, len(self._entries)))
         self._row = 0  # 0 = top, 1 = bottom
         self._col = 0
+        # Optional center-stage art per app key (e.g. media cart logo)
+        self._stage_art: Dict[str, QPixmap] = {}
         self.setFocusPolicy(Qt.StrongFocus)
         self.setMinimumSize(200, 180)
         if on_activate:
@@ -52,6 +54,14 @@ class DigiviceHome(QWidget):
                         return
         self._row = 0
         self._col = min(self._col, max(0, len(self._top()) - 1))
+        self.update()
+
+    def set_stage_art(self, key: str, pixmap: Optional[QPixmap]) -> None:
+        """Logo/image shown in the center stage when that app is focused."""
+        if pixmap is None or pixmap.isNull():
+            self._stage_art.pop(key, None)
+        else:
+            self._stage_art[key] = QPixmap(pixmap)
         self.update()
 
     def _top(self) -> List[AppEntry]:
@@ -105,6 +115,7 @@ class DigiviceHome(QWidget):
     def paintEvent(self, _event) -> None:  # noqa: N802
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
+        p.setRenderHint(QPainter.SmoothPixmapTransform)
         w, h = self.width(), self.height()
         cur = self.current()
 
@@ -159,20 +170,36 @@ class DigiviceHome(QWidget):
         p.drawEllipse(stage.adjusted(10, 8, -10, -8))
 
         if cur:
+            art = self._stage_art.get(cur.key)
+            title_h = 18
+            if art is not None and not art.isNull():
+                # Logo above the name (cart Media takeover)
+                max_w = max(40, stage.width() - 20)
+                max_h = max(40, stage.height() - title_h - 16)
+                scaled = art.scaled(
+                    max_w, max_h, Qt.KeepAspectRatio, Qt.SmoothTransformation
+                )
+                x = stage.center().x() - scaled.width() // 2
+                y = stage.top() + 6
+                p.drawPixmap(x, y, scaled)
+            else:
+                p.setPen(QColor("#e8eef5"))
+                p.setFont(QFont("DejaVu Sans", 28, QFont.Bold))
+                p.drawText(
+                    stage.adjusted(0, 4, 0, -title_h - 4),
+                    Qt.AlignHCenter | Qt.AlignVCenter,
+                    cur.glyph,
+                )
             p.setPen(QColor("#e8eef5"))
-            p.setFont(QFont("DejaVu Sans", 28, QFont.Bold))
-            p.drawText(stage.adjusted(0, 4, 0, -28), Qt.AlignHCenter | Qt.AlignVCenter, cur.glyph)
             p.setFont(QFont("DejaVu Sans", 11, QFont.Bold))
             p.drawText(
                 stage.left(),
-                stage.bottom() - 22,
+                stage.bottom() - title_h,
                 stage.width(),
-                16,
-                Qt.AlignHCenter | Qt.AlignTop,
+                title_h,
+                Qt.AlignHCenter | Qt.AlignVCenter,
                 cur.title,
             )
-            if cur.subtitle:
-                pass  # Titles only — no hint text under icons
 
         # Bottom row
         draw_row(self._bot(), h - 22, 1)

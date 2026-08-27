@@ -150,7 +150,7 @@ Minimal **games-only** cart:
 | `movies` | **Home Media** → cart title → logo + name + **Play** / **Extras** |
 | `tv` | **Home Media** → cart title → logo + name + **Play** / season list |
 
-**Logo:** put `menu/logo.png` (or `"logo": "…"` / `"menu": { "logo": "…" }` in `cartridge.json`). Shown above the title on the DVD screen. No “DVD menu” subtitle.
+**Logo:** put `menu/logo.png` (or `"logo": "…"` in `cartridge.json`). Shown on the **home Media takeover** above the cart name (not on the DVD button screen). DVD screen is background + **Play** / **Extras** / **Scenes** only.
 
 **Scenes:** optional `scenes` on a movie, or embedded chapters in the MKV/MP4 (ffprobe). A **Scenes** button appears when either exists.
 

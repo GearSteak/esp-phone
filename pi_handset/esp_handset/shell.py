@@ -751,12 +751,14 @@ class PhoneShell(QMainWindow):
         return self._build_radial_page(title, entries, page_key)
 
     def apply_cart_media_home(self) -> None:
-        """Rename home Media → cart title when a movies/tv cart is mounted."""
+        """Rename home Media → cart title + logo when a movies/tv cart is mounted."""
         home = getattr(self, "_home", None)
         if home is None or not hasattr(home, "set_entries"):
             return
         try:
-            from esp_handset.cart_media_ui import media_home_title
+            from PyQt5.QtGui import QPixmap
+
+            from esp_handset.cart_media_ui import media_home_logo, media_home_title
             from esp_handset.shell_data import HOME_APPS, AppEntry
 
             title = media_home_title()
@@ -767,6 +769,15 @@ class PhoneShell(QMainWindow):
                 else:
                     entries.append(e)
             home.set_entries(entries)
+            set_art = getattr(home, "set_stage_art", None)
+            if callable(set_art):
+                logo_path = media_home_logo() if title else None
+                pm = None
+                if logo_path is not None and logo_path.is_file():
+                    pm = QPixmap(str(logo_path))
+                    if pm.isNull():
+                        pm = None
+                set_art("media", pm)
         except Exception:
             pass
 
