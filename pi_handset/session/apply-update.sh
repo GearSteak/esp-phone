@@ -113,6 +113,7 @@ install_live_from_repo() {
     "ensure-cardkb.sh:digivice-ensure-cardkb" \
     "digivice-cardkb-ctl.sh:digivice-cardkb-ctl" \
     "digivice-ensure-browser.sh:digivice-ensure-browser" \
+    "digivice-suppress-usb-prompt.sh:digivice-suppress-usb-prompt" \
     "digivice-ensure-jellyfin.sh:digivice-ensure-jellyfin" \
     "digivice-jellyfin-ctl.sh:digivice-jellyfin-ctl" \
     "ensure-linphone.sh:digivice-ensure-linphone" \
@@ -198,6 +199,7 @@ if [[ -d "$STAGE" && -f "$STAGE/.ready" ]]; then
     ensure-cardkb.sh:digivice-ensure-cardkb \
     digivice-cardkb-ctl.sh:digivice-cardkb-ctl \
     digivice-ensure-browser.sh:digivice-ensure-browser \
+    digivice-suppress-usb-prompt.sh:digivice-suppress-usb-prompt \
     digivice-ensure-jellyfin.sh:digivice-ensure-jellyfin \
     digivice-jellyfin-ctl.sh:digivice-jellyfin-ctl \
     ensure-libretro-cores.sh:digivice-libretro-cores \
@@ -322,6 +324,7 @@ $USER_NAME ALL=(root) NOPASSWD: /bin/systemctl stop cardkb-inputd.service
 $USER_NAME ALL=(root) NOPASSWD: /bin/systemctl start cardkb-inputd
 $USER_NAME ALL=(root) NOPASSWD: /bin/systemctl start cardkb-inputd.service
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-ensure-browser
+$USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-suppress-usb-prompt
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-ensure-jellyfin
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-jellyfin-ctl
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-ensure-linphone
@@ -418,6 +421,16 @@ else
   apt-get update -qq >>"$LOG" 2>&1 || true
   apt-get install -y python3-pyqt5.qtwebkit >>"$LOG" 2>&1 || true
   apt-get install -y python3-pyqt5.qtwebengine >>"$LOG" 2>&1 || true
+fi
+
+# USB carts: keep automount, suppress "what would you like to do?" dialog
+if [[ -f "$PREFIX/session/digivice-suppress-usb-prompt.sh" ]]; then
+  install -m 755 "$PREFIX/session/digivice-suppress-usb-prompt.sh" \
+    /usr/local/bin/digivice-suppress-usb-prompt
+  log "Suppressing USB volume prompt (autorun off, mount kept)…"
+  SUDO_USER="$USER_NAME" DIGI_GUI_USER="$USER_NAME" \
+    bash /usr/local/bin/digivice-suppress-usb-prompt >>"$LOG" 2>&1 \
+    || log "WARN: digivice-suppress-usb-prompt failed — check $LOG"
 fi
 
 # Jellyfin — Digivice Share (serve Videos/Music/cart to Fire TV)

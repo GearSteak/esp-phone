@@ -112,6 +112,18 @@ if [[ -f "$PREFIX/session/digivice-ensure-browser.sh" ]] || [[ -f "$(dirname "$0
   bash /usr/local/bin/digivice-ensure-browser 2>&1 | tee -a "$LOG" | tail -n 20 || true
 fi
 
+# USB carts: keep automount, suppress "what would you like to do?" dialog
+ENSURE_USB="$(dirname "$0")/digivice-suppress-usb-prompt.sh"
+[[ -f "$PREFIX/session/digivice-suppress-usb-prompt.sh" ]] \
+  && ENSURE_USB="$PREFIX/session/digivice-suppress-usb-prompt.sh"
+if [[ -f "$ENSURE_USB" ]]; then
+  install -m 755 "$ENSURE_USB" /usr/local/bin/digivice-suppress-usb-prompt
+  log "Suppressing USB volume prompt (autorun off, mount kept)…"
+  SUDO_USER="$USER_NAME" DIGI_GUI_USER="$USER_NAME" \
+    bash /usr/local/bin/digivice-suppress-usb-prompt 2>&1 | tee -a "$LOG" | tail -n 15 \
+    || log "WARN: digivice-suppress-usb-prompt failed"
+fi
+
 # Jellyfin Share (Fire TV / LAN)
 log "apt/ensure: Digivice Jellyfin…"
 ENSURE_JF="$(dirname "$0")/digivice-ensure-jellyfin.sh"
@@ -546,6 +558,7 @@ $USER_NAME ALL=(root) NOPASSWD: /bin/systemctl stop cardkb-inputd.service
 $USER_NAME ALL=(root) NOPASSWD: /bin/systemctl start cardkb-inputd
 $USER_NAME ALL=(root) NOPASSWD: /bin/systemctl start cardkb-inputd.service
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-ensure-linphone
+$USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-suppress-usb-prompt
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-ensure-ollama
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-libretro-cores
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-ensure-gb

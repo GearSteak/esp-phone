@@ -546,6 +546,11 @@ def make_file_media_page(
         "Videos": "Play",
         "Audiobooks": "Play",
     }
+    cart_kinds = {
+        "Music": "music",
+        "Videos": "videos",
+        "Audiobooks": "audiobooks",
+    }
     return make_library_page(
         title=title,
         glyph=glyphs.get(title, "▤"),
@@ -555,6 +560,7 @@ def make_file_media_page(
         kind_label=kinds.get(title, "files"),
         open_cmd=open_cmd,
         open_label=opens.get(title, "Open"),
+        cart_kind=cart_kinds.get(title, ""),
     )
 
 

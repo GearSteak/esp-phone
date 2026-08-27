@@ -152,6 +152,12 @@ Minimal **games-only** cart:
 - **Mixed cart** → only sections listed in `kinds` switch; rest stay on SD
 - **Eject** → revert immediately
 
+## Desktop “what to do with USB?” popup
+
+Pi OS File Manager (PCManFM) often asks what to do when a stick is inserted. Digivice carts need the drive to **automount**, but not that dialog.
+
+Settings → Update runs `digivice-suppress-usb-prompt`, which sets PCManFM **`autorun=0`** while leaving **`mount_removable=1`**. Manual: `sudo digivice-suppress-usb-prompt`. Replug the cart (or restart the session) if the prompt still appears once after Update.
+
 ## `system` values (games)
 
 | `system` | Emulator folder |
