@@ -232,8 +232,10 @@ def digivice_play(
 
         cmd = [
             "mpv",
+            "--no-config",
             "--profile=fast",
             "--fullscreen",
+            "--fs-screen=0",
             "--force-window=yes",
             "--ontop",
             "--osd-level=1",
@@ -410,6 +412,11 @@ def digivice_play(
         cmd = [
             "vlc",
             "--fullscreen",
+            "--autoscale",
+            "--no-video-deco",
+            "--no-qt-video-autoresize",
+            "--video-on-top",
+            "--key-quit=Esc",
             "--play-and-exit",
             "--no-video-title-show",
             "--no-qt-fs-controller",
