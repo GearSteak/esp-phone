@@ -66,8 +66,8 @@ GB_XDOTOOL = {
     "SELECT": "Shift_R",
 }
 
-DEBOUNCE_S = float(os.environ.get("DIGI_BTN_DEBOUNCE", "0.010"))
-SCAN_S = float(os.environ.get("DIGI_BTN_SCAN", "0.012"))
+DEBOUNCE_S = float(os.environ.get("DIGI_BTN_DEBOUNCE", "0.002"))
+SCAN_S = float(os.environ.get("DIGI_BTN_SCAN", "0.002"))
 # Default slightly slower than old 12 — Settings → Mouse can change live
 _DEFAULT_MOUSE_STEP = int(os.environ.get("DIGI_BTN_MOUSE_STEP", "10"))
 ACTIVE_HIGH = os.environ.get("DIGI_BTN_ACTIVE_HIGH", "0").strip() in (
