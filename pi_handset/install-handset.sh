@@ -145,6 +145,7 @@ $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-libretro-cores
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-ensure-cardkb
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-cardkb-ctl
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-i2c-doctor
+$USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-mouse-doctor
 $USER_NAME ALL=(root) NOPASSWD: /usr/bin/systemctl stop cardkb-inputd
 $USER_NAME ALL=(root) NOPASSWD: /usr/bin/systemctl stop cardkb-inputd.service
 $USER_NAME ALL=(root) NOPASSWD: /usr/bin/systemctl start cardkb-inputd
@@ -202,6 +203,10 @@ fi
 if [[ -f "$ROOT/session/digivice-i2c-doctor.sh" ]]; then
   install -m 755 "$ROOT/session/digivice-i2c-doctor.sh" "$PREFIX/session/digivice-i2c-doctor.sh"
   install -m 755 "$ROOT/session/digivice-i2c-doctor.sh" /usr/local/bin/digivice-i2c-doctor
+fi
+if [[ -f "$ROOT/session/digivice-mouse-doctor.sh" ]]; then
+  install -m 755 "$ROOT/session/digivice-mouse-doctor.sh" "$PREFIX/session/digivice-mouse-doctor.sh"
+  install -m 755 "$ROOT/session/digivice-mouse-doctor.sh" /usr/local/bin/digivice-mouse-doctor
 fi
 if [[ -f "$ROOT/session/digivice-audio-usb.sh" ]]; then
   install -m 755 "$ROOT/session/digivice-audio-usb.sh" "$PREFIX/session/digivice-audio-usb.sh"

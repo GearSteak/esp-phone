@@ -53,6 +53,16 @@ sudo digivice-ensure-buttons --doctor
 journalctl -u digi-buttons-inputd -f
 ```
 
+For MCP-to-Linux mouse problems, run:
+
+```bash
+digivice-mouse-doctor
+```
+
+It writes `~/.esp-handset/mouse-doctor.txt` and reports the session mode,
+button daemon, MCP state, uinput pointer device, display session, and recent
+input logs. The same report is available from Transfer → Prep mouse report.
+
 Optional pin override (unit `Environment=`):
 
 ```

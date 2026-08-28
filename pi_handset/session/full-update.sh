@@ -420,6 +420,10 @@ if [[ -f "$ROOT/session/digivice-i2c-doctor.sh" ]]; then
   install -m 755 "$ROOT/session/digivice-i2c-doctor.sh" "$PREFIX/session/digivice-i2c-doctor.sh"
   install -m 755 "$ROOT/session/digivice-i2c-doctor.sh" /usr/local/bin/digivice-i2c-doctor
 fi
+if [[ -f "$ROOT/session/digivice-mouse-doctor.sh" ]]; then
+  install -m 755 "$ROOT/session/digivice-mouse-doctor.sh" "$PREFIX/session/digivice-mouse-doctor.sh"
+  install -m 755 "$ROOT/session/digivice-mouse-doctor.sh" /usr/local/bin/digivice-mouse-doctor
+fi
 if [[ -f "$ROOT/session/digivice-audio-usb.sh" ]]; then
   install -m 755 "$ROOT/session/digivice-audio-usb.sh" "$PREFIX/session/digivice-audio-usb.sh"
   install -m 755 "$ROOT/session/digivice-audio-usb.sh" /usr/local/bin/digivice-audio-usb
@@ -576,6 +580,7 @@ $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-modem-uart
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-modem-doctor
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-audio-doctor
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-i2c-doctor
+$USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-mouse-doctor
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-audio-usb
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-audio-fix
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-cm108-wake

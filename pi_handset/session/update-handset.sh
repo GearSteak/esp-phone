@@ -241,6 +241,7 @@ install_tree() {
       "digivice-audio-doctor.sh:digivice-audio-doctor" \
       "digivice-media-doctor.sh:digivice-media-doctor" \
       "digivice-i2c-doctor.sh:digivice-i2c-doctor" \
+      "digivice-mouse-doctor.sh:digivice-mouse-doctor" \
       "digivice-audio-usb.sh:digivice-audio-usb" \
       "digivice-audio-fix.sh:digivice-audio-fix" \
       "digivice-cm108-beep.sh:digivice-cm108-beep" \
