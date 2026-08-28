@@ -10,6 +10,8 @@ from typing import Dict, Optional, Tuple
 _ADDR_OVERRIDE = os.environ.get("DIGIVICE_MCP_ADDR", "").strip()
 _ADDR = int(_ADDR_OVERRIDE or "0x20", 0)
 _BUS = int(os.environ.get("DIGIVICE_MCP_I2C_BUS", "1"))
+_BUS_HANDLE = None
+_DETECTED_ADDR: Optional[int] = None
 
 # MCP23017 registers
 _IODIRA = 0x00
@@ -150,21 +152,25 @@ def _pressed_from_ports(a: int, b: int) -> Dict[str, bool]:
 
 
 def read_state() -> Optional[McpState]:
+    global _BUS_HANDLE, _DETECTED_ADDR
     try:
-        bus = _open_bus()
-        try:
-            address = _probe_address(bus)
-            if address is None or not init(bus, address):
+        if _BUS_HANDLE is None:
+            _BUS_HANDLE = _open_bus()
+        if _DETECTED_ADDR is None:
+            _DETECTED_ADDR = _probe_address(_BUS_HANDLE)
+            if _DETECTED_ADDR is None or not init(_BUS_HANDLE, _DETECTED_ADDR):
                 return None
-            a = _read(bus, _GPIOA, address)
-            b = _read(bus, _GPIOB, address)
-        finally:
-            try:
-                bus.close()
-            except Exception:
-                pass
+        a = _read(_BUS_HANDLE, _GPIOA, _DETECTED_ADDR)
+        b = _read(_BUS_HANDLE, _GPIOB, _DETECTED_ADDR)
         return McpState(raw_a=a, raw_b=b, pressed=_pressed_from_ports(a, b))
     except OSError:
+        if _BUS_HANDLE is not None:
+            try:
+                _BUS_HANDLE.close()
+            except Exception:
+                pass
+        _BUS_HANDLE = None
+        _DETECTED_ADDR = None
         return None
 
 

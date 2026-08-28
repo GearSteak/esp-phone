@@ -854,13 +854,13 @@ def main() -> int:
                     log(f"mouse_step → {mouse_step}")
                     last_step = mouse_step
 
+            phone_btns = (
+                mcp23017.read_phone_buttons() if use_mcp else None
+            )
             for name, pin in pins.items():
                 try:
                     if use_mcp:
-                        from esp_handset import mcp23017
-
-                        phone_btns = mcp23017.read_phone_buttons()
-                        down_now = phone_btns.get(name, False)
+                        down_now = bool(phone_btns and phone_btns.get(name, False))
                         level = 0 if down_now else 1
                     else:
                         level = gpio.read(pin)
