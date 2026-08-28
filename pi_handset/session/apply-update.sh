@@ -123,6 +123,7 @@ install_live_from_repo() {
     "digivice-linphonec.sh:digivice-linphonec" \
     "digivice-sip-dial.sh:digivice-sip-dial" \
     "digivice-audio-doctor.sh:digivice-audio-doctor" \
+    "digivice-i2c-doctor.sh:digivice-i2c-doctor" \
     "digivice-audio-usb.sh:digivice-audio-usb" \
     "digivice-audio-fix.sh:digivice-audio-fix" \
     "digivice-cm108-beep.sh:digivice-cm108-beep" \

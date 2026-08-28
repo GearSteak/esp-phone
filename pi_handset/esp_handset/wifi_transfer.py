@@ -124,6 +124,8 @@ AUDIO_REPORT = DATA / "audio-doctor.txt"
 AUDIO_REPORT_TMP = Path("/tmp/digivice-audio-doctor.txt")
 MEDIA_REPORT = DATA / "media-doctor.txt"
 MEDIA_REPORT_TMP = Path("/tmp/digivice-media-doctor.txt")
+I2C_REPORT = DATA / "i2c-doctor.txt"
+I2C_REPORT_TMP = Path("/tmp/digivice-i2c-doctor.txt")
 SIP_REPORT = DATA / "sip-doctor.txt"
 SIP_REPORT_TMP = Path("/tmp/digivice-sip-doctor.txt")
 
@@ -150,6 +152,16 @@ def _audio_report_path() -> Optional[Path]:
 
 def _media_report_path() -> Optional[Path]:
     for p in (MEDIA_REPORT, MEDIA_REPORT_TMP, Path.home() / "esp-phone" / "media-doctor-LATEST.txt"):
+        try:
+            if p.is_file() and p.stat().st_size > 0:
+                return p
+        except OSError:
+            continue
+    return None
+
+
+def _i2c_report_path() -> Optional[Path]:
+    for p in (I2C_REPORT, I2C_REPORT_TMP, Path.home() / "esp-phone" / "i2c-doctor-LATEST.txt"):
         try:
             if p.is_file() and p.stat().st_size > 0:
                 return p
@@ -209,6 +221,36 @@ def _refresh_media_report() -> Tuple[bool, str]:
         except Exception as e:
             last = str(e)[:100]
     p = _media_report_path()
+    if p is not None:
+        return True, f"Using existing {p.name}"
+    return False, last
+
+
+def _refresh_i2c_report() -> Tuple[bool, str]:
+    cmds = (
+        ["digivice-i2c-doctor"],
+        ["sudo", "-n", "digivice-i2c-doctor"],
+        ["bash", "/opt/esp-handset/session/digivice-i2c-doctor.sh"],
+    )
+    last = "doctor not installed"
+    for cmd in cmds:
+        try:
+            r = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=90,
+                check=False,
+            )
+            if r.returncode == 0 or _i2c_report_path() is not None:
+                p = _i2c_report_path()
+                return True, f"Report ready ({p.name if p else 'ok'})"
+            last = (r.stderr or r.stdout or last).strip()[:80] or last
+        except FileNotFoundError:
+            continue
+        except Exception as e:
+            last = str(e)[:80]
+    p = _i2c_report_path()
     if p is not None:
         return True, f"Using existing {p.name}"
     return False, last
@@ -507,6 +549,9 @@ def _make_handler(get_dest: Callable[[], str], signals: _UploadSignals):
             if path in ("/diag/media", "/diag/media.txt", "/media-doctor.txt"):
                 self._serve_media_report(download=path.endswith(".txt"))
                 return
+            if path in ("/diag/i2c", "/diag/i2c.txt", "/i2c-doctor.txt"):
+                self._serve_i2c_report(download=path.endswith(".txt"))
+                return
             if path in ("/diag/sip", "/diag/sip.txt", "/sip-doctor.txt"):
                 self._serve_sip_report(download=path.endswith(".txt"))
                 return
@@ -589,6 +634,14 @@ def _make_handler(get_dest: Callable[[], str], signals: _UploadSignals):
                     media_note = "Ready"
             else:
                 media_note = "Run Prep media report on Digivice first"
+            i2c_report = _i2c_report_path()
+            if i2c_report is not None:
+                try:
+                    i2c_note = f"Ready · {html.escape(time.strftime('%Y-%m-%d %H:%M', time.localtime(i2c_report.stat().st_mtime)))}"
+                except OSError:
+                    i2c_note = "Ready"
+            else:
+                i2c_note = "Run Prep I2C report on Digivice first"
             inner = f"""
 <nav><a href="/">Home</a></nav>
 <h1>Digivice · Transfer</h1>
@@ -609,6 +662,8 @@ def _make_handler(get_dest: Callable[[], str], signals: _UploadSignals):
 <a class="btn" style="margin-top:10px;display:block;" href="/diag/audio.txt">Download audio-doctor.txt</a>
 <a class="btn" style="margin-top:10px;display:block;" href="/diag/media.txt">Download media-doctor.txt</a>
 <p class="muted">{media_note}</p>
+<a class="btn" style="margin-top:10px;display:block;" href="/diag/i2c.txt">Download i2c-doctor.txt</a>
+<p class="muted">{i2c_note}</p>
 <a class="btn" style="margin-top:10px;display:block;" href="/diag/beep.txt">Download last-beep.txt</a>
 </div>
 
@@ -818,6 +873,42 @@ def _make_handler(get_dest: Callable[[], str], signals: _UploadSignals):
             self.end_headers()
             self.wfile.write(data)
 
+        def _serve_i2c_report(self, *, download: bool) -> None:
+            path = _i2c_report_path()
+            if path is None:
+                ok, msg = _refresh_i2c_report()
+                path = _i2c_report_path() if ok else None
+                if path is None:
+                    body = (
+                        "No i2c-doctor.txt yet.\n\n"
+                        "On Digivice: Tools → Transfer → Prep I2C report,\n"
+                        "or run: digivice-i2c-doctor\n\n"
+                        f"({msg})\n"
+                    ).encode("utf-8")
+                    self.send_response(404)
+                    self.send_header("Content-Type", "text/plain; charset=utf-8")
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+                    signals.activity.emit("No I2C report yet")
+                    return
+            try:
+                data = path.read_bytes()
+            except OSError:
+                self.send_error(500)
+                return
+            signals.activity.emit("Sent i2c-doctor.txt")
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain; charset=utf-8")
+            self.send_header("Content-Length", str(len(data)))
+            if download:
+                self.send_header(
+                    "Content-Disposition",
+                    'attachment; filename="i2c-doctor.txt"',
+                )
+            self.end_headers()
+            self.wfile.write(data)
+
         def _serve_sip_report(self, *, download: bool) -> None:
             # Never regenerate here — Prep SIP already wrote the file.
             # Regenerating on download was crashing Digivice (OOM / VoIP fight).
@@ -993,6 +1084,9 @@ def make_wifi_transfer_page(
     prep_media_btn = QPushButton("Prep media report")
     prep_media_btn.setFixedHeight(26)
     prep_media_btn.setStyleSheet("font-size:11px;")
+    prep_i2c_btn = QPushButton("Prep I2C report")
+    prep_i2c_btn.setFixedHeight(26)
+    prep_i2c_btn.setStyleSheet("font-size:11px;")
     stop_btn = QPushButton("Stop")
     stop_btn.setFixedHeight(26)
     stop_btn.setEnabled(False)
@@ -1005,6 +1099,7 @@ def make_wifi_transfer_page(
     lay.addWidget(prep_btn)
     lay.addWidget(prep_audio_btn)
     lay.addWidget(prep_media_btn)
+    lay.addWidget(prep_i2c_btn)
     lay.addWidget(stop_btn)
 
     state = {"dest": initial_dest if initial_dest in DESTINATIONS else "photos"}
@@ -1093,6 +1188,7 @@ def make_wifi_transfer_page(
         prep_btn.setEnabled(not on)
         prep_audio_btn.setEnabled(not on)
         prep_media_btn.setEnabled(not on)
+        prep_i2c_btn.setEnabled(not on)
 
     def prep_sip() -> None:
         status.setText("Building SIP report…")
@@ -1134,6 +1230,16 @@ def make_wifi_transfer_page(
 
         threading.Thread(target=work, daemon=True).start()
 
+    def prep_i2c() -> None:
+        status.setText("Running I2C doctor…")
+        _prep_busy(True)
+
+        def work() -> None:
+            ok, msg = _refresh_i2c_report()
+            signals.prep_done.emit(ok, f"i2c:{msg}")
+
+        threading.Thread(target=work, daemon=True).start()
+
     def on_prep_done(ok: bool, msg: str) -> None:
         _prep_busy(False)
         if server_holder.get("httpd") is None:
@@ -1148,12 +1254,16 @@ def make_wifi_transfer_page(
         elif msg.startswith("media:"):
             kind = "media"
             show = msg[6:]
+        elif msg.startswith("i2c:"):
+            kind = "i2c"
+            show = msg[4:]
         elif msg.startswith("sip:"):
             kind = "sip"
             show = msg[4:]
         path_ok = {
             "audio": _audio_report_path,
             "media": _media_report_path,
+            "i2c": _i2c_report_path,
             "sip": _sip_report_path,
             "modem": _modem_report_path,
         }[kind]()
@@ -1186,6 +1296,7 @@ def make_wifi_transfer_page(
     prep_btn.clicked.connect(prep_modem)
     prep_audio_btn.clicked.connect(prep_audio)
     prep_media_btn.clicked.connect(prep_media)
+    prep_i2c_btn.clicked.connect(prep_i2c)
     stop_btn.clicked.connect(
         lambda: (stop_server(), status.setText("Stopped. Start again when ready."))
     )

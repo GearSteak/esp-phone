@@ -244,6 +244,16 @@ The report is saved as `~/.esp-handset/media-doctor.txt` and also copied to
 player versions, the recent mpv log, USB topology, Pi health, and `ffprobe`
 details for the selected video.
 
+For I2C, MCP23017, CardKB, and button-backend diagnostics:
+
+```bash
+digivice-i2c-doctor
+```
+
+The report is saved as `~/.esp-handset/i2c-doctor.txt`, copied to
+`/tmp/digivice-i2c-doctor.txt`, and is available in Tools → Transfer → Prep
+I2C report.
+
 ## See also
 
 - Pi 4 migration plan (cart slot CAD, 4-pin pinout TBD)
