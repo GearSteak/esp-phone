@@ -282,6 +282,7 @@ def blit_qimage(img) -> None:
     """Push a QImage (any format) scaled to panel as RGB565 SPI DMA-ish write."""
     if not _ok:
         return
+    from array import array
     from PyQt5.QtGui import QImage
     from PyQt5.QtCore import Qt
 
@@ -296,17 +297,17 @@ def blit_qimage(img) -> None:
     ptr = img.bits()
     ptr.setsize(img.byteCount())
     raw = bytes(ptr)
-    # Swap bytes for SPI ST7789 (high byte first)
-    ba = bytearray(len(raw))
-    for i in range(0, len(raw), 2):
-        ba[i] = raw[i + 1]
-        ba[i + 1] = raw[i]
+    # Swap bytes for SPI ST7789 (high byte first).  array.byteswap()
+    # performs the whole conversion in C instead of looping in Python.
+    wire = array("H", raw)
+    wire.byteswap()
+    wire = wire.tobytes()
 
     _set_window(dc, 0, 0, w - 1, h - 1)
     _gpio.output(dc, 1)
     step = 4096
-    for i in range(0, len(ba), step):
-        _spi.writebytes2(ba[i : i + step])
+    for i in range(0, len(wire), step):
+        _spi.writebytes2(wire[i : i + step])
 
 
 def fill(r: int, g: int, b: int) -> None:

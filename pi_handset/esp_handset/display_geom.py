@@ -14,7 +14,7 @@ ESP_HANDSET_SPI_BACKEND=userspace|drm|auto  (default auto / flag file)
 from __future__ import annotations
 
 import os
-from typing import List, Optional, Tuple
+from typing import Callable, List, Optional, Tuple
 
 from PyQt5.QtCore import Qt, QTimer, QPoint, QEvent, QRect
 from PyQt5.QtGui import QPainter, QImage, QGuiApplication, QMouseEvent, QWheelEvent
@@ -100,10 +100,17 @@ def _backend() -> str:
 class ScaledScreenHost(QWidget):
     """Fullscreen: draw full Digivice frame scaled to this screen (no crop)."""
 
-    def __init__(self, source: QWidget, screen, parent=None):
+    def __init__(
+        self,
+        source: QWidget,
+        screen,
+        frame_provider: Optional[Callable[[], Optional[QImage]]] = None,
+        parent=None,
+    ):
         super().__init__(parent)
         self._source = source
         self._screen = screen
+        self._frame_provider = frame_provider
         self.setWindowTitle("ESP Digivice")
         self.setAttribute(Qt.WA_StyledBackground, True)
         self.setStyleSheet("background-color: #000;")
@@ -221,12 +228,19 @@ class ScaledScreenHost(QWidget):
         src = self._source
         if src is None:
             return
-        img: QImage = src.grab().toImage()
+        img: Optional[QImage] = None
+        if self._frame_provider is not None:
+            try:
+                img = self._frame_provider()
+            except Exception:
+                img = None
+        if img is None or img.isNull():
+            img = src.grab().toImage()
         if img.isNull():
             return
         # Full frame only — never crop top-left of a larger source
         scaled = img.scaled(
-            self.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation
+            self.size(), Qt.KeepAspectRatio, Qt.FastTransformation
         )
         x = (self.width() - scaled.width()) // 2
         y = (self.height() - scaled.height()) // 2
@@ -234,8 +248,13 @@ class ScaledScreenHost(QWidget):
 
 
 class SpiUserspaceMirror:
-    def __init__(self, source: QWidget):
+    def __init__(
+        self,
+        source: QWidget,
+        frame_provider: Optional[Callable[[], Optional[QImage]]] = None,
+    ):
         self.source = source
+        self._frame_provider = frame_provider
         self._timer = None
         self._st = None
         self._active = False
@@ -275,7 +294,12 @@ class SpiUserspaceMirror:
             if _heavy_skip != 0:
                 return
         try:
-            self._st.blit_qimage(self.source.grab().toImage())
+            img = None
+            if self._frame_provider is not None:
+                img = self._frame_provider()
+            if img is None or img.isNull():
+                img = self.source.grab().toImage()
+            self._st.blit_qimage(img)
         except Exception as e:
             print(f"[handset] spi tick: {e}", flush=True)
 
@@ -300,6 +324,7 @@ class MultiDisplayKiosk:
         self.source = source
         self.hosts: List[ScaledScreenHost] = []
         self.spi: Optional[SpiUserspaceMirror] = None
+        self._frame: Optional[QImage] = None
         self._timer = QTimer()
         self._timer.setInterval(33)
         self._timer.timeout.connect(self._tick)
@@ -365,7 +390,7 @@ class MultiDisplayKiosk:
         # Fullscreen host on every large screen (HDMI). Phone-sized DRM screens
         # also get a host so SPI DRM gets full UI if it ever has a mode.
         for s in screens:
-            host = ScaledScreenHost(self.source, s)
+            host = ScaledScreenHost(self.source, s, self._current_frame)
             host.place()
             self.hosts.append(host)
 
@@ -381,12 +406,12 @@ class MultiDisplayKiosk:
             self.source.showFullScreen()
 
         if backend == "userspace":
-            self.spi = SpiUserspaceMirror(self.source)
+            self.spi = SpiUserspaceMirror(self.source, self._current_frame)
             self.spi.start()
         elif backend == "auto":
             # try userspace if spidev present
             if os.path.exists("/dev/spidev0.0"):
-                self.spi = SpiUserspaceMirror(self.source)
+                self.spi = SpiUserspaceMirror(self.source, self._current_frame)
                 self.spi.start()
 
         self._timer.start()
@@ -394,6 +419,20 @@ class MultiDisplayKiosk:
         QTimer.singleShot(100, self._raise_hosts)
         QTimer.singleShot(500, self._raise_hosts)
         QTimer.singleShot(1500, self._raise_hosts)
+
+    def _current_frame(self) -> Optional[QImage]:
+        """Return one shared source frame for all outputs.
+
+        Capturing the source independently in every host paint event makes
+        HDMI mirroring needlessly expensive, especially during transitions.
+        The kiosk timer refreshes this once and both HDMI and SPI reuse it.
+        """
+        if self._frame is None or self._frame.isNull():
+            try:
+                self._frame = self.source.grab().toImage()
+            except Exception:
+                return None
+        return self._frame
 
     def _raise_hosts(self) -> None:
         if getattr(self, "_media_handoff", False):
@@ -453,6 +492,7 @@ class MultiDisplayKiosk:
             return
         self._media_handoff = False
         set_heavy_ui(False)
+        self._frame = None
         try:
             self.source.show()
             self.source.lower()
@@ -501,6 +541,7 @@ class MultiDisplayKiosk:
             _heavy_skip = (_heavy_skip + 1) % 2
             if _heavy_skip != 0:
                 return
+        self._frame = self.source.grab().toImage()
         for h in self.hosts:
             h.update()
 

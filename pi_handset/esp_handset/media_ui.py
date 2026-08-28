@@ -232,15 +232,24 @@ def digivice_play(
 
         cmd = [
             "mpv",
+            "--profile=fast",
             "--fullscreen",
             "--force-window=yes",
             "--ontop",
             "--osd-level=1",
             "--no-terminal",
             "--keep-open=no",
-            "--hwdec=auto",
+            # On Pi 4, auto-safe + OpenGL selects the DRM hardware path for
+            # HEVC when the installed FFmpeg/mpv build supports it, while
+            # retaining a usable fallback for H.264 and older installations.
+            "--hwdec=auto-safe",
+            "--hwdec-codecs=all",
+            "--gpu-api=opengl",
             "--vo=gpu",
             "--framedrop=vo",
+            "--vd-lavc-threads=4",
+            "--video-sync=audio",
+            "--interpolation=no",
             "--cache=yes",
             "--sub-visibility=yes",
             "--sub-auto=fuzzy",
