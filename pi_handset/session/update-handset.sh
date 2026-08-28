@@ -146,6 +146,12 @@ install_tree() {
     return 1
   fi
 
+  if ! command -v i2cdetect >/dev/null 2>&1; then
+    log "i2c-tools missing — installing scanner…"
+    apt-get update -qq 2>&1 | tee -a "$LOG" || true
+    apt-get install -y i2c-tools 2>&1 | tee -a "$LOG" || true
+  fi
+
   local USER_NAME
   USER_NAME="$(real_user)"
 
