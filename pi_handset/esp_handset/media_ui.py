@@ -409,12 +409,24 @@ def digivice_play(
         )
 
     if which("vlc"):
+        vlc_scale: Optional[float] = None
+        try:
+            dims = codec_info.rsplit(" ", 1)[-1].split("x")
+            video_w, video_h = int(dims[0]), int(dims[1])
+            from PyQt5.QtWidgets import QApplication
+
+            app = QApplication.instance()
+            screen = app.primaryScreen() if app is not None else None
+            if screen is not None and video_w > 0 and video_h > 0:
+                sg = screen.geometry()
+                vlc_scale = min(sg.width() / video_w, sg.height() / video_h)
+        except (ValueError, TypeError, AttributeError):
+            pass
         cmd = [
             "vlc",
             "--fullscreen",
             "--autoscale",
             "--no-video-deco",
-            "--no-qt-video-autoresize",
             "--video-on-top",
             "--key-quit=Esc",
             "--play-and-exit",
@@ -424,6 +436,10 @@ def digivice_play(
             "--avcodec-hw=any",
             "--sub-track=0",
         ]
+        if vlc_scale is not None and vlc_scale > 0:
+            # Force the whole frame to fit, including on a portrait SPI
+            # screen. VLC otherwise may leave a native-size crop in fullscreen.
+            cmd.extend(["--no-autoscale", f"--zoom={vlc_scale:.4f}"])
         if start_sec is not None and start_sec > 0:
             cmd.append(f"--start-time={int(start_sec)}")
         for sp in subs:
