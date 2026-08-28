@@ -207,13 +207,16 @@ def read_mode() -> str:
     # Digivice UI up → always phone keys (ignore stale desktop/gb mode file)
     if digivice_running():
         return "phone"
+    # Once the UI is gone, a stale phone mode must not strand the pad as a
+    # keyboard. Keep explicit GB mode for emulator handoff; otherwise Linux
+    # desktop is the automatic default.
     for p in mode_file_candidates():
         try:
             if not p.is_file():
                 continue
             m = p.read_text(encoding="utf-8").strip().lower()
             if m in ("phone", "desktop", "gb"):
-                return m
+                return "desktop" if m == "phone" else m
         except OSError:
             continue
     return "desktop"
