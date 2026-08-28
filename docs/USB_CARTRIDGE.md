@@ -145,7 +145,7 @@ Minimal **games-only** cart:
 
 | `kinds` value | Takes over |
 |---------------|------------|
-| `games` | **Games** — cart titles only; Confirm boots ROM |
+| `games` | **Home Apps** → cart title/logo → game menu; a single game boots on select. `menu/logo.png` is optional; the first game's cover art is used otherwise |
 | `music` | **Media → Music** |
 | `movies` | **Home Media** → cart title → logo + name + **Play** / **Extras** |
 | `tv` | **Home Media** → cart title → logo + name + **Play** / season list |
@@ -177,7 +177,7 @@ or a list of paths. During playback, **s** / **j** cycles tracks; **v** toggles 
 | `audiobooks` | **Media → Audiobooks** |
 
 - **No cart** → SD libraries as today
-- **Mixed cart** → only sections listed in `kinds` switch; rest stay on SD
+- **Mixed cart** → only sections listed in `kinds` switch; games replace Home Apps and media replaces Home Media
 - **Eject** → revert immediately
 
 ## Desktop “what to do with USB?” popup
