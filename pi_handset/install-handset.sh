@@ -193,6 +193,10 @@ if [[ -f "$ROOT/session/digivice-audio-doctor.sh" ]]; then
   install -m 755 "$ROOT/session/digivice-audio-doctor.sh" "$PREFIX/session/digivice-audio-doctor.sh"
   install -m 755 "$ROOT/session/digivice-audio-doctor.sh" /usr/local/bin/digivice-audio-doctor
 fi
+if [[ -f "$ROOT/session/digivice-media-doctor.sh" ]]; then
+  install -m 755 "$ROOT/session/digivice-media-doctor.sh" "$PREFIX/session/digivice-media-doctor.sh"
+  install -m 755 "$ROOT/session/digivice-media-doctor.sh" /usr/local/bin/digivice-media-doctor
+fi
 if [[ -f "$ROOT/session/digivice-audio-usb.sh" ]]; then
   install -m 755 "$ROOT/session/digivice-audio-usb.sh" "$PREFIX/session/digivice-audio-usb.sh"
   install -m 755 "$ROOT/session/digivice-audio-usb.sh" /usr/local/bin/digivice-audio-usb

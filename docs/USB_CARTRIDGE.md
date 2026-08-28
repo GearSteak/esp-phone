@@ -227,6 +227,17 @@ Plug a normal USB stick with `cartridge.json` into a Pi USB port. Run:
 python3 -c "from esp_handset.cartridge import refresh; c=refresh(); print(c)"
 ```
 
+For player, codec, USB, and cart-log diagnostics:
+
+```bash
+digivice-media-doctor /media/<user>/<cart>/movies/<title>/feature.mkv
+```
+
+The report is saved as `~/.esp-handset/media-doctor.txt` and also copied to
+`/tmp/digivice-media-doctor.txt`. It includes the deployed app version,
+player versions, the recent mpv log, USB topology, Pi health, and `ffprobe`
+details for the selected video.
+
 ## See also
 
 - Pi 4 migration plan (cart slot CAD, 4-pin pinout TBD)

@@ -233,6 +233,7 @@ install_tree() {
       "digivice-modem-uart.sh:digivice-modem-uart" \
       "digivice-modem-doctor.sh:digivice-modem-doctor" \
       "digivice-audio-doctor.sh:digivice-audio-doctor" \
+      "digivice-media-doctor.sh:digivice-media-doctor" \
       "digivice-audio-usb.sh:digivice-audio-usb" \
       "digivice-audio-fix.sh:digivice-audio-fix" \
       "digivice-cm108-beep.sh:digivice-cm108-beep" \
