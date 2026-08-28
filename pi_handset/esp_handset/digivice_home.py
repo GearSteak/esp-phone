@@ -151,9 +151,23 @@ class DigiviceHome(QWidget):
                     p.setBrush(QColor("#FFE600"))
                     p.setPen(QPen(QColor("#000000"), 2))
                     p.drawPolygon(tri)
-                p.setPen(QColor("#000000" if focused else "#9ab"))
-                p.setFont(QFont("DejaVu Sans", 12 if focused else 9, QFont.Bold))
-                p.drawText(cx - 14, y - 10, 28, 20, Qt.AlignCenter, e.glyph[:1])
+                art = self._stage_art.get(e.key) if focused else None
+                if art is not None and not art.isNull():
+                    icon = art.scaled(
+                        max(8, r * 2 - 6),
+                        max(8, r * 2 - 6),
+                        Qt.KeepAspectRatio,
+                        Qt.SmoothTransformation,
+                    )
+                    p.drawPixmap(
+                        cx - icon.width() // 2,
+                        y - icon.height() // 2,
+                        icon,
+                    )
+                else:
+                    p.setPen(QColor("#000000" if focused else "#9ab"))
+                    p.setFont(QFont("DejaVu Sans", 12 if focused else 9, QFont.Bold))
+                    p.drawText(cx - 14, y - 10, 28, 20, Qt.AlignCenter, e.glyph[:1])
 
         # Top row
         draw_row(self._top(), 22, 0)
