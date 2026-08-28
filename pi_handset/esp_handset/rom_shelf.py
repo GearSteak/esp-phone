@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional, Tuple
@@ -72,8 +73,21 @@ def _pretty_title(name: str) -> str:
     return cleaned or stem
 
 
+def _cover_match_key(name: str) -> str:
+    """Normalize ROM/cover names for forgiving local artwork matching."""
+    stem = Path(name).stem
+    stem = re.sub(r"\s*[\(\[].*?[\)\]]", " ", stem)
+    stem = re.sub(r"[^a-zA-Z0-9]+", " ", stem).casefold()
+    words = [
+        word
+        for word in stem.split()
+        if word not in {"version", "rev", "revision"}
+    ]
+    return " ".join(words)
+
+
 def find_cover(rom: Path, folder: str, data_root: Path) -> Optional[Path]:
-    """Look beside the ROM, in covers/, then ~/.esp-handset/roms/<folder>/covers/."""
+    """Find exact or normalized matching artwork near the ROM."""
     stem = rom.stem
     names = (
         f"{stem}.png",
@@ -96,6 +110,20 @@ def find_cover(rom: Path, folder: str, data_root: Path) -> Optional[Path]:
             p = d / name
             if p.is_file():
                 return p
+    wanted = _cover_match_key(rom.name)
+    if wanted:
+        for d in dirs:
+            if not d.is_dir():
+                continue
+            try:
+                candidates = sorted(d.iterdir(), key=lambda p: p.name.casefold())
+            except OSError:
+                continue
+            for p in candidates:
+                if p.suffix.lower() not in (".png", ".jpg", ".jpeg", ".webp"):
+                    continue
+                if _cover_match_key(p.name) == wanted:
+                    return p
     return None
 
 
