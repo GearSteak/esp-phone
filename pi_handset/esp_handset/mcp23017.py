@@ -32,9 +32,10 @@ _OUTPUT_MASK_B = 0xC0
 # Logical names → (port, bit)  port 0=A 1=B
 _PIN_MAP: Dict[str, Tuple[int, int]] = {
     "UP": (0, 0),
-    "DOWN": (0, 1),
-    "LEFT": (0, 2),
-    "RIGHT": (0, 3),
+    # SG-IO-E017 button wiring rotates these three physical channels.
+    "LEFT": (0, 1),
+    "RIGHT": (0, 2),
+    "DOWN": (0, 3),
     "A": (0, 4),
     "B": (0, 5),
     "X": (0, 6),
