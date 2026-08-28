@@ -122,6 +122,8 @@ MODEM_REPORT = DATA / "modem-doctor.txt"
 MODEM_REPORT_TMP = Path("/tmp/digivice-modem-doctor.txt")
 AUDIO_REPORT = DATA / "audio-doctor.txt"
 AUDIO_REPORT_TMP = Path("/tmp/digivice-audio-doctor.txt")
+MEDIA_REPORT = DATA / "media-doctor.txt"
+MEDIA_REPORT_TMP = Path("/tmp/digivice-media-doctor.txt")
 SIP_REPORT = DATA / "sip-doctor.txt"
 SIP_REPORT_TMP = Path("/tmp/digivice-sip-doctor.txt")
 
@@ -144,6 +146,72 @@ def _audio_report_path() -> Optional[Path]:
         except OSError:
             continue
     return None
+
+
+def _media_report_path() -> Optional[Path]:
+    for p in (MEDIA_REPORT, MEDIA_REPORT_TMP, Path.home() / "esp-phone" / "media-doctor-LATEST.txt"):
+        try:
+            if p.is_file() and p.stat().st_size > 0:
+                return p
+        except OSError:
+            continue
+    return None
+
+
+def _cart_video_path() -> Optional[Path]:
+    """Pick a mounted cart video so Prep can include ffprobe details."""
+    try:
+        from esp_handset.cartridge import refresh
+
+        state = refresh(force=True)
+        cart = state.cart
+        if cart is None:
+            return None
+        for movie in cart.movies:
+            if movie.path.is_file():
+                return movie.path
+        for show in cart.tv:
+            for season in show.seasons:
+                for episode in season.episodes:
+                    if episode.path.is_file():
+                        return episode.path
+    except Exception:
+        pass
+    return None
+
+
+def _refresh_media_report() -> Tuple[bool, str]:
+    video = _cart_video_path()
+    commands = [["digivice-media-doctor"]]
+    if video is not None:
+        commands[0].append(str(video))
+    commands += [
+        ["sudo", "-n", *commands[0]],
+        ["bash", "/opt/esp-handset/session/digivice-media-doctor.sh"]
+        + ([str(video)] if video is not None else []),
+    ]
+    last = "doctor not installed"
+    for cmd in commands:
+        try:
+            r = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=120,
+                check=False,
+            )
+            if r.returncode == 0 or _media_report_path() is not None:
+                p = _media_report_path()
+                return True, f"Report ready ({p.name if p else 'ok'})"
+            last = (r.stderr or r.stdout or last).strip()[:100] or last
+        except FileNotFoundError:
+            continue
+        except Exception as e:
+            last = str(e)[:100]
+    p = _media_report_path()
+    if p is not None:
+        return True, f"Using existing {p.name}"
+    return False, last
 
 
 def _refresh_modem_report() -> Tuple[bool, str]:
@@ -436,6 +504,9 @@ def _make_handler(get_dest: Callable[[], str], signals: _UploadSignals):
             if path in ("/diag/audio", "/diag/audio.txt", "/audio-doctor.txt"):
                 self._serve_audio_report(download=path.endswith(".txt"))
                 return
+            if path in ("/diag/media", "/diag/media.txt", "/media-doctor.txt"):
+                self._serve_media_report(download=path.endswith(".txt"))
+                return
             if path in ("/diag/sip", "/diag/sip.txt", "/sip-doctor.txt"):
                 self._serve_sip_report(download=path.endswith(".txt"))
                 return
@@ -510,6 +581,14 @@ def _make_handler(get_dest: Callable[[], str], signals: _UploadSignals):
                     diag_note = "Ready"
             else:
                 diag_note = "Run Prep on Digivice first (or open after full-update)"
+            media_report = _media_report_path()
+            if media_report is not None:
+                try:
+                    media_note = f"Ready · {html.escape(time.strftime('%Y-%m-%d %H:%M', time.localtime(media_report.stat().st_mtime)))}"
+                except OSError:
+                    media_note = "Ready"
+            else:
+                media_note = "Run Prep media report on Digivice first"
             inner = f"""
 <nav><a href="/">Home</a></nav>
 <h1>Digivice · Transfer</h1>
@@ -528,6 +607,8 @@ def _make_handler(get_dest: Callable[[], str], signals: _UploadSignals):
 <a class="btn" style="display:block;" href="/diag/modem.txt">Download modem-doctor.txt</a>
 <a style="display:block;margin-top:8px;" href="/diag/modem">View in browser</a>
 <a class="btn" style="margin-top:10px;display:block;" href="/diag/audio.txt">Download audio-doctor.txt</a>
+<a class="btn" style="margin-top:10px;display:block;" href="/diag/media.txt">Download media-doctor.txt</a>
+<p class="muted">{media_note}</p>
 <a class="btn" style="margin-top:10px;display:block;" href="/diag/beep.txt">Download last-beep.txt</a>
 </div>
 
@@ -697,6 +778,42 @@ def _make_handler(get_dest: Callable[[], str], signals: _UploadSignals):
                 self.send_header(
                     "Content-Disposition",
                     'attachment; filename="audio-doctor.txt"',
+                )
+            self.end_headers()
+            self.wfile.write(data)
+
+        def _serve_media_report(self, *, download: bool) -> None:
+            path = _media_report_path()
+            if path is None:
+                ok, msg = _refresh_media_report()
+                path = _media_report_path() if ok else None
+                if path is None:
+                    body = (
+                        "No media-doctor.txt yet.\n\n"
+                        "On Digivice: Tools → Transfer → Prep media report,\n"
+                        "or run: digivice-media-doctor\n\n"
+                        f"({msg})\n"
+                    ).encode("utf-8")
+                    self.send_response(404)
+                    self.send_header("Content-Type", "text/plain; charset=utf-8")
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+                    signals.activity.emit("No media report yet")
+                    return
+            try:
+                data = path.read_bytes()
+            except OSError:
+                self.send_error(500)
+                return
+            signals.activity.emit("Sent media-doctor.txt")
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain; charset=utf-8")
+            self.send_header("Content-Length", str(len(data)))
+            if download:
+                self.send_header(
+                    "Content-Disposition",
+                    'attachment; filename="media-doctor.txt"',
                 )
             self.end_headers()
             self.wfile.write(data)
@@ -873,6 +990,9 @@ def make_wifi_transfer_page(
     prep_audio_btn = QPushButton("Prep audio report")
     prep_audio_btn.setFixedHeight(26)
     prep_audio_btn.setStyleSheet("font-size:11px;")
+    prep_media_btn = QPushButton("Prep media report")
+    prep_media_btn.setFixedHeight(26)
+    prep_media_btn.setStyleSheet("font-size:11px;")
     stop_btn = QPushButton("Stop")
     stop_btn.setFixedHeight(26)
     stop_btn.setEnabled(False)
@@ -884,6 +1004,7 @@ def make_wifi_transfer_page(
     lay.addWidget(prep_sip_btn)
     lay.addWidget(prep_btn)
     lay.addWidget(prep_audio_btn)
+    lay.addWidget(prep_media_btn)
     lay.addWidget(stop_btn)
 
     state = {"dest": initial_dest if initial_dest in DESTINATIONS else "photos"}
@@ -971,6 +1092,7 @@ def make_wifi_transfer_page(
         prep_sip_btn.setEnabled(not on)
         prep_btn.setEnabled(not on)
         prep_audio_btn.setEnabled(not on)
+        prep_media_btn.setEnabled(not on)
 
     def prep_sip() -> None:
         status.setText("Building SIP report…")
@@ -1002,6 +1124,16 @@ def make_wifi_transfer_page(
 
         threading.Thread(target=work, daemon=True).start()
 
+    def prep_media() -> None:
+        status.setText("Running media doctor…")
+        _prep_busy(True)
+
+        def work() -> None:
+            ok, msg = _refresh_media_report()
+            signals.prep_done.emit(ok, f"media:{msg}")
+
+        threading.Thread(target=work, daemon=True).start()
+
     def on_prep_done(ok: bool, msg: str) -> None:
         _prep_busy(False)
         if server_holder.get("httpd") is None:
@@ -1013,11 +1145,15 @@ def make_wifi_transfer_page(
         if msg.startswith("audio:"):
             kind = "audio"
             show = msg[6:]
+        elif msg.startswith("media:"):
+            kind = "media"
+            show = msg[6:]
         elif msg.startswith("sip:"):
             kind = "sip"
             show = msg[4:]
         path_ok = {
             "audio": _audio_report_path,
+            "media": _media_report_path,
             "sip": _sip_report_path,
             "modem": _modem_report_path,
         }[kind]()
@@ -1049,6 +1185,7 @@ def make_wifi_transfer_page(
     prep_sip_btn.clicked.connect(prep_sip)
     prep_btn.clicked.connect(prep_modem)
     prep_audio_btn.clicked.connect(prep_audio)
+    prep_media_btn.clicked.connect(prep_media)
     stop_btn.clicked.connect(
         lambda: (stop_server(), status.setText("Stopped. Start again when ready."))
     )
