@@ -141,14 +141,14 @@ def digivice_play(
 ) -> bool:
     """Play media Digivice-friendly: hand off HDMI, Pi hwdec, Back/Escape quits.
 
-    Digivice normally paints a stay-on-top HDMI host at ~30fps — that must pause
-    or mpv cannot use the display / GPU. ``start_sec`` seeks to a scene/chapter.
-    Subtitles: embedded + sidecars + optional ``sub_files``.
+    Start the player first; only hide Digivice hosts after mpv is alive so a
+    failed launch never leaves a postage-stamp 240x320 window on HDMI.
     """
     from shutil import which
+    import os
     import subprocess
-    import platform
     import threading
+    import time as _time
 
     path = Path(path)
     if not path.is_file():
@@ -161,9 +161,9 @@ def digivice_play(
         codec_info = ""
 
     subs: List[Path] = []
-    for p in list(sub_files or []) + find_sidecar_subtitles(path):
+    for pth in list(sub_files or []) + find_sidecar_subtitles(path):
         try:
-            rp = Path(p).resolve()
+            rp = Path(pth).resolve()
         except OSError:
             continue
         if rp.is_file() and rp not in subs:
@@ -188,8 +188,8 @@ def digivice_play(
 
     def _handoff_end() -> None:
         try:
-            from PyQt5.QtWidgets import QApplication
             from PyQt5.QtCore import QTimer
+            from PyQt5.QtWidgets import QApplication
 
             app = QApplication.instance()
             if app is None:
@@ -204,7 +204,6 @@ def digivice_play(
                         ctl.end_media_handoff()
                         return
 
-            # Always bounce back onto the Qt thread
             QTimer.singleShot(0, _restore)
         except Exception:
             pass
@@ -216,10 +215,7 @@ def digivice_play(
             pass
         _handoff_end()
 
-    _handoff_begin()
-
-    # Prefer mpv. Digivice Back is Escape via buttons_inputd.
-    if which("mpv"):
+    def _spawn_mpv() -> Optional[subprocess.Popen]:
         conf = Path.home() / ".cache" / "digivice-mpv-input.conf"
         try:
             conf.parent.mkdir(parents=True, exist_ok=True)
@@ -241,61 +237,28 @@ def digivice_play(
             except OSError:
                 conf = None
 
-        machine = (platform.machine() or "").lower()
-        on_pi = machine in ("aarch64", "armv7l", "armv6l")
-
-        # Pi: try V4L2 first (auto often soft-decodes). Comma list = fallback chain.
-        if on_pi:
-            hwdec = "v4l2m2m,v4l2m2m-copy,drm,auto"
-        else:
-            hwdec = "auto"
-
         cmd = [
             "mpv",
             "--fullscreen",
+            "--force-window=yes",
             "--ontop",
             "--osd-level=1",
             "--no-terminal",
             "--keep-open=no",
-            f"--hwdec={hwdec}",
-            "--hwdec-codecs=all",
+            "--hwdec=auto",
             "--vo=gpu",
-            "--gpu-context=auto",
-            "--gpu-hwdec-interop=auto",
             "--framedrop=vo",
-            "--video-latency-hacks=yes",
             "--cache=yes",
-            "--demuxer-readahead-secs=30",
-            "--demuxer-max-bytes=268435456",
-            "--vd-lavc-threads=0",
-            "--audio-buffer=0.2",
-            "--scale=bilinear",
-            "--cscale=bilinear",
-            "--dscale=bilinear",
-            "--correct-downscaling=no",
-            "--sigmoid-upscaling=no",
-            "--hdr-compute-peak=no",
-            "--msg-level=vd=warn,ffmpeg=warn",
-            # Subtitles on (embedded + sidecars + --sub-file)
             "--sub-visibility=yes",
             "--sub-auto=fuzzy",
-            "--subs-with-matching-audio=no",
             "--sub-font-size=48",
             "--sub-bold=yes",
             "--sub-border-size=2",
-            "--sub-shadow-offset=1",
             "--sub-color=#FFFFFFFF",
             "--sub-border-color=#000000FF",
         ]
         for sp in subs:
             cmd.append(f"--sub-file={sp}")
-        if on_pi:
-            cmd.extend(
-                [
-                    "--hwdec-extra-frames=12",
-                    "--video-sync=display-vdrop",
-                ]
-            )
         if start_sec is not None and start_sec > 0:
             cmd.append(f"--start={start_sec}")
         if conf is not None:
@@ -307,42 +270,52 @@ def digivice_play(
             log_path.parent.mkdir(parents=True, exist_ok=True)
             log_f = open(log_path, "w", encoding="utf-8")
             log_f.write(f"codec={codec_info or '?'}\n")
-            log_f.write(f"subs={', '.join(str(s) for s in subs) or '(auto/embedded)'}\n")
+            sub_note = ", ".join(str(s) for s in subs) or "(auto/embedded)"
+            log_f.write(f"subs={sub_note}\n")
             log_f.write(" ".join(cmd) + "\n\n")
             log_f.flush()
         except OSError:
             log_f = subprocess.DEVNULL
 
         try:
-            proc = subprocess.Popen(
+            return subprocess.Popen(
                 cmd,
                 stdout=subprocess.DEVNULL,
                 stderr=log_f,
                 start_new_session=True,
+                env=os.environ.copy(),
             )
-        except Exception:
-            _handoff_end()
+        except Exception as e:
+            try:
+                if log_f is not subprocess.DEVNULL:
+                    log_f.write(f"\nPopen failed: {e}\n")
+                    log_f.flush()
+            except Exception:
+                pass
+            return None
+
+    if which("mpv"):
+        proc = _spawn_mpv()
+        if proc is None:
             return False
+        _time.sleep(0.4)
+        if proc.poll() is not None:
+            try:
+                log_path = Path.home() / ".esp-handset" / "mpv-last.log"
+                with open(log_path, "a", encoding="utf-8") as lf:
+                    lf.write(f"\nmpv exited immediately code={proc.returncode}\n")
+            except OSError:
+                pass
+            return False
+        _handoff_begin()
         threading.Thread(target=_watch, args=(proc,), daemon=True).start()
         return True
 
     if which("ffplay"):
-        cmd = [
-            "ffplay",
-            "-fs",
-            "-autoexit",
-            "-window_title",
-            "Digivice",
-        ]
+        cmd = ["ffplay", "-fs", "-autoexit", "-window_title", "Digivice"]
         if start_sec is not None and start_sec > 0:
             cmd.extend(["-ss", str(start_sec)])
-        # Pi ffmpeg often has v4l2m2m decoders
-        if "hevc" in (codec_info or "").lower() or "h265" in (codec_info or "").lower():
-            cmd.extend(["-c:v", "hevc_v4l2m2m"])
-        elif "h264" in (codec_info or "").lower() or "avc" in (codec_info or "").lower():
-            cmd.extend(["-c:v", "h264_v4l2m2m"])
         if subs:
-            # ffplay subtitle filter — escape colons in Windows-style paths unused on Pi
             cmd.extend(["-vf", f"subtitles={subs[0]}"])
         cmd.append(str(path))
         try:
@@ -353,8 +326,11 @@ def digivice_play(
                 start_new_session=True,
             )
         except Exception:
-            _handoff_end()
             return False
+        _time.sleep(0.3)
+        if proc.poll() is not None:
+            return False
+        _handoff_begin()
         threading.Thread(target=_watch, args=(proc,), daemon=True).start()
         return True
 
@@ -366,7 +342,6 @@ def digivice_play(
             "--no-video-title-show",
             "--no-qt-fs-controller",
             "--qt-notification=0",
-            "--no-osd",
             "--avcodec-hw=any",
             "--sub-track=0",
         ]
@@ -383,12 +358,14 @@ def digivice_play(
                 start_new_session=True,
             )
         except Exception:
-            _handoff_end()
             return False
+        _time.sleep(0.3)
+        if proc.poll() is not None:
+            return False
+        _handoff_begin()
         threading.Thread(target=_watch, args=(proc,), daemon=True).start()
         return True
 
-    _handoff_end()
     if which("xdg-open"):
         subprocess.Popen(
             ["xdg-open", str(path)],

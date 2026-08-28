@@ -404,7 +404,11 @@ class MultiDisplayKiosk:
                 pass
 
     def begin_media_handoff(self) -> None:
-        """Release HDMI/SPI so mpv (or similar) can own the display."""
+        """Release HDMI/SPI so mpv (or similar) can own the display.
+
+        Important: also hide the 240×320 source — otherwise HDMI shows a
+        postage-stamp Digivice when hosts are hidden.
+        """
         self._media_handoff = True
         set_heavy_ui(True)
         try:
@@ -419,14 +423,19 @@ class MultiDisplayKiosk:
                 pass
         for h in self.hosts:
             try:
+                # Drop stay-on-top so the player can cover HDMI
+                h.setWindowFlags(Qt.Window | Qt.FramelessWindowHint)
                 h.hide()
             except Exception:
-                pass
+                try:
+                    h.hide()
+                except Exception:
+                    pass
         try:
-            self.source.lower()
+            self.source.hide()
         except Exception:
             pass
-        print("[handset] media handoff ON — HDMI hosts hidden for player", flush=True)
+        print("[handset] media handoff ON — hosts+source hidden for player", flush=True)
 
     def end_media_handoff(self) -> None:
         """Restore Digivice HDMI/SPI after external player exits."""
@@ -434,11 +443,24 @@ class MultiDisplayKiosk:
             return
         self._media_handoff = False
         set_heavy_ui(False)
+        try:
+            self.source.show()
+            self.source.lower()
+        except Exception:
+            pass
         for h in self.hosts:
             try:
+                # Restore stay-on-top fullscreen hosts
+                h.setWindowFlags(
+                    Qt.Window | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint
+                )
                 h.place()
             except Exception:
-                pass
+                try:
+                    h.show()
+                    h.showFullScreen()
+                except Exception:
+                    pass
         if self.spi is not None and getattr(self.spi, "_active", False):
             try:
                 if self.spi._timer is not None:
