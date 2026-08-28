@@ -80,6 +80,11 @@ ADDR="${DIGIVICE_MCP_ADDR:-0x20}"
 import esp_handset.mcp23017 as m
 
 print(f"module_bus={m._BUS} module_address=0x{m._ADDR:02x}")
+detected = m.detect_address()
+print(
+    "detected_address="
+    + (f"0x{detected:02x}" if detected is not None else "NONE")
+)
 state = m.read_state()
 if state is None:
     print("read_state=FAILED")

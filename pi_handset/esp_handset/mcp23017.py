@@ -7,7 +7,8 @@ import time
 from dataclasses import dataclass
 from typing import Dict, Optional, Tuple
 
-_ADDR = int(os.environ.get("DIGIVICE_MCP_ADDR", "0x20"), 0)
+_ADDR_OVERRIDE = os.environ.get("DIGIVICE_MCP_ADDR", "").strip()
+_ADDR = int(_ADDR_OVERRIDE or "0x20", 0)
 _BUS = int(os.environ.get("DIGIVICE_MCP_I2C_BUS", "1"))
 
 # MCP23017 registers
@@ -80,15 +81,41 @@ def _open_bus():
         return smbus.SMBus(_BUS)
 
 
-def _write(bus, reg: int, val: int) -> None:
-    bus.write_byte_data(_ADDR, reg, val & 0xFF)
+def _write(bus, reg: int, val: int, address: Optional[int] = None) -> None:
+    bus.write_byte_data(
+        _ADDR if address is None else address,
+        reg,
+        val & 0xFF,
+    )
 
 
-def _read(bus, reg: int) -> int:
-    return bus.read_byte_data(_ADDR, reg) & 0xFF
+def _read(bus, reg: int, address: Optional[int] = None) -> int:
+    return bus.read_byte_data(_ADDR if address is None else address, reg) & 0xFF
 
 
-def init(bus=None) -> bool:
+def _probe_address(bus) -> Optional[int]:
+    candidates = (_ADDR,) if _ADDR_OVERRIDE else tuple(range(0x20, 0x28))
+    for address in candidates:
+        try:
+            bus.read_byte_data(address, _GPIOA)
+            return address
+        except OSError:
+            continue
+    return None
+
+
+def detect_address() -> Optional[int]:
+    try:
+        bus = _open_bus()
+        try:
+            return _probe_address(bus)
+        finally:
+            bus.close()
+    except OSError:
+        return None
+
+
+def init(bus=None, address: Optional[int] = None) -> bool:
     """Configure MCP: inputs with pull-ups; GPB6/7 outputs low."""
     own = bus is None
     if own:
@@ -97,11 +124,11 @@ def init(bus=None) -> bool:
         except OSError:
             return False
     try:
-        _write(bus, _IODIRA, _INPUT_MASK_A)
-        _write(bus, _IODIRB, _INPUT_MASK_B | _OUTPUT_MASK_B)
-        _write(bus, _GPPUA, _INPUT_MASK_A)
-        _write(bus, _GPPUB, _INPUT_MASK_B)
-        _write(bus, _OLATB, 0x00)
+        _write(bus, _IODIRA, _INPUT_MASK_A, address)
+        _write(bus, _IODIRB, _INPUT_MASK_B | _OUTPUT_MASK_B, address)
+        _write(bus, _GPPUA, _INPUT_MASK_A, address)
+        _write(bus, _GPPUB, _INPUT_MASK_B, address)
+        _write(bus, _OLATB, 0x00, address)
         return True
     except OSError:
         return False
@@ -126,10 +153,11 @@ def read_state() -> Optional[McpState]:
     try:
         bus = _open_bus()
         try:
-            if not init(bus):
+            address = _probe_address(bus)
+            if address is None or not init(bus, address):
                 return None
-            a = _read(bus, _GPIOA)
-            b = _read(bus, _GPIOB)
+            a = _read(bus, _GPIOA, address)
+            b = _read(bus, _GPIOB, address)
         finally:
             try:
                 bus.close()
@@ -161,14 +189,15 @@ def set_output(name: str, on: bool) -> bool:
     try:
         bus = _open_bus()
         try:
-            if not init(bus):
+            address = _probe_address(bus)
+            if address is None or not init(bus, address):
                 return False
-            olat = _read(bus, _OLATB)
+            olat = _read(bus, _OLATB, address)
             if on:
                 olat |= 1 << bit
             else:
                 olat &= ~(1 << bit)
-            _write(bus, _OLATB, olat)
+            _write(bus, _OLATB, olat, address)
             return True
         finally:
             try:
@@ -183,8 +212,7 @@ def present() -> bool:
     try:
         bus = _open_bus()
         try:
-            bus.read_byte_data(_ADDR, _GPIOA)
-            return True
+            return _probe_address(bus) is not None
         finally:
             try:
                 bus.close()

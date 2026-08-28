@@ -204,7 +204,8 @@ Settings → Update runs `digivice-suppress-usb-prompt`, which sets PCManFM **`a
 
 Paths in the manifest are **relative to the USB root**. Use forward slashes.
 For Game Boy Color, use `"system": "gb"` (the compatibility alias `"gbc"` is
-also accepted).
+also accepted). The MCP23017 input backend auto-detects addresses `0x20`–`0x27`,
+including the SG-IO-E017 board's factory `0x27` setting.
 
 ## Supported media extensions
 
