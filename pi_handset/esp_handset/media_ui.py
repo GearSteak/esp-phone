@@ -429,6 +429,7 @@ def digivice_play(
             "--no-video-deco",
             "--video-on-top",
             "--key-quit=Esc",
+            "--key-leave-fullscreen=F11",
             "--play-and-exit",
             "--no-video-title-show",
             "--no-qt-fs-controller",
