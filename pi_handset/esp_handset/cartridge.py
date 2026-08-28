@@ -14,6 +14,11 @@ VALID_KINDS = frozenset({"games", "music", "movies", "tv", "audiobooks"})
 VALID_SYSTEMS = frozenset(
     {"gb", "nes", "smsgg", "gba", "snes", "genesis", "ps1"}
 )
+_SYSTEM_ALIASES = {
+    "gbc": "gb",
+    "gameboy": "gb",
+    "gameboycolor": "gb",
+}
 _GAME_DIRS = {
     "gb": "gb",
     "nes": "nes",
@@ -129,7 +134,7 @@ class Cartridge:
         return kind in self.kinds
 
     def games_for_system(self, system: str) -> List[CartGame]:
-        key = system.lower()
+        key = _SYSTEM_ALIASES.get(system.lower(), system.lower())
         listed = [g for g in self.games if g.system == key and g.path.is_file()]
         if listed:
             return listed
@@ -148,7 +153,23 @@ class Cartridge:
                 if p.is_file() and p.suffix.lower() in extensions
             ]
         except OSError:
-            return []
+            discovered = []
+        if not discovered:
+            # Also tolerate a cart whose ROM was copied under roms/ or its
+            # root instead of the documented per-system folder.
+            try:
+                discovered = [
+                    p
+                    for p in sorted(self.root.rglob("*"), key=lambda p: str(p).casefold())
+                    if p.is_file()
+                    and p.suffix.lower() in extensions
+                    and not any(
+                        part.casefold() in {"covers", "menu"}
+                        for part in p.relative_to(self.root).parts[:-1]
+                    )
+                ]
+            except (OSError, ValueError):
+                discovered = []
         return [
             CartGame(title=p.stem, system=key, path=p)
             for p in discovered
@@ -319,6 +340,7 @@ def _parse_manifest(root: Path, data: Dict[str, Any]) -> Cartridge:
         if not isinstance(entry, dict):
             continue
         sys_key = str(entry.get("system") or "").strip().lower()
+        sys_key = _SYSTEM_ALIASES.get(sys_key, sys_key)
         rel = str(entry.get("path") or "").strip()
         gtitle = str(entry.get("title") or Path(rel).stem or "Game").strip()
         if sys_key not in VALID_SYSTEMS or not rel:

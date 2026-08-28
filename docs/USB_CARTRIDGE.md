@@ -203,6 +203,8 @@ Settings → Update runs `digivice-suppress-usb-prompt`, which sets PCManFM **`a
 | `ps1` | PlayStation (digital pad) |
 
 Paths in the manifest are **relative to the USB root**. Use forward slashes.
+For Game Boy Color, use `"system": "gb"` (the compatibility alias `"gbc"` is
+also accepted).
 
 ## Supported media extensions
 

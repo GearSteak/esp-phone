@@ -176,7 +176,11 @@ def make_cart_games_page(on_back: Callable[[], None]) -> QWidget:
             system = SYSTEMS[game.system]
             lst.addItem(QListWidgetItem(f"{game.title}  ·  {system.title}"))
         if not games:
-            lst.addItem(QListWidgetItem("No valid games on cartridge"))
+            lst.addItem(
+                QListWidgetItem(
+                    "No valid games (use .gb/.gbc in roms/gb or cart root)"
+                )
+            )
             return
         if len(games) == 1:
             QTimer.singleShot(0, lambda game=games[0]: launch(game))
