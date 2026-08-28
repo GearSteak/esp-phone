@@ -14,6 +14,24 @@ VALID_KINDS = frozenset({"games", "music", "movies", "tv", "audiobooks"})
 VALID_SYSTEMS = frozenset(
     {"gb", "nes", "smsgg", "gba", "snes", "genesis", "ps1"}
 )
+_GAME_DIRS = {
+    "gb": "gb",
+    "nes": "nes",
+    "smsgg": "sms",
+    "gba": "gba",
+    "snes": "snes",
+    "genesis": "genesis",
+    "ps1": "ps1",
+}
+_GAME_EXTENSIONS = {
+    "gb": (".gb", ".gbc", ".sgb"),
+    "nes": (".nes", ".fds", ".unf", ".unif", ".nsf"),
+    "smsgg": (".sms", ".gg", ".sg"),
+    "gba": (".gba",),
+    "snes": (".sfc", ".smc", ".swc", ".fig"),
+    "genesis": (".md", ".bin", ".gen", ".smd"),
+    "ps1": (".bin", ".cue", ".pbp", ".chd"),
+}
 
 # Where the OS automounts removable media
 _MOUNT_ROOTS = (
@@ -112,7 +130,29 @@ class Cartridge:
 
     def games_for_system(self, system: str) -> List[CartGame]:
         key = system.lower()
-        return [g for g in self.games if g.system == key and g.path.is_file()]
+        listed = [g for g in self.games if g.system == key and g.path.is_file()]
+        if listed:
+            return listed
+
+        # Be forgiving when a one-game cart still has the template path but
+        # the ROM was copied under its real dump filename.
+        folder = _GAME_DIRS.get(key)
+        extensions = _GAME_EXTENSIONS.get(key, ())
+        if folder is None:
+            return []
+        root = self.root / "roms" / folder
+        try:
+            discovered = [
+                p
+                for p in sorted(root.iterdir(), key=lambda p: p.name.casefold())
+                if p.is_file() and p.suffix.lower() in extensions
+            ]
+        except OSError:
+            return []
+        return [
+            CartGame(title=p.stem, system=key, path=p)
+            for p in discovered
+        ]
 
 
 @dataclass

@@ -61,11 +61,10 @@ def games_home_logo() -> Optional[Path]:
 def _valid_games(cart: Optional[Cartridge]) -> List[CartGame]:
     if cart is None:
         return []
-    return [
-        game
-        for game in cart.games
-        if game.system in SYSTEMS and game.path.is_file()
-    ]
+    games: List[CartGame] = []
+    for system in SYSTEMS:
+        games.extend(cart.games_for_system(system))
+    return games
 
 
 def make_cart_games_page(on_back: Callable[[], None]) -> QWidget:

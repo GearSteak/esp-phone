@@ -74,6 +74,10 @@ Minimal **games-only** cart:
 }
 ```
 
+The manifest path should match the ROM. If a one-game cart still has the
+template path, Digivice can fall back to a compatible ROM copied under the
+declared system folder (for example `roms/gb/`).
+
 **Media + games** cart with DVD-style movie menu:
 
 ```json
