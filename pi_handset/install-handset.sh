@@ -34,6 +34,7 @@ apt-get install -y \
   xdotool \
   python3-picamera2 \
   rpicam-apps \
+  mpv \
   linphone-cli \
   pipewire pipewire-audio wireplumber \
   alsa-utils \

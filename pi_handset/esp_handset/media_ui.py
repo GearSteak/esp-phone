@@ -386,12 +386,21 @@ def digivice_play(
 
     if which("ffplay"):
         cmd = ["ffplay", "-fs", "-autoexit", "-window_title", "Digivice"]
+        # Raspberry Pi 4 HEVC uses the stateless DRM request API.  Without
+        # this, the Debian ffplay fallback decodes 10-bit HEVC on the CPU.
+        if codec_info.lower().startswith("hevc"):
+            cmd[1:1] = ["-hwaccel", "drm", "-hwaccel_output_format", "drm_prime"]
+        else:
+            cmd[1:1] = ["-hwaccel", "auto"]
         if start_sec is not None and start_sec > 0:
             cmd.extend(["-ss", str(start_sec)])
         if subs:
             cmd.extend(["-vf", f"subtitles={subs[0]}"])
         cmd.append(str(path))
-        return _start_player(cmd)
+        return _start_player(
+            cmd,
+            log_path=Path.home() / ".esp-handset" / "ffplay-last.log",
+        )
 
     if which("vlc"):
         cmd = [

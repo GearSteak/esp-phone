@@ -23,6 +23,7 @@ OUT2="/tmp/digivice-media-doctor.txt"
 VIDEO="${1:-}"
 PREFIX="${ESP_HANDSET_PREFIX:-/opt/esp-handset}"
 MPV_LOG="$OUT_DIR/mpv-last.log"
+FFPLAY_LOG="$OUT_DIR/ffplay-last.log"
 
 show_file_tail() {
   local path="$1"
@@ -80,6 +81,9 @@ show_file_tail() {
 
   echo "--- last mpv log ---"
   show_file_tail "$MPV_LOG" 220
+  echo
+  echo "--- last ffplay log ---"
+  show_file_tail "$FFPLAY_LOG" 220
   echo
 
   echo "--- USB topology ---"

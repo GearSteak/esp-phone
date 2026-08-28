@@ -96,6 +96,7 @@ apt-get install -y \
   imagemagick \
   i2c-tools xdotool xbitmaps x11-xserver-utils \
   wmctrl fonts-dejavu-core \
+  mpv \
   alsa-utils \
   2>&1 | tee -a "$LOG" | tail -n 20
 
