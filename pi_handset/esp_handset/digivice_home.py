@@ -151,7 +151,7 @@ class DigiviceHome(QWidget):
                     p.setBrush(QColor("#FFE600"))
                     p.setPen(QPen(QColor("#000000"), 2))
                     p.drawPolygon(tri)
-                art = self._stage_art.get(e.key) if focused else None
+                art = self._stage_art.get(e.key)
                 if art is not None and not art.isNull():
                     icon = art.scaled(
                         max(8, r * 2 - 6),
