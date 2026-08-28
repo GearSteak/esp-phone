@@ -24,6 +24,7 @@ VIDEO="${1:-}"
 PREFIX="${ESP_HANDSET_PREFIX:-/opt/esp-handset}"
 MPV_LOG="$OUT_DIR/mpv-last.log"
 FFPLAY_LOG="$OUT_DIR/ffplay-last.log"
+VLC_LOG="$OUT_DIR/vlc-last.log"
 
 show_file_tail() {
   local path="$1"
@@ -84,6 +85,9 @@ show_file_tail() {
   echo
   echo "--- last ffplay log ---"
   show_file_tail "$FFPLAY_LOG" 220
+  echo
+  echo "--- last VLC log ---"
+  show_file_tail "$VLC_LOG" 220
   echo
 
   echo "--- USB topology ---"

@@ -384,13 +384,17 @@ def digivice_play(
         log_path = _mpv_log_path()
         return _start_player(_build_mpv_cmd(), log_path=log_path)
 
-    if which("ffplay"):
+    # Debian ffplay does not expose the DRM-prime output option required for
+    # Pi 4 HEVC.  Prefer VLC's automatic hardware path for HEVC when mpv is
+    # not installed instead of launching ffplay with an invalid option.
+    use_ffplay = which("ffplay")
+    if codec_info.lower().startswith("hevc") and which("vlc"):
+        use_ffplay = None
+    if use_ffplay:
         cmd = ["ffplay", "-fs", "-autoexit", "-window_title", "Digivice"]
-        # Raspberry Pi 4 HEVC uses the stateless DRM request API.  Without
-        # this, the Debian ffplay fallback decodes 10-bit HEVC on the CPU.
-        if codec_info.lower().startswith("hevc"):
-            cmd[1:1] = ["-hwaccel", "drm", "-hwaccel_output_format", "drm_prime"]
-        else:
+        # ffplay's generic acceleration is useful for codecs such as H.264.
+        # Its Debian build cannot display Pi HEVC DRM-prime frames directly.
+        if not codec_info.lower().startswith("hevc"):
             cmd[1:1] = ["-hwaccel", "auto"]
         if start_sec is not None and start_sec > 0:
             cmd.extend(["-ss", str(start_sec)])
@@ -418,7 +422,10 @@ def digivice_play(
         for sp in subs:
             cmd.extend(["--sub-file", str(sp)])
         cmd.append(str(path))
-        return _start_player(cmd)
+        return _start_player(
+            cmd,
+            log_path=Path.home() / ".esp-handset" / "vlc-last.log",
+        )
 
     if which("xdg-open"):
         subprocess.Popen(
