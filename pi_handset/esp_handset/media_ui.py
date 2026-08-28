@@ -169,53 +169,46 @@ def digivice_play(
         if rp.is_file() and rp not in subs:
             subs.append(rp)
 
-    def _handoff_begin() -> None:
+    def _find_kiosk():
         try:
             from PyQt5.QtWidgets import QApplication
 
             app = QApplication.instance()
             if app is None:
-                return
+                return None
             for w in app.topLevelWidgets():
                 ctl = getattr(w, "_kiosk_controller", None) or getattr(
                     w, "_multi_presenter", None
                 )
-                if ctl is not None and hasattr(ctl, "begin_media_handoff"):
-                    ctl.begin_media_handoff()
-                    return
+                if ctl is not None:
+                    return ctl
         except Exception:
             pass
+        return None
+
+    def _handoff_begin() -> None:
+        ctl = _find_kiosk()
+        if ctl is not None and hasattr(ctl, "begin_media_handoff"):
+            ctl.begin_media_handoff()
 
     def _handoff_end() -> None:
-        try:
-            from PyQt5.QtCore import QTimer
-            from PyQt5.QtWidgets import QApplication
+        ctl = _find_kiosk()
+        if ctl is None:
+            return
+        # Must run on Qt main thread — request_media_restore queues end_media_handoff
+        if hasattr(ctl, "request_media_restore"):
+            ctl.request_media_restore()
+        elif hasattr(ctl, "end_media_handoff"):
+            ctl.end_media_handoff()
 
-            app = QApplication.instance()
-            if app is None:
-                return
-
-            def _restore() -> None:
-                for w in app.topLevelWidgets():
-                    ctl = getattr(w, "_kiosk_controller", None) or getattr(
-                        w, "_multi_presenter", None
-                    )
-                    if ctl is not None and hasattr(ctl, "end_media_handoff"):
-                        ctl.end_media_handoff()
-                        return
-
-            QTimer.singleShot(0, _restore)
-        except Exception:
-            pass
-
-    def _watch(proc: subprocess.Popen) -> None:
+    def _watch_subprocess(proc: subprocess.Popen) -> None:
         try:
             proc.wait()
         except Exception:
             pass
         _handoff_end()
 
-    def _spawn_mpv() -> Optional[subprocess.Popen]:
+    def _build_mpv_cmd() -> List[str]:
         conf = Path.home() / ".cache" / "digivice-mpv-input.conf"
         try:
             conf.parent.mkdir(parents=True, exist_ok=True)
@@ -264,21 +257,92 @@ def digivice_play(
         if conf is not None:
             cmd.append(f"--input-conf={conf}")
         cmd.append(str(path))
+        return cmd
 
+    def _mpv_log_path() -> Path:
         log_path = Path.home() / ".esp-handset" / "mpv-last.log"
         try:
             log_path.parent.mkdir(parents=True, exist_ok=True)
-            log_f = open(log_path, "w", encoding="utf-8")
-            log_f.write(f"codec={codec_info or '?'}\n")
-            sub_note = ", ".join(str(s) for s in subs) or "(auto/embedded)"
-            log_f.write(f"subs={sub_note}\n")
-            log_f.write(" ".join(cmd) + "\n\n")
-            log_f.flush()
+            with open(log_path, "w", encoding="utf-8") as lf:
+                lf.write(f"codec={codec_info or '?'}\n")
+                sub_note = ", ".join(str(s) for s in subs) or "(auto/embedded)"
+                lf.write(f"subs={sub_note}\n")
         except OSError:
-            log_f = subprocess.DEVNULL
+            pass
+        return log_path
+
+    def _start_player(cmd: List[str], *, log_path: Optional[Path] = None) -> bool:
+        """Launch player; hide Digivice after it is alive; restore when it exits."""
+        if not cmd:
+            return False
 
         try:
-            return subprocess.Popen(
+            from PyQt5.QtCore import QProcess, QTimer
+            from PyQt5.QtWidgets import QApplication
+
+            app = QApplication.instance()
+        except Exception:
+            app = None
+
+        if app is not None:
+            proc = QProcess(app)
+            app._digivice_player = proc  # prevent GC while playing
+
+            handoff_done = {"ok": False}
+
+            def _maybe_handoff() -> None:
+                if handoff_done["ok"]:
+                    return
+                if proc.state() == QProcess.NotRunning:
+                    return
+                handoff_done["ok"] = True
+                _handoff_begin()
+
+            def _on_finished(_code: int, _status: QProcess.ExitStatus) -> None:
+                try:
+                    del app._digivice_player
+                except Exception:
+                    pass
+                _handoff_end()
+
+            proc.finished.connect(_on_finished)
+            proc.started.connect(lambda: QTimer.singleShot(400, _maybe_handoff))
+
+            if log_path is not None:
+                try:
+                    with open(log_path, "a", encoding="utf-8") as lf:
+                        lf.write(" ".join(cmd) + "\n\n")
+                except OSError:
+                    pass
+                proc.setStandardOutputFile(os.devnull)
+                proc.setStandardErrorFile(str(log_path))
+            else:
+                proc.setStandardOutputFile(os.devnull)
+                proc.setStandardErrorFile(os.devnull)
+
+            proc.start(cmd[0], cmd[1:])
+
+            def _check_fail() -> None:
+                if proc.state() == QProcess.NotRunning and not handoff_done["ok"]:
+                    try:
+                        if log_path is not None:
+                            with open(log_path, "a", encoding="utf-8") as lf:
+                                lf.write(
+                                    f"\nplayer exited immediately code={proc.exitCode()}\n"
+                                )
+                    except OSError:
+                        pass
+
+            QTimer.singleShot(500, _check_fail)
+            return True
+
+        try:
+            log_f = subprocess.DEVNULL
+            if log_path is not None:
+                log_f = open(log_path, "a", encoding="utf-8")
+                log_f.write(" ".join(cmd) + "\n\n")
+                log_f.flush()
+            proc = subprocess.Popen(
                 cmd,
                 stdout=subprocess.DEVNULL,
                 stderr=log_f,
@@ -287,29 +351,29 @@ def digivice_play(
             )
         except Exception as e:
             try:
-                if log_f is not subprocess.DEVNULL:
-                    log_f.write(f"\nPopen failed: {e}\n")
-                    log_f.flush()
-            except Exception:
+                if log_path is not None:
+                    with open(log_path, "a", encoding="utf-8") as lf:
+                        lf.write(f"\nPopen failed: {e}\n")
+            except OSError:
                 pass
-            return None
-
-    if which("mpv"):
-        proc = _spawn_mpv()
-        if proc is None:
             return False
+
         _time.sleep(0.4)
         if proc.poll() is not None:
             try:
-                log_path = Path.home() / ".esp-handset" / "mpv-last.log"
-                with open(log_path, "a", encoding="utf-8") as lf:
-                    lf.write(f"\nmpv exited immediately code={proc.returncode}\n")
+                if log_path is not None:
+                    with open(log_path, "a", encoding="utf-8") as lf:
+                        lf.write(f"\nplayer exited immediately code={proc.returncode}\n")
             except OSError:
                 pass
             return False
         _handoff_begin()
-        threading.Thread(target=_watch, args=(proc,), daemon=True).start()
+        threading.Thread(target=_watch_subprocess, args=(proc,), daemon=True).start()
         return True
+
+    if which("mpv"):
+        log_path = _mpv_log_path()
+        return _start_player(_build_mpv_cmd(), log_path=log_path)
 
     if which("ffplay"):
         cmd = ["ffplay", "-fs", "-autoexit", "-window_title", "Digivice"]
@@ -318,21 +382,7 @@ def digivice_play(
         if subs:
             cmd.extend(["-vf", f"subtitles={subs[0]}"])
         cmd.append(str(path))
-        try:
-            proc = subprocess.Popen(
-                cmd,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                start_new_session=True,
-            )
-        except Exception:
-            return False
-        _time.sleep(0.3)
-        if proc.poll() is not None:
-            return False
-        _handoff_begin()
-        threading.Thread(target=_watch, args=(proc,), daemon=True).start()
-        return True
+        return _start_player(cmd)
 
     if which("vlc"):
         cmd = [
@@ -350,21 +400,7 @@ def digivice_play(
         for sp in subs:
             cmd.extend(["--sub-file", str(sp)])
         cmd.append(str(path))
-        try:
-            proc = subprocess.Popen(
-                cmd,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                start_new_session=True,
-            )
-        except Exception:
-            return False
-        _time.sleep(0.3)
-        if proc.poll() is not None:
-            return False
-        _handoff_begin()
-        threading.Thread(target=_watch, args=(proc,), daemon=True).start()
-        return True
+        return _start_player(cmd)
 
     if which("xdg-open"):
         subprocess.Popen(

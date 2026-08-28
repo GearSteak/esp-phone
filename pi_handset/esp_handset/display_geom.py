@@ -303,6 +303,16 @@ class MultiDisplayKiosk:
         self._timer = QTimer()
         self._timer.setInterval(33)
         self._timer.timeout.connect(self._tick)
+        self._media_handoff = False
+
+    def request_media_restore(self) -> None:
+        """Thread-safe: queue restore on the Qt main thread."""
+        try:
+            from PyQt5.QtCore import QTimer
+
+            QTimer.singleShot(0, self.end_media_handoff)
+        except Exception:
+            self.end_media_handoff()
 
     def start(self) -> None:
         global W, H
@@ -446,19 +456,22 @@ class MultiDisplayKiosk:
         try:
             self.source.show()
             self.source.lower()
+            self.source.raise_()
         except Exception:
             pass
         for h in self.hosts:
             try:
-                # Restore stay-on-top fullscreen hosts
+                # Restore stay-on-top fullscreen hosts (show() required after flag change)
                 h.setWindowFlags(
                     Qt.Window | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint
                 )
+                h.show()
                 h.place()
             except Exception:
                 try:
                     h.show()
                     h.showFullScreen()
+                    h.raise_()
                 except Exception:
                     pass
         if self.spi is not None and getattr(self.spi, "_active", False):
@@ -472,6 +485,12 @@ class MultiDisplayKiosk:
         except Exception:
             pass
         self._raise_hosts()
+        try:
+            from PyQt5.QtWidgets import QApplication
+
+            QApplication.processEvents()
+        except Exception:
+            pass
         print("[handset] media handoff OFF — Digivice hosts restored", flush=True)
 
     def _tick(self) -> None:
