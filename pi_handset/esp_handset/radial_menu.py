@@ -180,7 +180,7 @@ class RadialMenu(QWidget):
                     bubble_size,
                     bubble_size,
                     Qt.IgnoreAspectRatio,
-                    Qt.SmoothTransformation,
+                    Qt.FastTransformation,
                 )
                 p.save()
                 p.setOpacity(max(0.4, alpha / 255.0))
@@ -203,7 +203,7 @@ class RadialMenu(QWidget):
                     icon_size,
                     icon_size,
                     Qt.KeepAspectRatio,
-                    Qt.SmoothTransformation,
+                    Qt.FastTransformation,
                 )
                 p.drawPixmap(
                     int(x - scaled_icon.width() // 2),
