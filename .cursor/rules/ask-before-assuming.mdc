@@ -1,0 +1,39 @@
+---
+description: Ask the user before assuming hardware, wiring, buses, or product intent
+alwaysApply: true
+---
+
+# Ask first — do not assume
+
+Never invent or guess Digivice / project facts. If something is not explicitly stated in the current message, open docs the user pointed at, or a prior confirmed answer in this chat, **ask**.
+
+## Always ask before deciding
+
+- Which bus or port something uses (USB, I2C, UART, soft-UART, SPI)
+- What is already plugged in or drawing power
+- Pin numbers, BCM numbers, or remaps
+- Whether a device is battery-powered, hub-powered, or Pi-powered
+- Preferred approach when more than one option exists
+- Scope of a change (docs only vs firmware vs Pi app)
+- Pushing, flashing, or running install scripts on the Pi
+
+## Do not
+
+- Pick “recommended” wiring because it is common elsewhere
+- Reuse an earlier chat’s stack if the user may have changed it
+- Implement a full alternate path and document it as settled without confirmation
+- Quietly override user constraints (power, fuse, occupied buses)
+
+## How to ask
+
+- Short, concrete questions (one decision per question when possible)
+- List the options you see and wait for a choice
+- Only implement after the user answers
+
+## Commit by default
+
+- After completing an implementation, commit the relevant changes unless the
+  user explicitly says not to commit.
+- Keep unrelated modifications, unknown files, backups, and secrets out of the
+  commit.
+- Do not push unless the user explicitly requests a push.
