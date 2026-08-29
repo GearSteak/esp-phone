@@ -14,6 +14,7 @@ ESP_HANDSET_SPI_BACKEND=userspace|drm|auto  (default auto / flag file)
 from __future__ import annotations
 
 import os
+import time
 from typing import Callable, List, Optional, Tuple
 
 from PyQt5.QtCore import Qt, QTimer, QPoint, QEvent, QRect
@@ -258,6 +259,7 @@ class SpiUserspaceMirror:
         self._timer = None
         self._st = None
         self._active = False
+        self._spi_retry_at = 0.0
 
     def start(self) -> bool:
         try:
@@ -288,6 +290,18 @@ class SpiUserspaceMirror:
     def _tick(self) -> None:
         if not self._active or self._st is None:
             return
+        now = time.monotonic()
+        if not self._st.ready():
+            if now < self._spi_retry_at:
+                return
+            self._spi_retry_at = now + 1.0
+            try:
+                if self._st.recover():
+                    self._spi_retry_at = 0.0
+                    print("[handset] SPI mirror recovered", flush=True)
+            except Exception as e:
+                print(f"[handset] SPI recovery: {e}", flush=True)
+            return
         global _heavy_skip
         if _heavy_ui:
             _heavy_skip = (_heavy_skip + 1) % 3
@@ -302,6 +316,11 @@ class SpiUserspaceMirror:
             self._st.blit_qimage(img)
         except Exception as e:
             print(f"[handset] spi tick: {e}", flush=True)
+            self._spi_retry_at = now + 1.0
+            try:
+                self._st.close(blank_panel=False)
+            except Exception:
+                pass
 
     def stop(self) -> None:
         self._active = False

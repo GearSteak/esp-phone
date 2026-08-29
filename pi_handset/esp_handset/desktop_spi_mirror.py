@@ -386,6 +386,7 @@ def main() -> int:
     print(f"[desktop-mirror] using capture={state['name']}", flush=True)
 
     running = True
+    spi_retry_at = [0.0]
 
     def stop(*_a) -> None:
         nonlocal running
@@ -400,7 +401,22 @@ def main() -> int:
     rotate_idx = [0]
     last_log = [0.0]
 
+    def recover_spi() -> None:
+        now = time.monotonic()
+        if now < spi_retry_at[0]:
+            return
+        spi_retry_at[0] = now + 1.0
+        try:
+            if st.recover():
+                spi_retry_at[0] = 0.0
+                print("[desktop-mirror] SPI recovered", flush=True)
+        except Exception as e:
+            print(f"[desktop-mirror] SPI recovery failed: {e}", flush=True)
+
     def paint_frame(src: QImage) -> None:
+        if not st.ready():
+            recover_spi()
+            return
         if keep_aspect:
             scaled = src.scaled(pw, ph, Qt.KeepAspectRatio, Qt.SmoothTransformation)
             out = QImage(pw, ph, QImage.Format_RGB32)
@@ -410,10 +426,18 @@ def main() -> int:
             y = (ph - scaled.height()) // 2
             p.drawImage(x, y, scaled)
             p.end()
-            st.blit_qimage(out)
+            try:
+                st.blit_qimage(out)
+            except Exception as e:
+                print(f"[desktop-mirror] SPI frame: {e}", flush=True)
+                st.close(blank_panel=False)
         else:
             scaled = src.scaled(pw, ph, Qt.IgnoreAspectRatio, Qt.SmoothTransformation)
-            st.blit_qimage(scaled)
+            try:
+                st.blit_qimage(scaled)
+            except Exception as e:
+                print(f"[desktop-mirror] SPI frame: {e}", flush=True)
+                st.close(blank_panel=False)
 
     def tick() -> None:
         if not running:

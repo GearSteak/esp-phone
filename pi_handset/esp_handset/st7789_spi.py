@@ -394,3 +394,13 @@ def wake_display() -> None:
             _gpio.output(bl, 1)
         except Exception:
             pass
+
+
+def recover() -> bool:
+    """Release and reinitialize the panel after a failed SPI transfer."""
+    close(blank_panel=False)
+    time.sleep(0.1)
+    if not init():
+        return False
+    wake_display()
+    return True

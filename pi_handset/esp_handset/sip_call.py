@@ -1427,6 +1427,17 @@ class LinphoneEngine:
             if not blocked:
                 self.ensure_registered(12.0, send_register=True)
             if not self.registered:
+                blocked = _zadarma_block_reason()
+                with self._lock:
+                    tail = " | ".join(list(self.lines)[-5:])
+                if blocked:
+                    err = _set_error(blocked)
+                    self.stop()
+                    try:
+                        write_sip_report(extra=err + "\n" + recent_log(20))
+                    except Exception:
+                        pass
+                    return err
                 if not self.alive():
                     err = _set_error("linphonec exited during register")
                     try:
@@ -1434,14 +1445,8 @@ class LinphoneEngine:
                     except Exception:
                         pass
                     return err
-                blocked = _zadarma_block_reason()
-                with self._lock:
-                    tail = " | ".join(list(self.lines)[-5:])
                 ip = _local_ipv4()
-                if blocked:
-                    err = _set_error(blocked)
-                    self.stop()
-                elif not ip:
+                if not ip:
                     err = _set_error("No IPv4 — Wi-Fi/cell is down")
                 else:
                     err = _set_error("SIP not registered — check Wi‑Fi / Accounts")
