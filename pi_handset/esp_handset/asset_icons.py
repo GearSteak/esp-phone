@@ -22,7 +22,7 @@ _ICON_ALIASES = {
     "cam_photo": "camera",
     "cam_timer3": "timer",
     "cam_timer10": "timer",
-    "cam_video": "camera",
+    "cam_video": "media",
     "cam_pano": "camera",
     "set_system": "settings",
     "set_display": "settings",
