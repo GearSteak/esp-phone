@@ -178,13 +178,20 @@ class PhoneShell(QMainWindow):
         self.title_lab.setStyleSheet("font-weight: 700; font-size: 10px; color: #e8eef5;")
         s_lay.addWidget(self.title_lab, 1)
 
-        # Right: cart · UPS bat · BT · Wi‑Fi · cellular (no Heltec %)
-        from esp_handset.status_icons import BatGlyph, BtGlyph, CellGlyph, WifiGlyph
+        # Right: cart · UPS bat · Heltec · BT · Wi‑Fi · cellular
+        from esp_handset.status_icons import (
+            BatGlyph,
+            BtGlyph,
+            CellGlyph,
+            HeltecGlyph,
+            WifiGlyph,
+        )
 
         self.wifi_glyph = WifiGlyph()
         self.cell_glyph = CellGlyph()
         self.bt_glyph = BtGlyph()
         self.bat_glyph = BatGlyph()
+        self.heltec_glyph = HeltecGlyph()
         self.heltec_bat_lab = QLabel("")
         self.heltec_bat_lab.hide()
         self.ups_bat_lab = QLabel("")
@@ -202,6 +209,7 @@ class PhoneShell(QMainWindow):
         right.setContentsMargins(0, 0, 0, 0)
         right.addWidget(self.cart_lab, 0, Qt.AlignVCenter)
         right.addWidget(self.bat_glyph, 0, Qt.AlignVCenter)
+        right.addWidget(self.heltec_glyph, 0, Qt.AlignVCenter)
         right.addWidget(self.bt_glyph, 0, Qt.AlignVCenter)
         right.addWidget(self.wifi_glyph, 0, Qt.AlignVCenter)
         right.addWidget(self.cell_glyph, 0, Qt.AlignVCenter)
@@ -449,6 +457,12 @@ class PhoneShell(QMainWindow):
     def set_heltec_battery(self, percent: int, *, mv: int = 0) -> None:
         """Ignored — Digivice only shows UPS pack %, not Heltec LiPo."""
         del percent, mv
+
+    def set_heltec_connected(self, connected: bool) -> None:
+        try:
+            self.heltec_glyph.set_connected(bool(connected))
+        except Exception:
+            pass
 
     def set_ups_battery(self, percent: int, *, charging: bool = False) -> None:
         """UPS 3S pack via BatGlyph. percent < 0 → absent / USB power."""
@@ -870,6 +884,13 @@ class PhoneShell(QMainWindow):
 
     def keyPressEvent(self, event) -> None:  # noqa: N802
         key = event.key()
+        if getattr(self, "_display_sleeping", False):
+            ctl = getattr(self, "_kiosk_controller", None)
+            wake = getattr(ctl, "wake_sleep", None)
+            if callable(wake):
+                wake()
+            event.accept()
+            return
         # Active outbound / in-call overlay
         if getattr(self, "_active_call", None) is not None and self._active_call.active:
             self._active_call.keyPressEvent(event)

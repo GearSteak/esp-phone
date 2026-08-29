@@ -407,11 +407,12 @@ def main() -> int:
             return
         spi_retry_at[0] = now + 1.0
         try:
-            if st.recover():
+            st.wake_display()
+            if st.ready():
                 spi_retry_at[0] = 0.0
-                print("[desktop-mirror] SPI recovered", flush=True)
+                print("[desktop-mirror] SPI woke", flush=True)
         except Exception as e:
-            print(f"[desktop-mirror] SPI recovery failed: {e}", flush=True)
+            print(f"[desktop-mirror] SPI wake failed: {e}", flush=True)
 
     def paint_frame(src: QImage) -> None:
         if not st.ready():

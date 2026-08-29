@@ -56,7 +56,8 @@ Needs `pigpiod` (bit-bang UART). The setup script enables it.
 | `NOTIF kind\|title\|body` | `BATTERY pct mv` (~30s) |
 | `CLEAR` / `PING` / `STATUS` / `BATTERY` | `STATUS … bat=N mv=N` · `PONG` · `READY` |
 
-Digivice shows **`H78%`** in the status bar and pushes alerts to the ST7735.
+Digivice shows a Heltec radio icon in the status bar when the bridge answers
+status probes, and pushes alerts to the ST7735.
 
 ## Do not run
 

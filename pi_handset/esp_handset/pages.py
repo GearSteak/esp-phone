@@ -2563,8 +2563,10 @@ def make_settings_hub(on_back, open_page: Callable[[str], None], on_linux) -> QW
     return page_chrome("Settings", body, on_back, scroll=False)
 
 
-def make_power_page(on_back: Callable[[], None]) -> QWidget:
-    """Power off / restart. Double-press confirm (no Yes/No dialog)."""
+def make_power_page(
+    on_back: Callable[[], None], on_sleep: Optional[Callable[[], None]] = None
+) -> QWidget:
+    """Sleep, power off, or restart. Power actions need a double press."""
     from PyQt5.QtCore import QTimer
 
     from esp_handset.radial_menu import RadialMenu
@@ -2580,6 +2582,7 @@ def make_power_page(on_back: Callable[[], None]) -> QWidget:
     lay.addWidget(status)
 
     entries = [
+        AppEntry("sleep", "Sleep", "Display", "☾"),
         AppEntry("poweroff", "Power off", "", "⏻"),
         AppEntry("reboot", "Restart", "", "↻"),
     ]
@@ -2639,7 +2642,12 @@ def make_power_page(on_back: Callable[[], None]) -> QWidget:
         QTimer.singleShot(2500, lambda: status.setText(f"Waiting for {label.lower()}…"))
 
     def on_pick(key: str) -> None:
-        if key == "poweroff":
+        if key == "sleep":
+            if on_sleep is not None:
+                on_sleep()
+            else:
+                status.setText("Sleep unavailable outside kiosk mode.")
+        elif key == "poweroff":
             run_power("poweroff", "Power off")
         elif key == "reboot":
             run_power("reboot", "Restart")

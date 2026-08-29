@@ -229,6 +229,8 @@ class ScaledScreenHost(QWidget):
         src = self._source
         if src is None:
             return
+        if getattr(src, "_display_sleeping", False):
+            return
         img: Optional[QImage] = None
         if self._frame_provider is not None:
             try:
@@ -296,9 +298,10 @@ class SpiUserspaceMirror:
                 return
             self._spi_retry_at = now + 1.0
             try:
-                if self._st.recover():
+                self._st.wake_display()
+                if self._st.ready():
                     self._spi_retry_at = 0.0
-                    print("[handset] SPI mirror recovered", flush=True)
+                    print("[handset] SPI mirror woke", flush=True)
             except Exception as e:
                 print(f"[handset] SPI recovery: {e}", flush=True)
             return
@@ -536,8 +539,9 @@ class MultiDisplayKiosk:
         if self.spi is not None and getattr(self.spi, "_active", False):
             try:
                 if self.spi._st is not None:
-                    if not self.spi._st.recover():
-                        print("[handset] SPI recovery after media handoff failed", flush=True)
+                    # Playback pauses the mirror; wake the panel in place.
+                    # Closing/reopening SPI here can disturb HDMI/KMS.
+                    self.spi._st.wake_display()
                 if self.spi._timer is not None:
                     self.spi._timer.start()
             except Exception:
@@ -555,8 +559,53 @@ class MultiDisplayKiosk:
             pass
         print("[handset] media handoff OFF — Digivice hosts restored", flush=True)
 
+    def enter_sleep(self) -> None:
+        """Blank displays while leaving the Pi and application running."""
+        if getattr(self, "_display_sleeping", False):
+            return
+        self._display_sleeping = True
+        self.source._display_sleeping = True  # type: ignore[attr-defined]
+        self._timer.stop()
+        if self.spi is not None:
+            try:
+                if self.spi._timer is not None:
+                    self.spi._timer.stop()
+                if self.spi._st is not None:
+                    self.spi._st.blank(backlight_off=True)
+            except Exception as e:
+                print(f"[handset] display sleep: {e}", flush=True)
+        for host in self.hosts:
+            host.update()
+            host.raise_()
+        self.source.setFocus(Qt.OtherFocusReason)
+        print("[handset] display sleep ON", flush=True)
+
+    def wake_sleep(self) -> None:
+        """Wake displays after a software sleep."""
+        if not getattr(self, "_display_sleeping", False):
+            return
+        self._display_sleeping = False
+        self.source._display_sleeping = False  # type: ignore[attr-defined]
+        if self.spi is not None:
+            try:
+                if self.spi._st is not None:
+                    self.spi._st.wake_display()
+                if self.spi._timer is not None:
+                    self.spi._timer.start()
+            except Exception as e:
+                print(f"[handset] display wake: {e}", flush=True)
+        self._frame = None
+        self._timer.start()
+        for host in self.hosts:
+            host.update()
+            host.raise_()
+        self.source.setFocus(Qt.OtherFocusReason)
+        print("[handset] display sleep OFF", flush=True)
+
     def _tick(self) -> None:
-        if getattr(self, "_media_handoff", False):
+        if getattr(self, "_media_handoff", False) or getattr(
+            self, "_display_sleeping", False
+        ):
             return
         global _heavy_skip
         if _heavy_ui:
@@ -581,4 +630,5 @@ def apply_kiosk(win) -> Optional[object]:
     ctl.start()
     win._multi_presenter = ctl  # type: ignore[attr-defined]
     win._kiosk_controller = ctl  # type: ignore[attr-defined]
+    win._enter_sleep = ctl.enter_sleep  # type: ignore[attr-defined]
     return ctl

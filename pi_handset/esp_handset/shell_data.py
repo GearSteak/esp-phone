@@ -80,7 +80,7 @@ SETTINGS_APPS = [
 SYSTEM_APPS = [
     AppEntry("set_update", "Update", "Pull · install · restart", "↓"),
     AppEntry("set_jellyfin", "Share", "Jellyfin · Fire TV", "◎"),
-    AppEntry("set_power", "Power", "Off · Restart", "⏻"),
+    AppEntry("set_power", "Power", "Sleep · Off · Restart", "⏻"),
     AppEntry("set_about", "About", "", "i"),
     AppEntry("linux", "Linux", "Full desktop", "▤"),
 ]

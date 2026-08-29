@@ -11,11 +11,12 @@ from __future__ import annotations
 
 import os
 import sys
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-from PyQt5.QtCore import QObject, pyqtSignal, QEvent, Qt
+from PyQt5.QtCore import QObject, pyqtSignal, QEvent, QTimer, Qt
 from PyQt5.QtWidgets import QApplication, QLabel, QMessageBox, QLineEdit, QTextEdit, QPlainTextEdit
 
 
@@ -298,6 +299,7 @@ def build_app(bridge: Optional[EspBridge], modem: Optional[Sim7600]) -> PhoneShe
     signals = BridgeSignals()
     # Mutable so Settings → Network → Reconnect can attach a late modem
     modem_box: dict = {"m": modem}
+    heltec_last_response = {"at": 0.0}
 
     def get_modem() -> Optional[Sim7600]:
         return modem_box.get("m")
@@ -562,7 +564,12 @@ def build_app(bridge: Optional[EspBridge], modem: Optional[Sim7600]) -> PhoneShe
     )
     # Old Sounds menu key → sound debug
     shell.pages["set_sounds"] = shell.pages["dbg_sound"]
-    shell.register_page("set_power", pages.make_power_page(back))
+    def _sleep_display() -> None:
+        sleep = getattr(shell, "_enter_sleep", None)
+        if callable(sleep):
+            sleep()
+
+    shell.register_page("set_power", pages.make_power_page(back, _sleep_display))
     shell.register_page("help", pages.make_help_page(back))
     shell.register_page(
         "set_appearance", pages.make_appearance_page(shell, back)
@@ -680,6 +687,20 @@ def build_app(bridge: Optional[EspBridge], modem: Optional[Sim7600]) -> PhoneShe
         signals.line.emit(line)
 
     def on_bridge_line(line: str) -> None:
+        if line.startswith(
+            (
+                "STATUS",
+                "READY",
+                "BATTERY",
+                "PONG",
+                "LORA RX",
+                "ACK LORA",
+                "ERR LORA",
+                "STEPS",
+            )
+        ):
+            heltec_last_response["at"] = time.monotonic()
+            shell.set_heltec_connected(True)
         if line.startswith("STEPS"):
             parts = line.split()
             if len(parts) >= 2 and parts[1].isdigit():
@@ -762,9 +783,29 @@ def build_app(bridge: Optional[EspBridge], modem: Optional[Sim7600]) -> PhoneShe
         try:
             bridge.request_status()
         except Exception as e:
+            shell.set_heltec_connected(False)
             status(f"ESP: {e}")
     else:
+        shell.set_heltec_connected(False)
         status("No ESP · modem OK to test")
+
+    if bridge:
+        def _probe_heltec() -> None:
+            now = time.monotonic()
+            if (
+                heltec_last_response["at"]
+                and now - heltec_last_response["at"] > 12.0
+            ):
+                shell.set_heltec_connected(False)
+            try:
+                bridge.request_status()
+            except Exception:
+                shell.set_heltec_connected(False)
+
+        heltec_timer = QTimer(shell)
+        heltec_timer.timeout.connect(_probe_heltec)
+        heltec_timer.start(10_000)
+        shell._heltec_probe_timer = heltec_timer  # type: ignore[attr-defined]
 
     if get_modem():
         m0 = get_modem()

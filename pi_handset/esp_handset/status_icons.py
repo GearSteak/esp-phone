@@ -198,6 +198,38 @@ class BatGlyph(QWidget):
             p.drawLine(3, 2, 15, 10)
 
 
+class HeltecGlyph(QWidget):
+    """Heltec LoRa bridge mark — bright when the board answers status probes."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._on = False
+        self.setFixedSize(15, 14)
+        self.setToolTip("Heltec LoRa — no response")
+
+    def set_connected(self, on: bool) -> None:
+        on = bool(on)
+        if on == self._on:
+            return
+        self._on = on
+        self.setToolTip(
+            "Heltec LoRa — connected" if on else "Heltec LoRa — no response"
+        )
+        self.update()
+
+    def paintEvent(self, _event) -> None:  # noqa: N802
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        col = QColor("#c8e0f0") if self._on else QColor("#4a5560")
+        p.setPen(QPen(col, 1.4, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+        p.drawLine(7, 3, 7, 12)
+        p.drawLine(3, 13, 11, 13)
+        p.drawArc(1, 1, 12, 10, 25 * 16, 130 * 16)
+        if not self._on:
+            p.setPen(QPen(QColor("#ff6b6b"), 1.6, Qt.SolidLine, Qt.RoundCap))
+            p.drawLine(2, 2, 12, 12)
+
+
 def _btctl(*args: str, timeout: float = 1.5) -> str:
     try:
         r = subprocess.run(
