@@ -497,23 +497,35 @@ echo phone >/etc/esp-handset/ui_mode 2>/dev/null || true
 chown "$USER_NAME:$USER_NAME" "$USER_HOME/.esp-handset" \
   "$USER_HOME/.esp-handset/session_mode" 2>/dev/null || true
 
-log "Relaunch: sudo -u $USER_NAME handset-phone  DISPLAY=$DISP"
-sleep 0.8
-# Detach fully so this script can exit
-nohup sudo -u "$USER_NAME" -H env \
-  DISPLAY="$DISP" \
-  XAUTHORITY="$AUTH" \
-  HOME="$USER_HOME" \
-  USER="$USER_NAME" \
-  LOGNAME="$USER_NAME" \
-  ESP_HANDSET_SKIP_LAYOUT=1 \
-  ESP_HANDSET_SKIP_PIN=1 \
-  PATH="/usr/local/bin:/usr/bin:/bin" \
-  bash -c 'nohup handset-phone >>"$HOME/.esp-handset/handset.log" 2>&1 </dev/null &' \
-  >/dev/null 2>&1 || \
-nohup env DISPLAY="$DISP" XAUTHORITY="$AUTH" HOME="$USER_HOME" \
-  ESP_HANDSET_SKIP_LAYOUT=1 \
-  handset-phone >>"$USER_HOME/.esp-handset/handset.log" 2>&1 </dev/null &
+START="/usr/local/bin/digivice-start"
+if [[ ! -x "$START" && -f "$PREFIX/session/digivice-start.sh" ]]; then
+  START="$PREFIX/session/digivice-start.sh"
+fi
+if [[ -x "$START" ]]; then
+  # digivice-start clears recovery mode, stops competing mirrors, restores
+  # phone mode, validates imports, and launches one kiosk instance.
+  log "Relaunch: $START  DISPLAY=$DISP"
+  nohup sudo -u "$USER_NAME" -H env \
+    DISPLAY="$DISP" \
+    XAUTHORITY="$AUTH" \
+    HOME="$USER_HOME" \
+    USER="$USER_NAME" \
+    LOGNAME="$USER_NAME" \
+    ESP_HANDSET_PREFIX="$PREFIX" \
+    "$START" >>"$USER_HOME/.esp-handset/handset.log" 2>&1 </dev/null &
+else
+  log "WARN: digivice-start missing — falling back to handset-phone"
+  nohup sudo -u "$USER_NAME" -H env \
+    DISPLAY="$DISP" \
+    XAUTHORITY="$AUTH" \
+    HOME="$USER_HOME" \
+    USER="$USER_NAME" \
+    LOGNAME="$USER_NAME" \
+    ESP_HANDSET_SKIP_LAYOUT=1 \
+    ESP_HANDSET_SKIP_PIN=1 \
+    PATH="/usr/local/bin:/usr/bin:/bin" \
+    handset-phone >>"$USER_HOME/.esp-handset/handset.log" 2>&1 </dev/null &
+fi
 
 log "Relaunch scheduled"
 exit 0
