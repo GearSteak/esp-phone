@@ -196,7 +196,7 @@ class RadialMenu(QWidget):
                     p.setPen(QPen(QColor(255, 255, 255, 45), 1))
                 p.drawEllipse(int(x - r), int(y - r), r * 2, r * 2)
 
-            icon = icon_for_key(entry.key)
+            icon = icon_for_key(entry.key, inverted=focused)
             if icon is not None and not icon.isNull():
                 icon_size = max(8, int(42 * scale))
                 scaled_icon = icon.scaled(

@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Dict, Optional
 
-from PyQt5.QtGui import QPixmap
+from PyQt5.QtGui import QImage, QPixmap
 
 _ASSET_DIR = Path(__file__).resolve().parents[1] / "Assets"
 _CACHE: Dict[str, QPixmap] = {}
@@ -50,9 +50,19 @@ def _load(name: str) -> Optional[QPixmap]:
     return pixmap if not pixmap.isNull() else None
 
 
-def icon_for_key(key: str) -> Optional[QPixmap]:
-    """Return custom artwork for a menu key, or None for glyph fallback."""
-    return _load(_ICON_ALIASES.get(key, key))
+def icon_for_key(key: str, *, inverted: bool = False) -> Optional[QPixmap]:
+    """Return custom artwork for a menu key, optionally RGB-inverted."""
+    name = _ICON_ALIASES.get(key, key)
+    pixmap = _load(name)
+    if pixmap is None or not inverted:
+        return pixmap
+    cache_key = f"inverted:{name}"
+    if cache_key not in _CACHE:
+        image = pixmap.toImage().convertToFormat(QImage.Format_ARGB32)
+        image.invertPixels(QImage.InvertRgb)
+        _CACHE[cache_key] = QPixmap.fromImage(image)
+    inverted_pixmap = _CACHE[cache_key]
+    return inverted_pixmap if not inverted_pixmap.isNull() else None
 
 
 def bubble_for_state(focused: bool) -> Optional[QPixmap]:
