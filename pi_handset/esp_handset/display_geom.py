@@ -535,6 +535,9 @@ class MultiDisplayKiosk:
                     pass
         if self.spi is not None and getattr(self.spi, "_active", False):
             try:
+                if self.spi._st is not None:
+                    if not self.spi._st.recover():
+                        print("[handset] SPI recovery after media handoff failed", flush=True)
                 if self.spi._timer is not None:
                     self.spi._timer.start()
             except Exception:
