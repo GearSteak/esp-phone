@@ -195,14 +195,6 @@ class DigiviceHome(QWidget):
                 x = stage.center().x() - scaled.width() // 2
                 y = stage.top() + 6
                 p.drawPixmap(x, y, scaled)
-            else:
-                p.setPen(QColor("#e8eef5"))
-                p.setFont(QFont("DejaVu Sans", 28, QFont.Bold))
-                p.drawText(
-                    stage.adjusted(0, 4, 0, -title_h - 4),
-                    Qt.AlignHCenter | Qt.AlignVCenter,
-                    cur.glyph,
-                )
             p.setPen(QColor("#e8eef5"))
             p.setFont(QFont("DejaVu Sans", 11, QFont.Bold))
             p.drawText(
