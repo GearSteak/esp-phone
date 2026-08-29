@@ -189,7 +189,7 @@ class DigiviceHome(QWidget):
                 p.drawPixmap(x, y, scaled)
             title_rect = QRect(
                 stage.left() + 8,
-                stage.bottom() - title_h - 2,
+                stage.top() + 2,
                 stage.width() - 16,
                 title_h + 4,
             )
