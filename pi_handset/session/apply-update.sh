@@ -505,7 +505,8 @@ if [[ -x "$START" ]]; then
   # digivice-start clears recovery mode, stops competing mirrors, restores
   # phone mode, validates imports, and launches one kiosk instance.
   log "Relaunch: $START  DISPLAY=$DISP"
-  nohup sudo -u "$USER_NAME" -H env \
+  nohup env \
+    SUDO_USER="$USER_NAME" \
     DISPLAY="$DISP" \
     XAUTHORITY="$AUTH" \
     HOME="$USER_HOME" \

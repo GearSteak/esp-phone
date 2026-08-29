@@ -86,13 +86,21 @@ fi
 log "DISPLAY=$DISPLAY XAUTHORITY=${XAUTHORITY:-none} user=$USER_NAME PREFIX=$PREFIX"
 log "PYTHONPATH=$PYTHONPATH"
 
-# Prove package import before launching (this was the silent killer)
-if ! sudo -u "$USER_NAME" -H env \
-  HOME="$USER_HOME" \
-  PYTHONPATH="$PREFIX" \
-  /usr/bin/python3 -c "import esp_handset; print('esp_handset OK', esp_handset.__file__)" \
-  >>"$LOG" 2>&1
-then
+# Prove package import before launching (this was the silent killer).
+if [[ "$(id -u)" -eq 0 ]]; then
+  sudo -u "$USER_NAME" -H env \
+    HOME="$USER_HOME" \
+    PYTHONPATH="$PREFIX" \
+    /usr/bin/python3 -c "import esp_handset; print('esp_handset OK', esp_handset.__file__)" \
+    >>"$LOG" 2>&1
+  preflight_rc=$?
+else
+  env HOME="$USER_HOME" PYTHONPATH="$PREFIX" \
+    /usr/bin/python3 -c "import esp_handset; print('esp_handset OK', esp_handset.__file__)" \
+    >>"$LOG" 2>&1
+  preflight_rc=$?
+fi
+if [[ "$preflight_rc" -ne 0 ]]; then
   log "FATAL: python cannot import esp_handset from $PREFIX"
   ls -la "$PREFIX" >>"$LOG" 2>&1 || true
   ls -la "$PREFIX/esp_handset" >>"$LOG" 2>&1 || true
