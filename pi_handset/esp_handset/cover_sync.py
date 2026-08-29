@@ -23,7 +23,6 @@ _LIBRETRO_SYSTEMS = {
     "gba": ("Nintendo - Game Boy Advance",),
     "snes": ("Nintendo - Super Nintendo Entertainment System",),
     "genesis": ("Sega - Mega Drive - Genesis",),
-    "ps1": ("Sony - PlayStation",),
 }
 
 _EXT_SYSTEM = {

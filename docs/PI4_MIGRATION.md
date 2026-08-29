@@ -304,6 +304,5 @@ Existing pad mapping unchanged: Confirm=A, Back=B, Home=Start, Select=Select.
 - MAX98357 speaker (GPIO conflicts — see [`MAX98357_SPEAKER.md`](MAX98357_SPEAKER.md))
 - Ollama / heavy local LLM on 2 GB
 - PS1 / N64 / SNES emulation
-- L2 / R2 shoulder buttons
 - Genesis UI entry (core already on disk)
 - Doc commit for `.cursor/rules` unless you want it in repo

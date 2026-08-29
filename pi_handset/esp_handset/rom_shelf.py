@@ -35,7 +35,6 @@ _ACCENTS = {
     "gba": "#6a5acd",
     "snes": "#7b68c8",
     "genesis": "#1a1a2e",
-    "ps1": "#003087",
 }
 
 

@@ -12,7 +12,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 MANIFEST_NAME = "cartridge.json"
 VALID_KINDS = frozenset({"games", "music", "movies", "tv", "audiobooks"})
 VALID_SYSTEMS = frozenset(
-    {"gb", "nes", "smsgg", "gba", "snes", "genesis", "ps1"}
+    {"gb", "nes", "smsgg", "gba", "snes", "genesis"}
 )
 _SYSTEM_ALIASES = {
     "gbc": "gb",
@@ -26,7 +26,6 @@ _GAME_DIRS = {
     "gba": "gba",
     "snes": "snes",
     "genesis": "genesis",
-    "ps1": "ps1",
 }
 _GAME_EXTENSIONS = {
     "gb": (".gb", ".gbc", ".sgb"),
@@ -35,7 +34,6 @@ _GAME_EXTENSIONS = {
     "gba": (".gba",),
     "snes": (".sfc", ".smc", ".swc", ".fig"),
     "genesis": (".md", ".bin", ".gen", ".smd"),
-    "ps1": (".bin", ".cue", ".pbp", ".chd"),
 }
 
 # Where the OS automounts removable media

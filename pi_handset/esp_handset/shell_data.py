@@ -118,7 +118,6 @@ GAMES_APPS = [
     AppEntry("gba", "GBA", "Game Boy Advance", "▣"),
     AppEntry("snes", "SNES", "Super Nintendo", "◈"),
     AppEntry("genesis", "Genesis", "Mega Drive", "◉"),
-    AppEntry("ps1", "PlayStation", "PS1 · digital pad", "◇"),
     AppEntry("snake", "Snake", "Arcade · high score", "◆"),
     AppEntry("pong", "Pong", "Arcade · vs AI", "○"),
     AppEntry("tetris", "Tetris", "Arcade · stack", "▣"),
@@ -132,7 +131,7 @@ APPS_APPS = [
     AppEntry("shadowdark", "Shadowdark", "Dice · torch timer", "⚔"),
 ]
 
-EMU_PAGE_KEYS = ("gb", "nes", "smsgg", "gba", "snes", "genesis", "ps1")
+EMU_PAGE_KEYS = ("gb", "nes", "smsgg", "gba", "snes", "genesis")
 
 # Settings → Debug hub
 DEBUG_APPS = [

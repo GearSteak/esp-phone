@@ -24,7 +24,6 @@ Game Boy–sized shells around USB mass-storage sticks. The Pi sees a normal USB
     gba/
     snes/
     genesis/
-    ps1/
   movies/                  ← when kinds includes "movies"
     My Movie/
       feature.mkv
@@ -200,7 +199,6 @@ Settings → Update runs `digivice-suppress-usb-prompt`, which sets PCManFM **`a
 | `gba` | GBA |
 | `snes` | SNES |
 | `genesis` | Genesis / Mega Drive |
-| `ps1` | PlayStation (digital pad) |
 
 Paths in the manifest are **relative to the USB root**. Use forward slashes.
 For Game Boy Color, use `"system": "gb"` (the compatibility alias `"gbc"` is

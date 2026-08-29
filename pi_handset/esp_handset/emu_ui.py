@@ -152,17 +152,6 @@ SYSTEMS: Dict[str, EmuSystem] = {
         ("genesis_plus_gx_libretro.so",),
         (320, 224),
     ),
-    "ps1": EmuSystem(
-        "ps1",
-        "PlayStation",
-        "PS1 · pcsx_rearmed · digital pad",
-        "◇",
-        "ps1",
-        (".bin", ".cue", ".pbp", ".chd"),
-        ("pcsx_rearmed_libretro.so",),
-        (256, 240),
-        "Digital pad only — no analog sticks",
-    ),
 }
 
 EMU_PAGE_KEYS = tuple(SYSTEMS.keys())
