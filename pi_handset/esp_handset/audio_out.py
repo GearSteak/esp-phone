@@ -7,6 +7,7 @@ import os
 import re
 import struct
 import subprocess
+import threading
 import time
 import wave
 from datetime import datetime
@@ -19,9 +20,14 @@ _LOG = Path.home() / ".esp-handset" / "last-beep.txt"
 _WAV = Path.home() / ".esp-handset" / "beep-loud.wav"
 _CLICK = Path.home() / ".esp-handset" / "nav-click.wav"
 _PRIME = Path.home() / ".esp-handset" / "nav-prime.wav"
+_RING = Path.home() / ".esp-handset" / "call-ring.wav"
 _click_dev: Optional[str] = None
 _click_proc: Optional[subprocess.Popen] = None
 _click_last = 0.0
+_ring_lock = threading.Lock()
+_ring_stop = threading.Event()
+_ring_thread: Optional[threading.Thread] = None
+_ring_proc: Optional[subprocess.Popen] = None
 
 
 def _log(msg: str) -> None:
@@ -333,6 +339,115 @@ def _sounds_on() -> bool:
         return str(prefs.get("profile", "Normal")) != "Silent"
     except Exception:
         return True
+
+
+def _ensure_ring_wav() -> Path:
+    if _RING.is_file() and _RING.stat().st_size > 200:
+        return _RING
+    _RING.parent.mkdir(parents=True, exist_ok=True)
+    rate = 48000
+    parts = ((0.34, 880.0), (0.12, 0.0), (0.34, 660.0), (0.70, 0.0))
+    frames = bytearray()
+    for seconds, freq in parts:
+        for i in range(int(rate * seconds)):
+            value = (
+                int(6500 * math.sin(2 * math.pi * freq * i / rate))
+                if freq
+                else 0
+            )
+            frames.extend(struct.pack("<hh", value, value))
+    with wave.open(str(_RING), "wb") as w:
+        w.setnchannels(2)
+        w.setsampwidth(2)
+        w.setframerate(rate)
+        w.writeframes(frames)
+    return _RING
+
+
+def _ring_device() -> Optional[str]:
+    cards = _aplay_cards()
+    if not cards:
+        return None
+    card = cards[0][0]
+    _unmute_card(card)
+    return f"plughw:{card},0"
+
+
+def _ring_loop() -> None:
+    global _ring_proc
+    try:
+        if not _sounds_on() or not which("aplay"):
+            return
+        wav = _ensure_ring_wav()
+        dev = _ring_device()
+        if not dev:
+            _log("call ring: no ALSA playback device")
+            return
+        while not _ring_stop.is_set():
+            proc: Optional[subprocess.Popen] = None
+            try:
+                proc = subprocess.Popen(
+                    ["aplay", "-D", dev, "-q", str(wav)],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    start_new_session=True,
+                )
+                with _ring_lock:
+                    _ring_proc = proc
+                while proc.poll() is None:
+                    if _ring_stop.wait(0.05):
+                        try:
+                            proc.terminate()
+                        except Exception:
+                            pass
+                        break
+                try:
+                    proc.wait(timeout=0.4)
+                except Exception:
+                    pass
+            except Exception as e:
+                _log(f"call ring failed: {e}")
+                return
+            finally:
+                with _ring_lock:
+                    if _ring_proc is proc:
+                        _ring_proc = None
+            if _ring_stop.wait(0.35):
+                return
+    finally:
+        with _ring_lock:
+            _ring_proc = None
+
+
+def start_call_ring() -> None:
+    """Start a repeating speaker ringtone without blocking the Qt thread."""
+    global _ring_thread
+    if not _sounds_on() or not which("aplay"):
+        return
+    with _ring_lock:
+        if _ring_thread is not None and _ring_thread.is_alive():
+            return
+        _ring_stop.clear()
+        _ring_thread = threading.Thread(
+            target=_ring_loop,
+            name="digi-call-ring",
+            daemon=True,
+        )
+        _ring_thread.start()
+
+
+def stop_call_ring() -> None:
+    """Stop the local ringtone immediately."""
+    global _ring_thread
+    _ring_stop.set()
+    with _ring_lock:
+        proc = _ring_proc
+        _ring_thread = None
+    if proc is not None and proc.poll() is None:
+        try:
+            proc.terminate()
+        except Exception:
+            pass
 
 
 def play_nav_click() -> None:

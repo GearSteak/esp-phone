@@ -15,6 +15,8 @@ from PyQt5.QtWidgets import (
     QWidget,
 )
 
+from esp_handset import audio_out
+
 
 class _CircleAction(QPushButton):
     """Round Answer (green phone) or Decline (red phone + slash)."""
@@ -238,6 +240,7 @@ class IncomingCallOverlay(QWidget):
         self.raise_()
         self.show()
         self.answer_btn.setFocus(Qt.OtherFocusReason)
+        audio_out.start_call_ring()
         from esp_handset import digi_nav
 
         digi_nav.clear_highlights(self)
@@ -246,6 +249,7 @@ class IncomingCallOverlay(QWidget):
         self.decline_btn.update()
 
     def hide_call(self) -> None:
+        audio_out.stop_call_ring()
         self.hide()
         self._on_answer = None
         self._on_decline = None

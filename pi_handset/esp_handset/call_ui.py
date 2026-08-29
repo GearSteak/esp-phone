@@ -19,6 +19,7 @@ from PyQt5.QtWidgets import (
 )
 
 from esp_handset import call_log as clog
+from esp_handset import audio_out
 from esp_handset import sip_call
 from esp_handset.incoming_call import _CircleAction
 from esp_handset.pages import page_chrome
@@ -251,6 +252,7 @@ class CallOverlay(QWidget):
         self._show_and_focus(self.hangup_btn)
         self._pulse_n = 0
         self._pulse.start(400)
+        audio_out.start_call_ring()
 
     def show_active(
         self,
@@ -261,6 +263,7 @@ class CallOverlay(QWidget):
         on_hangup: Optional[Callable[[], None]] = None,
         elapsed_s: int = 0,
     ) -> None:
+        audio_out.stop_call_ring()
         self._mode = "active"
         self._on_hangup = on_hangup
         self._on_dismiss = None
@@ -283,6 +286,7 @@ class CallOverlay(QWidget):
         detail: str = "",
         on_dismiss: Optional[Callable[[], None]] = None,
     ) -> None:
+        audio_out.stop_call_ring()
         self._mode = "ended"
         self._on_hangup = None
         self._on_dismiss = on_dismiss
@@ -324,6 +328,7 @@ class CallOverlay(QWidget):
         widget.update()
 
     def hide_call(self) -> None:
+        audio_out.stop_call_ring()
         self._pulse.stop()
         self.hide()
         self._on_hangup = None
