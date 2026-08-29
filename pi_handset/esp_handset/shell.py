@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from pathlib import Path
 from typing import Callable, Dict, List, Optional
 
 from PyQt5.QtCore import QEasingCurve, QPropertyAnimation, Qt, QTimer, pyqtProperty, pyqtSignal
@@ -56,6 +57,7 @@ _ARCADE_PAGES = {"snake", "pong", "tetris"}
 _CARD_GAME_PAGES = {"solitaire", "uno"}
 # Arcade/cards always use the pad. Emulators only while a ROM is running.
 _GAMEPAD_PAGES = _ARCADE_PAGES | _CARD_GAME_PAGES
+_MENU_BACKGROUND_PATH = Path(__file__).resolve().parents[1] / "Assets" / "background.png"
 
 __all__ = [
     "PhoneShell",
@@ -143,6 +145,15 @@ class PhoneShell(QMainWindow):
         self._wallpaper.setObjectName("wallpaper")
         self._wallpaper.setAlignment(Qt.AlignCenter)
         self._wallpaper.lower()
+        self._menu_background = QLabel(root)
+        self._menu_background.setObjectName("menuBackground")
+        self._menu_background.setAlignment(Qt.AlignCenter)
+        self._menu_background.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        self._menu_background_pixmap = QPixmap(str(_MENU_BACKGROUND_PATH))
+        if self._menu_background_pixmap.isNull():
+            self._menu_background_pixmap = QPixmap()
+        self._menu_background.hide()
+        self._menu_background.lower()
         self._apply_base_style()
         outer = QVBoxLayout(root)
         outer.setContentsMargins(0, 0, 0, 0)
@@ -405,6 +416,13 @@ class PhoneShell(QMainWindow):
         )
 
     def apply_wallpaper(self) -> None:
+        if (
+            hasattr(self, "_menu_background")
+            and self._menu_background.isVisible()
+        ):
+            self._wallpaper.clear()
+            self._wallpaper.hide()
+            return
         path = handset_theme.resolve_wallpaper()
         if not path:
             self._wallpaper.clear()
@@ -581,6 +599,23 @@ class PhoneShell(QMainWindow):
     def resizeEvent(self, event) -> None:  # noqa: N802
         super().resizeEvent(event)
         self._sync_fade_veil_geom()
+        if hasattr(self, "_menu_background"):
+            self._layout_menu_background()
+
+    def _layout_menu_background(self) -> None:
+        if self._menu_background_pixmap.isNull():
+            return
+        self._menu_background.setGeometry(self._root.rect())
+        size = self._root.size()
+        if self._menu_background_pixmap.size() == size:
+            scaled = self._menu_background_pixmap
+        else:
+            scaled = self._menu_background_pixmap.scaled(
+                size,
+                Qt.IgnoreAspectRatio,
+                Qt.FastTransformation,
+            )
+        self._menu_background.setPixmap(scaled)
 
     def _raise_overlays(self) -> None:
         try:
@@ -605,6 +640,14 @@ class PhoneShell(QMainWindow):
         """Swap stack page + focus + on_page_show (no animation)."""
         if key not in self.pages:
             return
+        if hasattr(self, "_menu_background"):
+            if key == "home" and not self._menu_background_pixmap.isNull():
+                self._layout_menu_background()
+                self._menu_background.show()
+                self._menu_background.lower()
+            else:
+                self._menu_background.hide()
+                self.apply_wallpaper()
         self.stack.setCurrentWidget(self.pages[key])
         self._focus_page(key)
         page = self.pages[key]

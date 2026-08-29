@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Callable, Dict, List, Optional
 
 from PyQt5.QtCore import Qt, QPoint, QRect, pyqtSignal
@@ -11,9 +10,6 @@ from PyQt5.QtWidgets import QWidget
 
 from esp_handset.asset_icons import bubble_for_state, icon_for_key
 from esp_handset.shell_data import AppEntry
-
-_BACKGROUND_PATH = Path(__file__).resolve().parents[1] / "Assets" / "background.png"
-
 
 class DigiviceHome(QWidget):
     """Two rows of icons (top / bottom) with a Digivice-style center stage.
@@ -37,9 +33,6 @@ class DigiviceHome(QWidget):
         self._col = 0
         # Optional center-stage art per app key (e.g. media cart logo)
         self._stage_art: Dict[str, QPixmap] = {}
-        self._background = QPixmap(str(_BACKGROUND_PATH))
-        if self._background.isNull():
-            self._background = QPixmap()
         self.setFocusPolicy(Qt.StrongFocus)
         self.setMinimumSize(200, 180)
         if on_activate:
@@ -122,26 +115,9 @@ class DigiviceHome(QWidget):
     def paintEvent(self, _event) -> None:  # noqa: N802
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
+        p.setRenderHint(QPainter.SmoothPixmapTransform)
         w, h = self.width(), self.height()
         cur = self.current()
-
-        if not self._background.isNull():
-            # Keep the pixel-art background crisp while covering the full home
-            # page; crop only the excess sides from the aspect-ratio expansion.
-            scaled_bg = self._background.scaled(
-                self.size(),
-                Qt.KeepAspectRatioByExpanding,
-                Qt.FastTransformation,
-            )
-            source_x = max(0, (scaled_bg.width() - w) // 2)
-            source_y = max(0, (scaled_bg.height() - h) // 2)
-            p.drawPixmap(
-                self.rect(),
-                scaled_bg,
-                QRect(source_x, source_y, w, h),
-            )
-
-        p.setRenderHint(QPainter.SmoothPixmapTransform)
 
         def draw_row(entries: List[AppEntry], y: int, row_i: int) -> None:
             if not entries:
@@ -197,13 +173,6 @@ class DigiviceHome(QWidget):
         # Center Digivice stage
         stage_m = 28
         stage = self.rect().adjusted(stage_m, 44, -stage_m, -44)
-        p.setBrush(QColor(10, 18, 28, 230))
-        p.setPen(QPen(QColor(88, 166, 255, 90), 2))
-        p.drawRoundedRect(stage, 16, 16)
-        # inner oval hint
-        p.setPen(QPen(QColor(255, 255, 255, 25), 1))
-        p.setBrush(Qt.NoBrush)
-        p.drawEllipse(stage.adjusted(10, 8, -10, -8))
 
         if cur:
             art = self._stage_art.get(cur.key)
