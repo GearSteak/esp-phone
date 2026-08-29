@@ -2,26 +2,14 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-from typing import Callable, Dict, List, Optional
+from typing import Callable, List, Optional
 
 from PyQt5.QtCore import QEasingCurve, QPropertyAnimation, Qt, pyqtProperty, pyqtSignal
-from PyQt5.QtGui import QColor, QFont, QPainter, QPen, QPixmap
+from PyQt5.QtGui import QColor, QFont, QPainter, QPen
 from PyQt5.QtWidgets import QWidget
 
+from esp_handset.asset_icons import bubble_for_state, icon_for_key
 from esp_handset.shell_data import AppEntry
-
-_ASSET_DIR = Path(__file__).resolve().parents[1] / "Assets"
-_BUBBLE_CACHE: Dict[str, QPixmap] = {}
-
-
-def _bubble(name: str) -> Optional[QPixmap]:
-    if name not in _BUBBLE_CACHE:
-        path = _ASSET_DIR / name
-        pixmap = QPixmap(str(path)) if path.is_file() else QPixmap()
-        _BUBBLE_CACHE[name] = pixmap
-    pixmap = _BUBBLE_CACHE[name]
-    return pixmap if not pixmap.isNull() else None
 
 
 def _scale_for_offset(off: float) -> float:
@@ -185,7 +173,7 @@ class RadialMenu(QWidget):
             alpha = int(90 + 165 * min(1.0, scale))
 
             focused = abs(visual_off) < 0.35
-            bubble = _bubble("focused bubble.png" if focused else "unfocused bubble.png")
+            bubble = bubble_for_state(focused)
             if bubble is not None:
                 bubble_size = r * 2
                 scaled_bubble = bubble.scaled(
@@ -208,17 +196,36 @@ class RadialMenu(QWidget):
                     p.setPen(QPen(QColor(255, 255, 255, 45), 1))
                 p.drawEllipse(int(x - r), int(y - r), r * 2, r * 2)
 
-            glyph_size = max(8, int(24 * scale))
-            p.setPen(QColor(0, 0, 0, 255) if focused else QColor(232, 238, 245, alpha))
-            p.setFont(QFont("DejaVu Sans", glyph_size, QFont.Bold))
-            p.drawText(
-                int(x - r),
-                int(y - r),
-                r * 2,
-                r * 2,
-                Qt.AlignCenter,
-                entry.glyph[:1],
-            )
+            icon = icon_for_key(entry.key)
+            if icon is not None and not icon.isNull():
+                icon_size = max(8, int(42 * scale))
+                scaled_icon = icon.scaled(
+                    icon_size,
+                    icon_size,
+                    Qt.KeepAspectRatio,
+                    Qt.SmoothTransformation,
+                )
+                p.drawPixmap(
+                    int(x - scaled_icon.width() // 2),
+                    int(y - scaled_icon.height() // 2),
+                    scaled_icon,
+                )
+            else:
+                glyph_size = max(8, int(24 * scale))
+                p.setPen(
+                    QColor(0, 0, 0, 255)
+                    if focused
+                    else QColor(232, 238, 245, alpha)
+                )
+                p.setFont(QFont("DejaVu Sans", glyph_size, QFont.Bold))
+                p.drawText(
+                    int(x - r),
+                    int(y - r),
+                    r * 2,
+                    r * 2,
+                    Qt.AlignCenter,
+                    entry.glyph[:1],
+                )
             if focused:
                 # Black ring already drawn; add outer ticks for non-color cue
                 p.setPen(QPen(QColor("#000000"), 2))

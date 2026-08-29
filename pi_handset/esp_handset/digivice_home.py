@@ -2,26 +2,14 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Callable, Dict, List, Optional
 
 from PyQt5.QtCore import Qt, QPoint, pyqtSignal
 from PyQt5.QtGui import QFont, QPainter, QColor, QPen, QPixmap, QPolygon
 from PyQt5.QtWidgets import QWidget
 
+from esp_handset.asset_icons import bubble_for_state, icon_for_key
 from esp_handset.shell_data import AppEntry
-
-_ASSET_DIR = Path(__file__).resolve().parents[1] / "Assets"
-_BUBBLE_CACHE: Dict[str, QPixmap] = {}
-
-
-def _bubble(name: str) -> Optional[QPixmap]:
-    if name not in _BUBBLE_CACHE:
-        path = _ASSET_DIR / name
-        pixmap = QPixmap(str(path)) if path.is_file() else QPixmap()
-        _BUBBLE_CACHE[name] = pixmap
-    pixmap = _BUBBLE_CACHE[name]
-    return pixmap if not pixmap.isNull() else None
 
 
 class DigiviceHome(QWidget):
@@ -141,7 +129,7 @@ class DigiviceHome(QWidget):
                 cx = int(slot * (i + 0.5))
                 focused = row_i == self._row and i == self._col
                 bubble_size = 32
-                bubble = _bubble("focused bubble.png" if focused else "unfocused bubble.png")
+                bubble = bubble_for_state(focused)
                 if bubble is not None:
                     p.drawPixmap(cx - bubble_size // 2, y - bubble_size // 2, bubble)
                 else:
@@ -162,7 +150,7 @@ class DigiviceHome(QWidget):
                     p.setBrush(QColor("#FFE600"))
                     p.setPen(QPen(QColor("#000000"), 2))
                     p.drawPolygon(tri)
-                art = self._stage_art.get(e.key)
+                art = icon_for_key(e.key)
                 if art is not None and not art.isNull():
                     icon = art.scaled(
                         24,
