@@ -243,6 +243,7 @@ fi
 log "Install → $PREFIX"
 mkdir -p "$PREFIX" "$PREFIX/session" /etc/esp-handset /etc/udev/rules.d /etc/X11/xorg.conf.d
 cp -a "$ROOT/esp_handset" "$PREFIX/"
+[[ -d "$ROOT/Assets" ]] && cp -a "$ROOT/Assets" "$PREFIX/"
 cp -a "$ROOT/session/." "$PREFIX/session/" 2>/dev/null || true
 [[ -d "$ROOT/display" ]] && cp -a "$ROOT/display" "$PREFIX/"
 

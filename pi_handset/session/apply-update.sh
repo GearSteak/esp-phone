@@ -96,6 +96,7 @@ install_live_from_repo() {
   log "Install live from $REPO → $PREFIX"
   mkdir -p "$PREFIX" "$PREFIX/session"
   cp -a "$ROOT/esp_handset" "$PREFIX/"
+  [[ -d "$ROOT/Assets" ]] && cp -a "$ROOT/Assets" "$PREFIX/"
   cp -a "$ROOT/session/." "$PREFIX/session/" 2>/dev/null || true
   install -m 755 "$ROOT/esp_handset/handset_app.py" "$PREFIX/handset_app.py"
   install -m 755 "$ROOT/esp_handset/buttons_inputd.py" "$PREFIX/buttons_inputd.py"

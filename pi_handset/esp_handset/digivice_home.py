@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Callable, Dict, List, Optional
 
 from PyQt5.QtCore import Qt, QPoint, pyqtSignal
@@ -9,6 +10,18 @@ from PyQt5.QtGui import QFont, QPainter, QColor, QPen, QPixmap, QPolygon
 from PyQt5.QtWidgets import QWidget
 
 from esp_handset.shell_data import AppEntry
+
+_ASSET_DIR = Path(__file__).resolve().parents[1] / "Assets"
+_BUBBLE_CACHE: Dict[str, QPixmap] = {}
+
+
+def _bubble(name: str) -> Optional[QPixmap]:
+    if name not in _BUBBLE_CACHE:
+        path = _ASSET_DIR / name
+        pixmap = QPixmap(str(path)) if path.is_file() else QPixmap()
+        _BUBBLE_CACHE[name] = pixmap
+    pixmap = _BUBBLE_CACHE[name]
+    return pixmap if not pixmap.isNull() else None
 
 
 class DigiviceHome(QWidget):
@@ -127,20 +140,18 @@ class DigiviceHome(QWidget):
             for i, e in enumerate(entries):
                 cx = int(slot * (i + 0.5))
                 focused = row_i == self._row and i == self._col
-                r = 18 if focused else 12
-                if focused:
-                    # Yellow + black frame: high luminance contrast (not blue-on-blue)
-                    p.setBrush(QColor("#FFE600"))
-                    p.setPen(QPen(QColor("#000000"), 3))
-                    p.drawEllipse(cx - r - 2, y - r - 2, (r + 2) * 2, (r + 2) * 2)
-                    p.setBrush(QColor("#FFE600"))
-                    p.setPen(QPen(QColor("#000000"), 2))
+                bubble_size = 32
+                bubble = _bubble("focused bubble.png" if focused else "unfocused bubble.png")
+                if bubble is not None:
+                    p.drawPixmap(cx - bubble_size // 2, y - bubble_size // 2, bubble)
                 else:
-                    p.setBrush(QColor(30, 45, 65, 220))
-                    p.setPen(QPen(QColor(255, 255, 255, 50), 1))
-                p.drawEllipse(cx - r, y - r, r * 2, r * 2)
+                    r = bubble_size // 2
+                    p.setBrush(QColor("#FFE600" if focused else "#1e2d41"))
+                    p.setPen(QPen(QColor("#000000" if focused else "#ffffff"), 2))
+                    p.drawEllipse(cx - r, y - r, bubble_size, bubble_size)
                 if focused:
                     # Filled triangle tip under bubble (shape cue)
+                    r = bubble_size // 2
                     tri = QPolygon(
                         [
                             QPoint(cx, y + r + 8),
@@ -154,8 +165,8 @@ class DigiviceHome(QWidget):
                 art = self._stage_art.get(e.key)
                 if art is not None and not art.isNull():
                     icon = art.scaled(
-                        max(8, r * 2 - 6),
-                        max(8, r * 2 - 6),
+                        24,
+                        24,
                         Qt.KeepAspectRatio,
                         Qt.SmoothTransformation,
                     )
@@ -166,7 +177,7 @@ class DigiviceHome(QWidget):
                     )
                 else:
                     p.setPen(QColor("#000000" if focused else "#9ab"))
-                    p.setFont(QFont("DejaVu Sans", 12 if focused else 9, QFont.Bold))
+                    p.setFont(QFont("DejaVu Sans", 12 if focused else 10, QFont.Bold))
                     p.drawText(cx - 14, y - 10, 28, 20, Qt.AlignCenter, e.glyph[:1])
 
         # Top row

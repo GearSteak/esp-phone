@@ -2,13 +2,26 @@
 
 from __future__ import annotations
 
-from typing import Callable, List, Optional
+from pathlib import Path
+from typing import Callable, Dict, List, Optional
 
 from PyQt5.QtCore import QEasingCurve, QPropertyAnimation, Qt, pyqtProperty, pyqtSignal
-from PyQt5.QtGui import QColor, QFont, QPainter, QPen
+from PyQt5.QtGui import QColor, QFont, QPainter, QPen, QPixmap
 from PyQt5.QtWidgets import QWidget
 
 from esp_handset.shell_data import AppEntry
+
+_ASSET_DIR = Path(__file__).resolve().parents[1] / "Assets"
+_BUBBLE_CACHE: Dict[str, QPixmap] = {}
+
+
+def _bubble(name: str) -> Optional[QPixmap]:
+    if name not in _BUBBLE_CACHE:
+        path = _ASSET_DIR / name
+        pixmap = QPixmap(str(path)) if path.is_file() else QPixmap()
+        _BUBBLE_CACHE[name] = pixmap
+    pixmap = _BUBBLE_CACHE[name]
+    return pixmap if not pixmap.isNull() else None
 
 
 def _scale_for_offset(off: float) -> float:
@@ -172,15 +185,28 @@ class RadialMenu(QWidget):
             alpha = int(90 + 165 * min(1.0, scale))
 
             focused = abs(visual_off) < 0.35
-            if focused:
-                # High-contrast center (yellow/black) — not blue-on-blue
-                p.setBrush(QColor(255, 230, 0, min(255, alpha + 40)))
-                p.setPen(QPen(QColor("#000000"), 3))
+            bubble = _bubble("focused bubble.png" if focused else "unfocused bubble.png")
+            if bubble is not None:
+                bubble_size = r * 2
+                scaled_bubble = bubble.scaled(
+                    bubble_size,
+                    bubble_size,
+                    Qt.IgnoreAspectRatio,
+                    Qt.SmoothTransformation,
+                )
+                p.save()
+                p.setOpacity(max(0.4, alpha / 255.0))
+                p.drawPixmap(int(x - r), int(y - r), scaled_bubble)
+                p.restore()
             else:
-                p.setBrush(QColor(40, 55, 75, alpha))
-                p.setPen(QPen(QColor(255, 255, 255, 45), 1))
-
-            p.drawEllipse(int(x - r), int(y - r), r * 2, r * 2)
+                if focused:
+                    # High-contrast center (yellow/black) — not blue-on-blue
+                    p.setBrush(QColor(255, 230, 0, min(255, alpha + 40)))
+                    p.setPen(QPen(QColor("#000000"), 3))
+                else:
+                    p.setBrush(QColor(40, 55, 75, alpha))
+                    p.setPen(QPen(QColor(255, 255, 255, 45), 1))
+                p.drawEllipse(int(x - r), int(y - r), r * 2, r * 2)
 
             glyph_size = max(8, int(24 * scale))
             p.setPen(QColor(0, 0, 0, 255) if focused else QColor(232, 238, 245, alpha))

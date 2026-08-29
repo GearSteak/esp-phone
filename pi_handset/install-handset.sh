@@ -54,6 +54,7 @@ apt-get install -y midori || apt-get install -y epiphany-browser || true
 
 mkdir -p "$PREFIX" "$PREFIX/session" /etc/esp-handset /etc/udev/rules.d
 cp -a "$ROOT/esp_handset" "$PREFIX/"
+[[ -d "$ROOT/Assets" ]] && cp -a "$ROOT/Assets" "$PREFIX/"
 cp -a "$ROOT/session/." "$PREFIX/session/"
 install -m 755 "$ROOT/esp_handset/hat_inputd.py" "$PREFIX/hat_inputd.py"
 install -m 755 "$ROOT/esp_handset/buttons_inputd.py" "$PREFIX/buttons_inputd.py"

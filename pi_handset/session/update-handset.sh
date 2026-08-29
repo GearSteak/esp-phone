@@ -167,6 +167,7 @@ install_tree() {
   log "Installing software → $DEST (user=$USER_NAME)"
   mkdir -p "$DEST" "$DEST/session" /etc/esp-handset
   cp -a "$ROOT/esp_handset" "$DEST/"
+  [[ -d "$ROOT/Assets" ]] && cp -a "$ROOT/Assets" "$DEST/"
   cp -a "$ROOT/session/." "$DEST/session/" 2>/dev/null || true
   install -m 755 "$ROOT/esp_handset/hat_inputd.py" "$DEST/hat_inputd.py"
   install -m 755 "$ROOT/esp_handset/buttons_inputd.py" "$DEST/buttons_inputd.py"
