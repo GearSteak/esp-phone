@@ -146,7 +146,7 @@ class DigiviceHome(QWidget):
         if self._pengun_frames:
             pengun = self._pengun_frames[self._pengun_frame]
             p.drawPixmap(
-                w - pengun.width() - 8,
+                8,
                 (h - pengun.height()) // 2,
                 pengun,
             )
