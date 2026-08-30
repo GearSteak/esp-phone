@@ -227,8 +227,16 @@ digivice_display_env() {
   export ESP_HANDSET_SKIP_LAYOUT="${ESP_HANDSET_SKIP_LAYOUT:-0}"
   # 1 = SPI primary, HDMI off (proves dual-head was starving SPI)
   export ESP_HANDSET_SPI_ONLY="${ESP_HANDSET_SPI_ONLY:-0}"
-  # Instructables-style ST7789 userspace mirror when /etc/esp-handset/spi-userspace exists
-  if [[ -f /etc/esp-handset/spi-userspace ]] || [[ -f /etc/esp-handset/spi-backend ]]; then
+  # Instructables-style ST7789 userspace mirror when explicitly selected.
+  # A generic spi-backend file may instead select DRM; do not skip the
+  # connector layout in that case or the SPI panel never gets a mode.
+  local spi_backend_marker=""
+  if [[ -f /etc/esp-handset/spi-backend ]]; then
+    spi_backend_marker="$(tr -d '[:space:]' </etc/esp-handset/spi-backend 2>/dev/null || true)"
+  fi
+  if [[ -f /etc/esp-handset/spi-userspace ]] \
+    || [[ "$spi_backend_marker" == "userspace" ]] \
+    || [[ "$spi_backend_marker" == "spidev" ]]; then
     export ESP_HANDSET_SPI_BACKEND="${ESP_HANDSET_SPI_BACKEND:-userspace}"
     export ESP_HANDSET_SKIP_LAYOUT="${ESP_HANDSET_SKIP_LAYOUT:-1}"
   fi
@@ -238,6 +246,13 @@ digivice_display_env() {
     # shellcheck source=/dev/null
     source /etc/esp-handset/env 2>/dev/null || true
     set +a
+  fi
+  # The env file is authoritative. Keep the layout skip aligned with the
+  # final backend so an env=drm installation still enables its SPI connector.
+  if [[ "${ESP_HANDSET_SPI_BACKEND:-}" == "userspace" ]]; then
+    export ESP_HANDSET_SKIP_LAYOUT=1
+  elif [[ "${ESP_HANDSET_SPI_BACKEND:-}" == "drm" ]]; then
+    export ESP_HANDSET_SKIP_LAYOUT=0
   fi
 
   if [[ -z "${DISPLAY:-}" && -z "${WAYLAND_DISPLAY:-}" ]]; then
