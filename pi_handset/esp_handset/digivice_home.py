@@ -46,7 +46,7 @@ class DigiviceHome(QWidget):
             frame for frame in self._pengun_frames if not frame.isNull()
         ]
         self._pengun_frame = 0
-        self._pengun_walk_sequence = (0, 1, 2, 3, 2, 1)
+        self._pengun_walk_sequence = (0, 1, 2, 3, 1)
         self._pengun_walk_index = 0
         self._pengun_timer = QTimer(self)
         self._pengun_timer.setInterval(140)
