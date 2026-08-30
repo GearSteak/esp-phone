@@ -10,6 +10,7 @@ from PyQt5.QtWidgets import QWidget
 
 from esp_handset.asset_icons import bubble_for_state, icon_for_key
 from esp_handset.shell_data import AppEntry
+from esp_handset.ui_font import font_family
 
 class DigiviceHome(QWidget):
     """Two rows of icons (top / bottom) with a Digivice-style center stage.
@@ -164,7 +165,7 @@ class DigiviceHome(QWidget):
                     )
                 else:
                     p.setPen(QColor("#000000" if focused else "#9ab"))
-                    p.setFont(QFont("DejaVu Sans", 12 if focused else 10, QFont.Bold))
+                    p.setFont(QFont(font_family(), 12 if focused else 10, QFont.Bold))
                     p.drawText(cx - 14, y - 10, 28, 20, Qt.AlignCenter, e.glyph[:1])
 
         # Top row
@@ -197,12 +198,9 @@ class DigiviceHome(QWidget):
             p.setBrush(QColor(0, 0, 0, 155))
             p.drawRoundedRect(title_rect, 6, 6)
             p.setPen(QColor("#e8eef5"))
-            p.setFont(QFont("DejaVu Sans", 11, QFont.Bold))
+            p.setFont(QFont(font_family(), 11, QFont.Bold))
             p.drawText(
-                stage.left(),
-                stage.bottom() - title_h,
-                stage.width(),
-                title_h,
+                title_rect,
                 Qt.AlignHCenter | Qt.AlignVCenter,
                 cur.title,
             )

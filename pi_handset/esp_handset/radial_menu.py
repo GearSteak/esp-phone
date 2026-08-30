@@ -10,6 +10,7 @@ from PyQt5.QtWidgets import QWidget
 
 from esp_handset.asset_icons import bubble_for_state, icon_for_key
 from esp_handset.shell_data import AppEntry
+from esp_handset.ui_font import font_family
 
 
 def _scale_for_offset(off: float) -> float:
@@ -148,7 +149,7 @@ class RadialMenu(QWidget):
 
         # Side arrows (always — wrap-around)
         p.setPen(QPen(QColor("#58a6ff"), 2))
-        p.setFont(QFont("DejaVu Sans", 18, QFont.Bold))
+        p.setFont(QFont(font_family(), 18, QFont.Bold))
         p.drawText(2, int(cy - 14), 22, 28, Qt.AlignCenter, "‹")
         p.drawText(w - 24, int(cy - 14), 22, 28, Qt.AlignCenter, "›")
 
@@ -217,7 +218,7 @@ class RadialMenu(QWidget):
                     if focused
                     else QColor(232, 238, 245, alpha)
                 )
-                p.setFont(QFont("DejaVu Sans", glyph_size, QFont.Bold))
+                p.setFont(QFont(font_family(), glyph_size, QFont.Bold))
                 p.drawText(
                     int(x - r),
                     int(y - r),
@@ -238,8 +239,8 @@ class RadialMenu(QWidget):
             show_idx = (self._index + (1 if self._shift > 0 else -1)) % n
         cur = self._entries[show_idx]
         p.setPen(QColor("#e8eef5"))
-        p.setFont(QFont("DejaVu Sans", 12, QFont.Bold))
+        p.setFont(QFont(font_family(), 12, QFont.Bold))
         p.drawText(8, h - 34, w - 16, 18, Qt.AlignHCenter | Qt.AlignTop, cur.title)
         p.setPen(QColor("#8aa"))
-        p.setFont(QFont("DejaVu Sans", 8))
+        p.setFont(QFont(font_family(), 8))
         p.drawText(8, h - 16, w - 16, 14, Qt.AlignHCenter | Qt.AlignTop, f"{show_idx + 1}/{n}")

@@ -8,10 +8,12 @@ from typing import Optional
 from PyQt5.QtGui import QFont, QFontDatabase
 
 _FONT_PATH = Path(__file__).resolve().parents[1] / "Assets" / "Tengoku.ttf"
+_LOADED_FAMILY: Optional[str] = None
 
 
 def install_app_font(app) -> Optional[str]:
     """Load Tengoku and make it the application and painted UI font."""
+    global _LOADED_FAMILY
     if not _FONT_PATH.is_file():
         return None
     font_id = QFontDatabase.addApplicationFont(str(_FONT_PATH))
@@ -21,7 +23,13 @@ def install_app_font(app) -> Optional[str]:
     if not families:
         return None
     family = families[0]
+    _LOADED_FAMILY = family
     app.setFont(QFont(family))
     for alias in ("DejaVu Sans", "sans-serif", "monospace"):
         QFont.insertSubstitution(alias, family)
     return family
+
+
+def font_family() -> str:
+    """Return the loaded UI family for explicitly painted text."""
+    return _LOADED_FAMILY or QFont().family()
