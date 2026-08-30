@@ -49,7 +49,7 @@ class DigiviceHome(QWidget):
         ]
         self._pengun_idle_frames = [
             QPixmap(str(_PENGUN_ASSET_DIR / f"pengun_idle_right_{i}.png"))
-            for i in range(1, 17)
+            for i in (2, 3, 4)
         ]
         self._pengun_idle_frames = [
             frame for frame in self._pengun_idle_frames if not frame.isNull()
