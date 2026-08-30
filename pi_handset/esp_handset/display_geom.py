@@ -409,9 +409,18 @@ class MultiDisplayKiosk:
                 flush=True,
             )
 
-        # Fullscreen host on every large screen (HDMI). Phone-sized DRM screens
-        # also get a host so SPI DRM gets full UI if it ever has a mode.
-        for s in screens:
+        # Userspace SPI needs the source window available for grabbing. A
+        # phone-sized QScreen is the panel itself, not an HDMI mirror target;
+        # putting a fullscreen host on it can feed black frames back to SPI.
+        host_screens = screens
+        if backend == "userspace":
+            host_screens = [s for s in screens if is_large_screen(s)]
+            if len(host_screens) != len(screens):
+                print(
+                    "[handset] userspace SPI: skipping phone-sized screen host",
+                    flush=True,
+                )
+        for s in host_screens:
             host = ScaledScreenHost(self.source, s, self._current_frame)
             host.place()
             self.hosts.append(host)
