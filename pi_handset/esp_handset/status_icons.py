@@ -10,6 +10,35 @@ from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QColor, QPainter, QPen
 from PyQt5.QtWidgets import QWidget
 
+from esp_handset.asset_icons import status_icon_for_key
+
+
+def _draw_status_asset(
+    painter: QPainter, widget: QWidget, key: str, *, opacity: float = 1.0
+) -> bool:
+    asset = status_icon_for_key(key)
+    if asset is None:
+        return False
+    scaled = asset.scaled(
+        widget.size(),
+        Qt.KeepAspectRatio,
+        Qt.FastTransformation,
+    )
+    painter.save()
+    painter.setOpacity(max(0.2, min(1.0, opacity)))
+    painter.drawPixmap(
+        (widget.width() - scaled.width()) // 2,
+        (widget.height() - scaled.height()) // 2,
+        scaled,
+    )
+    painter.restore()
+    return True
+
+
+def _draw_status_slash(painter: QPainter, widget: QWidget) -> None:
+    painter.setPen(QPen(QColor("#ff6b6b"), 1.6, Qt.SolidLine, Qt.RoundCap))
+    painter.drawLine(2, 2, widget.width() - 3, widget.height() - 2)
+
 
 def wifi_is_up() -> bool:
     """True if a wireless iface looks associated / has carrier."""
@@ -118,6 +147,10 @@ class BtGlyph(QWidget):
     def paintEvent(self, _event) -> None:  # noqa: N802
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
+        if _draw_status_asset(p, self, "bluetooth", opacity=1.0 if self._on else 0.35):
+            if not self._on:
+                _draw_status_slash(p, self)
+            return
         col = QColor("#c8e0f0") if self._on else QColor("#4a5560")
         p.setPen(QPen(col, 1.5, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
         # Runic BT shape
@@ -168,6 +201,10 @@ class BatGlyph(QWidget):
     def paintEvent(self, _event) -> None:  # noqa: N802
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
+        if _draw_status_asset(p, self, "ups battery", opacity=1.0 if self._pct >= 0 else 0.35):
+            if self._pct < 0:
+                _draw_status_slash(p, self)
+            return
         absent = self._pct < 0
         if absent:
             col = QColor("#4a5560")
@@ -220,6 +257,10 @@ class HeltecGlyph(QWidget):
     def paintEvent(self, _event) -> None:  # noqa: N802
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
+        if _draw_status_asset(p, self, "heltec", opacity=1.0 if self._on else 0.35):
+            if not self._on:
+                _draw_status_slash(p, self)
+            return
         col = QColor("#c8e0f0") if self._on else QColor("#4a5560")
         p.setPen(QPen(col, 1.4, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
         p.drawLine(7, 3, 7, 12)
@@ -317,6 +358,10 @@ class WifiGlyph(QWidget):
     def paintEvent(self, _event) -> None:  # noqa: N802
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
+        if _draw_status_asset(p, self, "wifi", opacity=1.0 if self._on else 0.35):
+            if not self._on:
+                _draw_status_slash(p, self)
+            return
         on = self._on
         col = QColor("#c8e0f0") if on else QColor("#4a5560")
         p.setPen(QPen(col, 1.4, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
@@ -353,6 +398,15 @@ class CellGlyph(QWidget):
 
     def paintEvent(self, _event) -> None:  # noqa: N802
         p = QPainter(self)
+        if _draw_status_asset(
+            p,
+            self,
+            "cellular signal",
+            opacity=1.0 if self._known and self._bars > 0 else 0.35,
+        ):
+            if not self._known or self._bars == 0:
+                _draw_status_slash(p, self)
+            return
         p.setRenderHint(QPainter.Antialiasing)
         n = self._bars
         heights = (4, 7, 10, 13)

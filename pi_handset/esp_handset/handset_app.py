@@ -909,6 +909,14 @@ def main() -> int:
         pass
 
     app = QApplication(sys.argv)
+    try:
+        from esp_handset.ui_font import install_app_font
+
+        family = install_app_font(app)
+        if family:
+            print(f"[handset] UI font: {family}", flush=True)
+    except Exception as e:
+        print(f"[handset] UI font unavailable: {e}", flush=True)
     # Digivice is hard-button UI — never show a mouse pointer over the phone
     try:
         from PyQt5.QtCore import Qt as _QtCur

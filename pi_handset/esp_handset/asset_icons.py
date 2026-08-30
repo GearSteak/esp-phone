@@ -14,7 +14,7 @@ _CACHE: Dict[str, QPixmap] = {}
 _ICON_ALIASES = {
     "phone": "calls",
     "contacts": "calls",
-    "call_log": "calls",
+    "call_log": "recent",
     "messages": "sms",
     "clock": "time",
     "timer": "timer",
@@ -23,19 +23,27 @@ _ICON_ALIASES = {
     "cam_timer3": "timer",
     "cam_timer10": "timer",
     "cam_video": "media",
-    "cam_pano": "camera",
-    "set_system": "settings",
-    "set_display": "settings",
-    "set_network": "settings",
+    "cam_pano": "panorama",
+    "wifi_transfer": "transfer",
+    "calc": "calculator",
+    "convert": "convertor",
+    "weather": "weatther",
+    "recorder": "voice",
+    "share_gps": "gps",
+    "videos": "media",
+    "set_system": "system",
+    "set_display": "display",
+    "set_network": "network",
     "set_accounts": "settings",
-    "set_security": "settings",
-    "set_debug": "settings",
-    "set_appearance": "settings",
-    "set_orientation": "settings",
-    "set_mouse": "settings",
-    "set_update": "settings",
-    "set_power": "settings",
-    "set_about": "settings",
+    "set_security": "security",
+    "set_debug": "debug",
+    "set_appearance": "look",
+    "set_orientation": "display",
+    "set_mouse": "mouse",
+    "set_update": "update",
+    "set_power": "power",
+    "set_about": "about",
+    "help": "help",
     "acct_sip": "calls",
     "acct_email": "email",
 }
@@ -68,3 +76,8 @@ def icon_for_key(key: str, *, inverted: bool = False) -> Optional[QPixmap]:
 def bubble_for_state(focused: bool) -> Optional[QPixmap]:
     """Return the supplied 32×32 focused or unfocused bubble."""
     return _load("focused bubble" if focused else "unfocused bubble")
+
+
+def status_icon_for_key(key: str) -> Optional[QPixmap]:
+    """Return a custom status-bar asset, or None for the painted fallback."""
+    return _load(key)
