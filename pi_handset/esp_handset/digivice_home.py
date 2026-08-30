@@ -59,6 +59,7 @@ class DigiviceHome(QWidget):
         self._pengun_walk_until = 0.0
         self._pengun_walk_sequence = (0, 1, 2, 3, 4)
         self._pengun_walk_index = 0
+        self._pengun_idle_hold = 0
         self._pengun_timer = QTimer(self)
         self._pengun_timer.setInterval(140)
         self._pengun_timer.timeout.connect(self._advance_pengun)
@@ -153,7 +154,11 @@ class DigiviceHome(QWidget):
             if self._pengun_mode != "idle":
                 self._pengun_mode = "idle"
                 self._pengun_frame = 0
+                self._pengun_idle_hold = 0
             elif self._pengun_idle_frames:
+                self._pengun_idle_hold = (self._pengun_idle_hold + 1) % 2
+                if self._pengun_idle_hold:
+                    return
                 self._pengun_frame = (self._pengun_frame + 1) % len(
                     self._pengun_idle_frames
                 )
