@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 from typing import Callable, Dict, List, Optional
 
@@ -23,6 +24,7 @@ class DigiviceHome(QWidget):
     """
 
     activated = pyqtSignal(str)
+    step_detected = pyqtSignal()
 
     def __init__(
         self,
@@ -46,9 +48,13 @@ class DigiviceHome(QWidget):
             frame for frame in self._pengun_frames if not frame.isNull()
         ]
         self._pengun_frame = 0
+        self._pengun_walk_sequence = (0, 1, 2, 3, 2, 1)
+        self._pengun_walk_index = 0
+        self._pengun_walk_until = 0.0
         self._pengun_timer = QTimer(self)
         self._pengun_timer.setInterval(140)
         self._pengun_timer.timeout.connect(self._advance_pengun)
+        self.step_detected.connect(self._on_step_detected)
         if self._pengun_frames:
             self._pengun_timer.start()
         self.setFocusPolicy(Qt.StrongFocus)
@@ -125,8 +131,28 @@ class DigiviceHome(QWidget):
     def _advance_pengun(self) -> None:
         if not self._pengun_frames:
             return
-        self._pengun_frame = (self._pengun_frame + 1) % len(self._pengun_frames)
+        if time.monotonic() >= self._pengun_walk_until:
+            changed = self._pengun_frame != 0 or self._pengun_walk_index != 0
+            self._pengun_frame = 0
+            self._pengun_walk_index = 0
+            if changed:
+                self.update()
+            return
+        self._pengun_frame = self._pengun_walk_sequence[self._pengun_walk_index]
+        self._pengun_walk_index = (self._pengun_walk_index + 1) % len(
+            self._pengun_walk_sequence
+        )
         self.update()
+
+    def _on_step_detected(self) -> None:
+        if time.monotonic() >= self._pengun_walk_until:
+            self._pengun_walk_index = 0
+        self._pengun_walk_until = time.monotonic() + 0.84
+        self.update()
+
+    def notify_step(self) -> None:
+        """Notify the home animation that the pedometer count increased."""
+        self.step_detected.emit()
 
     def keyPressEvent(self, event) -> None:  # noqa: N802
         w = self.window()
