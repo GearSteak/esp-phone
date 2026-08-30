@@ -152,12 +152,7 @@ class DigiviceHome(QWidget):
                     p.drawPolygon(tri)
                 art = icon_for_key(e.key, inverted=focused)
                 if art is not None and not art.isNull():
-                    icon = art.scaled(
-                        24,
-                        24,
-                        Qt.KeepAspectRatio,
-                        Qt.SmoothTransformation,
-                    )
+                    icon = art
                     p.drawPixmap(
                         cx - icon.width() // 2,
                         y - icon.height() // 2,
