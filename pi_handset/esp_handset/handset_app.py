@@ -609,7 +609,13 @@ def build_app(bridge: Optional[EspBridge], modem: Optional[Sim7600]) -> PhoneShe
         # Start after display claimed GPIO — delay avoids setmode races
         from PyQt5.QtCore import QTimer
 
-        QTimer.singleShot(1500, lambda: start_monitor())
+        home = getattr(shell, "_home", None)
+
+        def on_step(_total: int) -> None:
+            if home is not None:
+                home.notify_step()
+
+        QTimer.singleShot(1500, lambda: start_monitor(on_step=on_step))
     except Exception as e:
         print(f"[handset] steps monitor: {e}", flush=True)
     shell.register_page(

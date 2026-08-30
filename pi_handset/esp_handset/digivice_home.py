@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 from typing import Callable, Dict, List, Optional
 
@@ -23,6 +24,7 @@ class DigiviceHome(QWidget):
     """
 
     activated = pyqtSignal(str)
+    step_detected = pyqtSignal()
 
     def __init__(
         self,
@@ -38,20 +40,30 @@ class DigiviceHome(QWidget):
         self._col = 0
         # Optional center-stage art per app key (e.g. media cart logo)
         self._stage_art: Dict[str, QPixmap] = {}
-        self._pengun_frames = [
+        self._pengun_walk_frames = [
             QPixmap(str(_PENGUN_ASSET_DIR / f"pengun_walk_right_{i}.png"))
             for i in range(1, 6)
         ]
-        self._pengun_frames = [
-            frame for frame in self._pengun_frames if not frame.isNull()
+        self._pengun_walk_frames = [
+            frame for frame in self._pengun_walk_frames if not frame.isNull()
+        ]
+        self._pengun_idle_frames = [
+            QPixmap(str(_PENGUN_ASSET_DIR / f"pengun_idle_right_{i}.png"))
+            for i in range(1, 17)
+        ]
+        self._pengun_idle_frames = [
+            frame for frame in self._pengun_idle_frames if not frame.isNull()
         ]
         self._pengun_frame = 0
+        self._pengun_mode = "idle" if self._pengun_idle_frames else "walk"
+        self._pengun_walk_until = 0.0
         self._pengun_walk_sequence = (0, 1, 2, 3, 4)
         self._pengun_walk_index = 0
         self._pengun_timer = QTimer(self)
         self._pengun_timer.setInterval(140)
         self._pengun_timer.timeout.connect(self._advance_pengun)
-        if self._pengun_frames:
+        self.step_detected.connect(self._on_step_detected)
+        if self._pengun_walk_frames or self._pengun_idle_frames:
             self._pengun_timer.start()
         self.setFocusPolicy(Qt.StrongFocus)
         self.setMinimumSize(200, 180)
@@ -125,13 +137,42 @@ class DigiviceHome(QWidget):
             self.activated.emit(cur.key)
 
     def _advance_pengun(self) -> None:
-        if not self._pengun_frames:
+        if not self._pengun_walk_frames and not self._pengun_idle_frames:
             return
-        self._pengun_frame = self._pengun_walk_sequence[self._pengun_walk_index]
-        self._pengun_walk_index = (self._pengun_walk_index + 1) % len(
-            self._pengun_walk_sequence
-        )
+        now = time.monotonic()
+        walking = bool(self._pengun_walk_frames) and now < self._pengun_walk_until
+        if walking:
+            if self._pengun_mode != "walk":
+                self._pengun_mode = "walk"
+                self._pengun_walk_index = 0
+            self._pengun_frame = self._pengun_walk_sequence[self._pengun_walk_index]
+            self._pengun_walk_index = (self._pengun_walk_index + 1) % len(
+                self._pengun_walk_sequence
+            )
+        else:
+            if self._pengun_mode != "idle":
+                self._pengun_mode = "idle"
+                self._pengun_frame = 0
+            elif self._pengun_idle_frames:
+                self._pengun_frame = (self._pengun_frame + 1) % len(
+                    self._pengun_idle_frames
+                )
         self.update()
+
+    def _on_step_detected(self) -> None:
+        if not self._pengun_walk_frames:
+            return
+        now = time.monotonic()
+        if now >= self._pengun_walk_until:
+            self._pengun_mode = "walk"
+            self._pengun_walk_index = 0
+            self._pengun_frame = 0
+        self._pengun_walk_until = now + len(self._pengun_walk_sequence) * 0.14
+        self.update()
+
+    def notify_step(self) -> None:
+        """Notify the home animation that the pedometer count increased."""
+        self.step_detected.emit()
 
     def keyPressEvent(self, event) -> None:  # noqa: N802
         w = self.window()
@@ -148,8 +189,13 @@ class DigiviceHome(QWidget):
         w, h = self.width(), self.height()
         cur = self.current()
 
-        if self._pengun_frames:
-            pengun = self._pengun_frames[self._pengun_frame]
+        pengun_frames = (
+            self._pengun_walk_frames
+            if self._pengun_mode == "walk"
+            else self._pengun_idle_frames
+        )
+        if pengun_frames:
+            pengun = pengun_frames[self._pengun_frame % len(pengun_frames)]
             p.drawPixmap(
                 8,
                 (h - pengun.height()) // 2,
