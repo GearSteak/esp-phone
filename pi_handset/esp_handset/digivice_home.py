@@ -2,15 +2,19 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Callable, Dict, List, Optional
 
-from PyQt5.QtCore import Qt, QPoint, QRect, pyqtSignal
+from PyQt5.QtCore import QTimer, Qt, QPoint, QRect, pyqtSignal
 from PyQt5.QtGui import QFont, QPainter, QColor, QPen, QPixmap, QPolygon
 from PyQt5.QtWidgets import QWidget
 
 from esp_handset.asset_icons import bubble_for_state, icon_for_key
 from esp_handset.shell_data import AppEntry
 from esp_handset.ui_font import font_family
+
+_PENGUN_ASSET_DIR = Path(__file__).resolve().parents[1] / "Assets"
+
 
 class DigiviceHome(QWidget):
     """Two rows of icons (top / bottom) with a Digivice-style center stage.
@@ -34,6 +38,19 @@ class DigiviceHome(QWidget):
         self._col = 0
         # Optional center-stage art per app key (e.g. media cart logo)
         self._stage_art: Dict[str, QPixmap] = {}
+        self._pengun_frames = [
+            QPixmap(str(_PENGUN_ASSET_DIR / f"pengun_walk_right_{i}.png"))
+            for i in range(1, 5)
+        ]
+        self._pengun_frames = [
+            frame for frame in self._pengun_frames if not frame.isNull()
+        ]
+        self._pengun_frame = 0
+        self._pengun_timer = QTimer(self)
+        self._pengun_timer.setInterval(140)
+        self._pengun_timer.timeout.connect(self._advance_pengun)
+        if self._pengun_frames:
+            self._pengun_timer.start()
         self.setFocusPolicy(Qt.StrongFocus)
         self.setMinimumSize(200, 180)
         if on_activate:
@@ -105,6 +122,12 @@ class DigiviceHome(QWidget):
         if cur:
             self.activated.emit(cur.key)
 
+    def _advance_pengun(self) -> None:
+        if not self._pengun_frames:
+            return
+        self._pengun_frame = (self._pengun_frame + 1) % len(self._pengun_frames)
+        self.update()
+
     def keyPressEvent(self, event) -> None:  # noqa: N802
         w = self.window()
         if w is not None and hasattr(w, "keyPressEvent"):
@@ -119,6 +142,14 @@ class DigiviceHome(QWidget):
         p.setRenderHint(QPainter.SmoothPixmapTransform)
         w, h = self.width(), self.height()
         cur = self.current()
+
+        if self._pengun_frames:
+            pengun = self._pengun_frames[self._pengun_frame]
+            p.drawPixmap(
+                w - pengun.width() - 8,
+                (h - pengun.height()) // 2,
+                pengun,
+            )
 
         def draw_row(entries: List[AppEntry], y: int, row_i: int) -> None:
             if not entries:
