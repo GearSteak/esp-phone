@@ -40,13 +40,13 @@ class DigiviceHome(QWidget):
         self._stage_art: Dict[str, QPixmap] = {}
         self._pengun_frames = [
             QPixmap(str(_PENGUN_ASSET_DIR / f"pengun_walk_right_{i}.png"))
-            for i in range(1, 5)
+            for i in range(1, 6)
         ]
         self._pengun_frames = [
             frame for frame in self._pengun_frames if not frame.isNull()
         ]
         self._pengun_frame = 0
-        self._pengun_walk_sequence = (0, 1, 2, 3, 1)
+        self._pengun_walk_sequence = (0, 1, 2, 3, 4)
         self._pengun_walk_index = 0
         self._pengun_timer = QTimer(self)
         self._pengun_timer.setInterval(140)
