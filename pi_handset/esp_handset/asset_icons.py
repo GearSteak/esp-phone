@@ -13,12 +13,12 @@ _CACHE: Dict[str, QPixmap] = {}
 # Reuse the supplied main-menu artwork for matching submenu concepts.
 _ICON_ALIASES = {
     "phone": "calls",
-    "contacts": "calls",
+    "contacts": "contacts",
     "call_log": "recent",
-    "messages": "sms",
+    "messages": "messages",
     "clock": "time",
     "timer": "timer",
-    "calendar": "time",
+    "calendar": "calendar",
     "cam_photo": "camera",
     "cam_timer3": "timer",
     "cam_timer10": "timer",
