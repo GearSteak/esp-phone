@@ -3168,7 +3168,7 @@ def make_debug_page(on_back: Callable[[], None]) -> QWidget:
     import wave
     from shutil import which
 
-    from PyQt5.QtCore import QProcess, QTimer
+    from PyQt5.QtCore import QProcess, QTimer, QObject, pyqtSignal
     from PyQt5.QtWidgets import QSizePolicy
 
     from esp_handset import store
@@ -3244,6 +3244,11 @@ def make_debug_page(on_back: Callable[[], None]) -> QWidget:
     piezo_btn.setStyleSheet("font-size:13px; font-weight:700;")
     lay.addWidget(piezo_btn)
 
+    vibe_btn = QPushButton("VIBE (MCP GPB7)")
+    vibe_btn.setFixedHeight(32)
+    vibe_btn.setStyleSheet("font-size:13px; font-weight:700;")
+    lay.addWidget(vibe_btn)
+
     yes_btn = _big_btn("YES")
     no_btn = _big_btn("NO")
     yes_btn.setStyleSheet("font-size:15px; font-weight:700; background:#1a5a2a;")
@@ -3265,6 +3270,7 @@ def make_debug_page(on_back: Callable[[], None]) -> QWidget:
     procs: list = []
     test_wav = DATA / "debug_mic_test.wav"
     busy = {"on": False}
+    vibe_busy = {"on": False}
     pending = {"kind": None}
     state = {"spk_dev": False, "mic_dev": False, "spk": "?", "mic": "?"}
 
@@ -3273,6 +3279,11 @@ def make_debug_page(on_back: Callable[[], None]) -> QWidget:
 
     def _set_status(msg: str) -> None:
         status.setText((msg or "")[:42])
+
+    class _VibeResult(QObject):
+        done = pyqtSignal(bool, str)
+
+    vibe_result = _VibeResult(body)
 
     def _set_badge(lab: QLabel, title: str, verdict: str) -> None:
         colors = {
@@ -3306,6 +3317,50 @@ def make_debug_page(on_back: Callable[[], None]) -> QWidget:
         mic_btn.setEnabled(not on)
         sound_btn.setEnabled(not on)
         wake_btn.setEnabled(not on)
+        vibe_btn.setEnabled(not on and not vibe_busy["on"])
+
+    def vibe_test() -> None:
+        if busy["on"] or vibe_busy["on"]:
+            return
+        vibe_busy["on"] = True
+        vibe_btn.setEnabled(False)
+        _set_status("Vibration test…")
+
+        def _work() -> None:
+            ok = False
+            message = "VIBE failed — MCP not found"
+            mcp = None
+            try:
+                from esp_handset import mcp23017
+
+                mcp = mcp23017
+                ok = bool(mcp.set_output("VIBE", True))
+                if ok:
+                    threading.Event().wait(0.75)
+                    message = "Vibration test complete · GPB7"
+                else:
+                    message = "VIBE failed — check MCP/I2C"
+            except Exception as e:
+                message = f"VIBE error: {e}"
+            finally:
+                if mcp is not None:
+                    try:
+                        if not mcp.set_output("VIBE", False) and ok:
+                            ok = False
+                            message = "VIBE stayed on — MCP error"
+                    except Exception as e:
+                        ok = False
+                        message = f"VIBE stop error: {e}"
+                vibe_result.done.emit(ok, message)
+
+        threading.Thread(target=_work, name="digi-vibe-test", daemon=True).start()
+
+    def _vibe_done(_ok: bool, message: str) -> None:
+        vibe_busy["on"] = False
+        vibe_btn.setEnabled(not busy["on"])
+        _set_status(message)
+
+    vibe_result.done.connect(_vibe_done)
 
     def do_wake() -> None:
         if busy["on"]:
@@ -3621,6 +3676,7 @@ def make_debug_page(on_back: Callable[[], None]) -> QWidget:
     sound_btn.clicked.connect(cycle_sound)
     wake_btn.clicked.connect(do_wake)
     piezo_btn.clicked.connect(piezo_test)
+    vibe_btn.clicked.connect(vibe_test)
     spk_btn.clicked.connect(speaker_test)
     mic_btn.clicked.connect(mic_test)
     yes_btn.clicked.connect(on_yes)
