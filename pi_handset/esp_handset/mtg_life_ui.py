@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import traceback
 from pathlib import Path
 from typing import Callable, Dict, List, Optional
 
@@ -296,10 +297,16 @@ class MtgLifeCounter(QWidget):
                 self._draw_damage_menu(painter, origin)
         except Exception as e:
             print(f"[mtg] paint error: {e}", flush=True)
+            traceback.print_exc()
             painter.fillRect(self.rect(), QColor("#969a79"))
             painter.setPen(QColor("#202719"))
-            painter.setFont(self._lcd_font(16, True))
-            painter.drawText(self.rect(), Qt.AlignCenter, "MTG DISPLAY ERROR")
+            painter.setFont(QFont("Sans", 10, QFont.Bold))
+            message = str(e).replace("\n", " ")[:100]
+            painter.drawText(
+                self.rect().adjusted(8, 8, -8, -8),
+                Qt.AlignCenter,
+                f"MTG DISPLAY ERROR\n{message}",
+            )
         painter.end()
 
     def _lcd_font(self, pixels: int, bold: bool = False) -> QFont:
@@ -549,9 +556,16 @@ class MtgSettingsPage(QWidget):
             )
         except Exception as e:
             print(f"[mtg] settings paint error: {e}", flush=True)
+            traceback.print_exc()
             painter.fillRect(self.rect(), QColor("#969a79"))
             painter.setPen(QColor("#202719"))
-            painter.drawText(self.rect(), Qt.AlignCenter, "MTG SETTINGS ERROR")
+            painter.setFont(QFont("Sans", 10, QFont.Bold))
+            message = str(e).replace("\n", " ")[:100]
+            painter.drawText(
+                self.rect().adjusted(8, 8, -8, -8),
+                Qt.AlignCenter,
+                f"MTG SETTINGS ERROR\n{message}",
+            )
         painter.end()
 
 
