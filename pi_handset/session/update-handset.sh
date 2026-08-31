@@ -243,6 +243,8 @@ install_tree() {
       "digivice-media-doctor.sh:digivice-media-doctor" \
       "digivice-i2c-doctor.sh:digivice-i2c-doctor" \
       "digivice-mouse-doctor.sh:digivice-mouse-doctor" \
+      "digivice-heltec-softuart.sh:digivice-heltec-softuart" \
+      "digivice-heltec-doctor.sh:digivice-heltec-doctor" \
       "digivice-audio-usb.sh:digivice-audio-usb" \
       "digivice-audio-fix.sh:digivice-audio-fix" \
       "digivice-cm108-beep.sh:digivice-cm108-beep" \
@@ -346,6 +348,8 @@ $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-modem-uart
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-modem-doctor
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-audio-doctor
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-i2c-doctor
+$USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-heltec-doctor
+$USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-heltec-softuart
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-audio-usb
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-audio-fix
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-cm108-wake

@@ -59,6 +59,15 @@ Needs `pigpiod` (bit-bang UART). The setup script enables it.
 Digivice shows a Heltec radio icon in the status bar when the bridge answers
 status probes, and pushes alerts to the ST7735.
 
+## Doctor / fix on Pi
+
+```bash
+sudo digivice-heltec-doctor          # report → ~/.esp-handset/heltec-doctor.txt
+sudo digivice-heltec-doctor --fix    # re-apply soft-UART env + restart Digivice
+```
+
+Or **Tools → Transfer → Prep Heltec report**, then download `/diag/heltec.txt`.
+
 ## Do not run
 
 - `digivice-heltec-uart.sh` — steals modem `serial0`
