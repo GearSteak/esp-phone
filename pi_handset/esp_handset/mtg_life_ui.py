@@ -282,17 +282,24 @@ class MtgLifeCounter(QWidget):
 
     def paintEvent(self, _event) -> None:  # noqa: N802
         painter = QPainter(self)
-        origin = self._draw_background(painter)
-        if self._mode in ("resume", "setup"):
-            self._draw_setup(painter, origin)
-        elif self._mode == "players":
-            self._draw_players(painter, origin)
-        elif self._mode == "menu":
-            self._draw_players(painter, origin)
-            self._draw_counter_menu(painter, origin)
-        elif self._mode == "damage":
-            self._draw_players(painter, origin)
-            self._draw_damage_menu(painter, origin)
+        try:
+            origin = self._draw_background(painter)
+            if self._mode in ("resume", "setup"):
+                self._draw_setup(painter, origin)
+            elif self._mode == "players":
+                self._draw_players(painter, origin)
+            elif self._mode == "menu":
+                self._draw_players(painter, origin)
+                self._draw_counter_menu(painter, origin)
+            elif self._mode == "damage":
+                self._draw_players(painter, origin)
+                self._draw_damage_menu(painter, origin)
+        except Exception as e:
+            print(f"[mtg] paint error: {e}", flush=True)
+            painter.fillRect(self.rect(), QColor("#969a79"))
+            painter.setPen(QColor("#202719"))
+            painter.setFont(self._lcd_font(16, True))
+            painter.drawText(self.rect(), Qt.AlignCenter, "MTG DISPLAY ERROR")
         painter.end()
 
     def _lcd_font(self, pixels: int, bold: bool = False) -> QFont:
@@ -504,30 +511,47 @@ class MtgSettingsPage(QWidget):
 
     def paintEvent(self, _event) -> None:  # noqa: N802
         painter = QPainter(self)
-        painter.fillRect(self.rect(), QColor("#969a79"))
-        painter.setPen(QColor("#202719"))
-        painter.setFont(QFont(font_family(), max(14, self.height() // 12), QFont.Bold))
-        painter.drawText(
-            self.rect().adjusted(8, 16, -8, -self.height() // 2),
-            Qt.AlignCenter,
-            "MTG STARTING LIFE",
-        )
-        painter.setFont(QFont(font_family(), max(28, self.height() // 5), QFont.Bold))
-        painter.drawText(
-            self.rect().adjusted(8, self.height() // 4, -8, -self.height() // 3),
-            Qt.AlignCenter,
-            f"{self._value:03d}",
-        )
-        painter.setPen(QPen(QColor("#202719"), 2))
-        span = max(18, self.width() // 7)
-        x = self.width() // 2 - span * 1.5 + self._digit * span
-        painter.drawLine(x, self.height() // 2 + 12, x + span - 4, self.height() // 2 + 12)
-        painter.setFont(QFont(font_family(), max(9, self.height() // 22)))
-        painter.drawText(
-            self.rect().adjusted(8, self.height() // 2 + 25, -8, -12),
-            Qt.AlignCenter,
-            "↑↓ DIGIT   ←→ CHANGE   BACK SAVE",
-        )
+        try:
+            painter.fillRect(self.rect(), QColor("#969a79"))
+            painter.setPen(QColor("#202719"))
+            painter.setFont(
+                QFont(font_family(), max(14, self.height() // 12), QFont.Bold)
+            )
+            painter.drawText(
+                self.rect().adjusted(8, 16, -8, -self.height() // 2),
+                Qt.AlignCenter,
+                "MTG STARTING LIFE",
+            )
+            painter.setFont(
+                QFont(font_family(), max(28, self.height() // 5), QFont.Bold)
+            )
+            painter.drawText(
+                self.rect().adjusted(
+                    8, self.height() // 4, -8, -self.height() // 3
+                ),
+                Qt.AlignCenter,
+                f"{self._value:03d}",
+            )
+            painter.setPen(QPen(QColor("#202719"), 2))
+            span = max(18, self.width() // 7)
+            x = self.width() // 2 - span * 1.5 + self._digit * span
+            painter.drawLine(
+                x,
+                self.height() // 2 + 12,
+                x + span - 4,
+                self.height() // 2 + 12,
+            )
+            painter.setFont(QFont(font_family(), max(9, self.height() // 22)))
+            painter.drawText(
+                self.rect().adjusted(8, self.height() // 2 + 25, -8, -12),
+                Qt.AlignCenter,
+                "↑↓ DIGIT   ←→ CHANGE   BACK SAVE",
+            )
+        except Exception as e:
+            print(f"[mtg] settings paint error: {e}", flush=True)
+            painter.fillRect(self.rect(), QColor("#969a79"))
+            painter.setPen(QColor("#202719"))
+            painter.drawText(self.rect(), Qt.AlignCenter, "MTG SETTINGS ERROR")
         painter.end()
 
 
