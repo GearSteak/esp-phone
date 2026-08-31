@@ -27,7 +27,6 @@ _OLATB = 0x15
 # Outputs: GPB6 torch, GPB7 vibe (active high → MOSFET driver)
 _INPUT_MASK_A = 0xFF
 _INPUT_MASK_B = 0x3F  # GPB0-5 inputs; 6-7 outputs
-_OUTPUT_MASK_B = 0xC0
 
 # Logical names → (port, bit)  port 0=A 1=B
 _PIN_MAP: Dict[str, Tuple[int, int]] = {
@@ -126,7 +125,8 @@ def init(bus=None, address: Optional[int] = None) -> bool:
             return False
     try:
         _write(bus, _IODIRA, _INPUT_MASK_A, address)
-        _write(bus, _IODIRB, _INPUT_MASK_B | _OUTPUT_MASK_B, address)
+        # IODIR bits are 1=input and 0=output; GPB6/GPB7 must be outputs.
+        _write(bus, _IODIRB, _INPUT_MASK_B, address)
         _write(bus, _GPPUA, _INPUT_MASK_A, address)
         _write(bus, _GPPUB, _INPUT_MASK_B, address)
         _write(bus, _OLATB, 0x00, address)
