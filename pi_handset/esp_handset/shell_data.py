@@ -73,6 +73,7 @@ SETTINGS_APPS = [
     AppEntry("set_accounts", "Accounts", "SIP · Email · AI", "@"),
     AppEntry("set_security", "Security", "PIN", "🔒"),
     AppEntry("set_debug", "Debug", "Sound · alerts · tests", "⚒"),
+    AppEntry("mtg_settings", "MTG Defaults", "Starting life", "♠"),
     AppEntry("help", "Help", "Joystick map", "?"),
 ]
 
@@ -127,6 +128,7 @@ GAMES_APPS = [
 
 APPS_APPS = [
     AppEntry("games", "Games", "Emu · arcade · cards", "♠"),
+    AppEntry("mtg", "MTG Life", "4-player Commander", "♠"),
     AppEntry("tools", "Tools", "Calc · steps · AI", "⚒"),
     AppEntry("shadowdark", "Shadowdark", "Dice · torch timer", "⚔"),
 ]

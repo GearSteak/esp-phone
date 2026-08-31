@@ -57,6 +57,7 @@ _ARCADE_PAGES = {"snake", "pong", "tetris"}
 _CARD_GAME_PAGES = {"solitaire", "uno"}
 # Arcade/cards always use the pad. Emulators only while a ROM is running.
 _GAMEPAD_PAGES = _ARCADE_PAGES | _CARD_GAME_PAGES
+_CUSTOM_INPUT_PAGES = {"mtg", "mtg_settings"}
 _MENU_BACKGROUND_PATH = Path(__file__).resolve().parents[1] / "Assets" / "background.png"
 
 __all__ = [
@@ -1015,6 +1016,13 @@ class PhoneShell(QMainWindow):
             return
 
         page_key = self._nav[-1] if self._nav else "home"
+
+        if page_key in _CUSTOM_INPUT_PAGES:
+            page = self.pages.get(page_key)
+            if page is not None and hasattr(page, "keyPressEvent"):
+                page.keyPressEvent(event)
+                event.accept()
+                return
 
         if page_key == "home" and self._home:
             if key == Qt.Key_Left:
