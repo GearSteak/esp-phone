@@ -267,26 +267,20 @@ class PhoneShell(QMainWindow):
         # buttons daemon emits both uinput + xdotool, so one press ≈ two Key_Escape.
         self._esc_exits = 0
         self._esc_last_ms = 0
-        QTimer.singleShot(700, self._prime_nav_clicks)
-
-    def _prime_nav_clicks(self) -> None:
-        import threading
-
-        def _run() -> None:
-            try:
-                from esp_handset.audio_out import prime_nav_click
-
-                prime_nav_click()
-            except Exception:
-                pass
-
-        threading.Thread(target=_run, daemon=True).start()
 
     def _nav_click(self) -> None:
         try:
-            from esp_handset.audio_out import play_nav_click
+            from esp_handset.buzzer import beep_async
 
-            play_nav_click()
+            beep_async("nav")
+        except Exception:
+            pass
+
+    def _piezo_action(self) -> None:
+        try:
+            from esp_handset.buzzer import beep_async
+
+            beep_async("chirp")
         except Exception:
             pass
 
@@ -736,6 +730,7 @@ class PhoneShell(QMainWindow):
         self._switch_page(key, animate=animate)
 
     def back(self) -> None:
+        self._piezo_action()
         # App pages can consume Back (e.g. SMS thread → inbox)
         page_key = self._nav[-1] if self._nav else "home"
         page = self.pages.get(page_key)
@@ -850,6 +845,7 @@ class PhoneShell(QMainWindow):
         self.apply_cart_home()
 
     def _on_icon(self, key: str) -> None:
+        self._piezo_action()
         # Movies/TV cart: Media opens DVD menu instead of the Media folder
         if key == "media":
             try:

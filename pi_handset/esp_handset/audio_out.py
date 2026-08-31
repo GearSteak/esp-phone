@@ -15,15 +15,11 @@ from pathlib import Path
 from shutil import which
 from typing import List, Optional, Tuple
 
-AUDIO_BUILD = "v18-click"
+AUDIO_BUILD = "v19-piezo-nav"
 _LOG = Path.home() / ".esp-handset" / "last-beep.txt"
 _WAV = Path.home() / ".esp-handset" / "beep-loud.wav"
-_CLICK = Path.home() / ".esp-handset" / "nav-click.wav"
-_PRIME = Path.home() / ".esp-handset" / "nav-prime.wav"
 _RING = Path.home() / ".esp-handset" / "call-ring.wav"
 _click_dev: Optional[str] = None
-_click_proc: Optional[subprocess.Popen] = None
-_click_last = 0.0
 _ring_lock = threading.Lock()
 _ring_stop = threading.Event()
 _ring_thread: Optional[threading.Thread] = None
@@ -301,34 +297,6 @@ def _usb_plughw() -> Optional[str]:
     return None
 
 
-def _write_wav(path: Path, seconds: float, amp: int, freq: float) -> Path:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    rate = 48000
-    n = max(32, int(rate * seconds))
-    with wave.open(str(path), "w") as w:
-        w.setnchannels(2)
-        w.setsampwidth(2)
-        w.setframerate(rate)
-        for i in range(n):
-            env = 1.0 - (i / n)
-            env *= env
-            v = int(amp * env * math.sin(2 * math.pi * freq * i / rate)) if amp else 0
-            w.writeframes(struct.pack("<hh", v, v))
-    return path
-
-
-def _ensure_click_wav() -> Path:
-    if _CLICK.is_file() and _CLICK.stat().st_size > 200:
-        return _CLICK
-    return _write_wav(_CLICK, 0.024, 3800, 1900.0)
-
-
-def _ensure_prime_wav() -> Path:
-    if _PRIME.is_file() and _PRIME.stat().st_size > 200:
-        return _PRIME
-    return _write_wav(_PRIME, 0.03, 0, 0.0)
-
-
 def _sounds_on() -> bool:
     try:
         from esp_handset import store
@@ -448,49 +416,6 @@ def stop_call_ring() -> None:
             proc.terminate()
         except Exception:
             pass
-
-
-def play_nav_click() -> None:
-    """Quiet menu tick. Never blocks the UI; skips if a click is already playing."""
-    global _click_proc, _click_last
-    if not _sounds_on():
-        return
-    now = time.monotonic()
-    if now - _click_last < 0.07:
-        return
-    if _click_proc is not None and _click_proc.poll() is None:
-        return
-    if not which("aplay"):
-        return
-    dev = _usb_plughw()
-    if not dev:
-        return
-    wav = _ensure_click_wav()
-    try:
-        _click_proc = subprocess.Popen(
-            ["aplay", "-D", dev, "-q", str(wav)],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            start_new_session=True,
-        )
-        _click_last = now
-    except Exception:
-        _click_proc = None
-
-
-def prime_nav_click() -> None:
-    """Open the USB PCM once so the first scroll click is not eaten by -524."""
-    global _click_dev
-    _click_dev = None
-    dev = _usb_plughw()
-    if not dev or not which("aplay"):
-        return
-    card = dev.split(":")[-1].split(",")[0]
-    _unmute_card(card)
-    silent = _ensure_prime_wav()
-    _run(["aplay", "-D", dev, "-q", str(silent)], timeout=3)
-    time.sleep(0.35)
-    _run(["aplay", "-D", dev, "-q", str(silent)], timeout=3)
 
 
 def open_usb_play_stream(

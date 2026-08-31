@@ -26,6 +26,8 @@ _lg_pwm = False
 _ready = False
 _last_err = ""
 _write: Optional[Callable[[int], None]] = None
+_async_lock = threading.Lock()
+_async_active = False
 
 
 def _reset() -> None:
@@ -272,7 +274,14 @@ def nav_tick() -> bool:
 
 
 def beep_async(kind: str = "alert", *, force: bool = False) -> None:
+    global _async_active
+    with _async_lock:
+        if _async_active:
+            return
+        _async_active = True
+
     def _run() -> None:
+        global _async_active
         try:
             if kind == "chirp":
                 chirp(force=force)
@@ -282,6 +291,9 @@ def beep_async(kind: str = "alert", *, force: bool = False) -> None:
                 alert(force=force)
         except Exception:
             pass
+        finally:
+            with _async_lock:
+                _async_active = False
 
     threading.Thread(target=_run, name="digi-buzzer", daemon=True).start()
 
