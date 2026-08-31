@@ -446,7 +446,11 @@ class MtgLifeCounter(QWidget):
             digits,
         )
         digit_width = max(12, rect.width() // 5)
-        x = rect.center().x() - digit_width * 1.5 + self._setup_digit * digit_width
+        x = int(
+            rect.center().x()
+            - digit_width * 1.5
+            + self._setup_digit * digit_width
+        )
         painter.setPen(QPen(QColor("#202719"), 2))
         painter.drawLine(x, rect.top() + 56, x + digit_width - 4, rect.top() + 56)
         painter.setFont(self._lcd_font(max(8, rect.height() // 16)))
@@ -541,7 +545,7 @@ class MtgSettingsPage(QWidget):
             )
             painter.setPen(QPen(QColor("#202719"), 2))
             span = max(18, self.width() // 7)
-            x = self.width() // 2 - span * 1.5 + self._digit * span
+            x = int(self.width() // 2 - span * 1.5 + self._digit * span)
             painter.drawLine(
                 x,
                 self.height() // 2 + 12,
