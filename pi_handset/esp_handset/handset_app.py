@@ -605,7 +605,7 @@ def build_app(bridge: Optional[EspBridge], modem: Optional[Sim7600]) -> PhoneShe
     shell.register_page("email", features.make_email_page(back))
     shell.register_page("convert", features.make_convert_page(back))
     shell.register_page("weather", features.make_weather_page(back, modem))
-    steps_page = features.make_steps_page(back)
+    steps_page = features.make_steps_page(back, bridge=bridge)
     shell.register_page("steps", steps_page)
     try:
         from esp_handset.steps_pi import start_monitor
@@ -624,8 +624,7 @@ def build_app(bridge: Optional[EspBridge], modem: Optional[Sim7600]) -> PhoneShe
             if mon is None or not mon.ok:
                 QTimer.singleShot(15000, _try_steps_monitor)
 
-        if store.steps_source() != "heltec":
-            QTimer.singleShot(1500, _try_steps_monitor)
+        QTimer.singleShot(1500, _try_steps_monitor)
     except Exception as e:
         print(f"[handset] steps monitor: {e}", flush=True)
     shell.register_page(
@@ -808,6 +807,8 @@ def build_app(bridge: Optional[EspBridge], modem: Optional[Sim7600]) -> PhoneShe
         bridge.on_event(on_line)
         try:
             bridge.request_status()
+            if store.heltec_steps_enabled():
+                bridge.steps_query()
         except Exception as e:
             shell.set_heltec_connected(False)
             status(f"ESP: {e}")
@@ -825,6 +826,8 @@ def build_app(bridge: Optional[EspBridge], modem: Optional[Sim7600]) -> PhoneShe
                 shell.set_heltec_connected(False)
             try:
                 bridge.request_status()
+                if store.heltec_steps_enabled():
+                    bridge.steps_query()
             except Exception:
                 shell.set_heltec_connected(False)
 

@@ -137,23 +137,30 @@ def push_heltec_notif(
 
 
 def steps_source() -> str:
-    """pi | heltec | auto — auto prefers Pi GPIO when the monitor is running."""
-    raw = (os.environ.get("DIGI_STEPS_SOURCE") or "auto").strip().lower()
+    """pi | heltec | auto — default pi (SW-520D on BCM17, not Heltec)."""
+    raw = (os.environ.get("DIGI_STEPS_SOURCE") or "pi").strip().lower()
     if raw in ("pi", "heltec", "auto"):
         return raw
     return "auto"
 
 
 def pi_steps_active() -> bool:
-    """True when the Pi tilt monitor is counting (not Heltec-only)."""
+    """True when the Pi tilt monitor is running (UI hint only)."""
     if steps_source() == "heltec":
         return False
+    if steps_source() == "pi":
+        return True
     try:
         from esp_handset.steps_pi import monitor_ok
 
         return monitor_ok()
     except Exception:
-        return steps_source() == "pi"
+        return False
+
+
+def heltec_steps_enabled() -> bool:
+    """Whether Heltec STEPS UART lines should update the daily total."""
+    return steps_source() != "pi"
 
 
 def steps_state() -> dict:
@@ -171,9 +178,7 @@ def steps_state() -> dict:
 
 def apply_esp_steps(esp_count: int) -> int:
     """Merge Heltec session counter into today's Digivice total."""
-    if steps_source() == "pi":
-        return int(steps_state().get("count") or 0)
-    if steps_source() == "auto" and pi_steps_active():
+    if not heltec_steps_enabled():
         return int(steps_state().get("count") or 0)
     st = steps_state()
     prev_esp = int(st.get("esp") or 0)

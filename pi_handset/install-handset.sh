@@ -56,6 +56,9 @@ apt-get install -y wl-mirror 2>/dev/null || true
 apt-get install -y midori || apt-get install -y epiphany-browser || true
 
 mkdir -p "$PREFIX" "$PREFIX/session" /etc/esp-handset /etc/udev/rules.d
+ENV_FILE=/etc/esp-handset/env
+touch "$ENV_FILE"
+grep -q '^DIGI_STEPS_SOURCE=' "$ENV_FILE" 2>/dev/null || echo "DIGI_STEPS_SOURCE=pi" >>"$ENV_FILE"
 cp -a "$ROOT/esp_handset" "$PREFIX/"
 [[ -d "$ROOT/Assets" ]] && cp -a "$ROOT/Assets" "$PREFIX/"
 cp -a "$ROOT/session/." "$PREFIX/session/"

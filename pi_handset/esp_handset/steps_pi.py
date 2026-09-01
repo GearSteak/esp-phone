@@ -9,8 +9,9 @@ from typing import Any, Callable, List, Optional
 from esp_handset import store
 from esp_handset.hw_pins import STEPS_BCM
 
-# SW-520D chatters — ignore edges closer than this
-_MIN_INTERVAL_S = 0.22
+# SW-520D chatters — match Heltec firmware timing
+_DEBOUNCE_S = 0.025
+_MIN_INTERVAL_S = 0.28
 
 _monitor: Optional["StepsMonitor"] = None
 _lock = threading.Lock()
@@ -61,6 +62,9 @@ class StepsMonitor:
         self._backend = ""
         self._chip = None
         self._last_level: Optional[int] = None
+        self._raw_level: Optional[int] = None
+        self._stable_level: Optional[int] = None
+        self._edge_t = 0.0
         self._last_t = 0.0
         self.ok = False
         self.error = ""
@@ -76,47 +80,18 @@ class StepsMonitor:
     def start(self) -> bool:
         if self._thread and self._thread.is_alive():
             return self.ok
-        try:
-            from esp_handset.gpio_util import get_gpio, last_error
+        # Prefer RPi.GPIO — display already uses it in this process.
+        if self._try_start_rpi_gpio():
+            return True
+        if self._try_start_lgpio():
+            return True
+        print(
+            f"[steps] all GPIO backends failed for BCM{self.bcm}: {self.error}",
+            flush=True,
+        )
+        return False
 
-            mod, backend = get_gpio()
-            if mod is None:
-                raise RuntimeError(last_error() or "no GPIO backend")
-            if backend == "RPi.GPIO":
-                mod.setup(self.bcm, mod.IN, pull_up_down=mod.PUD_UP)
-                self._gpio = mod
-                self._backend = backend
-            elif backend == "lgpio":
-                last = ""
-                for n in _chip_candidates():
-                    chip = None
-                    try:
-                        chip = mod.gpiochip_open(n)
-                        mod.gpio_claim_input(chip, self.bcm, mod.SET_PULL_UP)
-                        self._chip = chip
-                        self._gpio = mod
-                        self._backend = backend
-                        break
-                    except Exception as e:
-                        last = str(e)
-                        if chip is not None:
-                            try:
-                                mod.gpiochip_close(chip)
-                            except Exception:
-                                pass
-                        chip = None
-                if chip is None:
-                    raise RuntimeError(last or "lgpio open failed")
-            else:
-                raise RuntimeError(f"unknown backend {backend}")
-            self._last_level = self._read()
-            self.ok = True
-            self.error = ""
-        except Exception as e:
-            self.ok = False
-            self.error = str(e)
-            print(f"[steps] GPIO {self.bcm} failed: {e}", flush=True)
-            return False
+    def _finish_start(self) -> bool:
         self._stop.clear()
         self._thread = threading.Thread(target=self._loop, name="digi-steps", daemon=True)
         self._thread.start()
@@ -126,6 +101,55 @@ class StepsMonitor:
             flush=True,
         )
         return True
+
+    def _try_start_lgpio(self) -> bool:
+        try:
+            import lgpio as mod  # type: ignore
+        except ImportError:
+            return False
+        last = ""
+        for n in _chip_candidates():
+            chip = None
+            try:
+                chip = mod.gpiochip_open(n)
+                mod.gpio_claim_input(chip, self.bcm, mod.SET_PULL_UP)
+                self._chip = chip
+                self._gpio = mod
+                self._backend = "lgpio"
+                self._last_level = self._read()
+                self.ok = True
+                self.error = ""
+                return self._finish_start()
+            except Exception as e:
+                last = str(e)
+                if chip is not None:
+                    try:
+                        mod.gpiochip_close(chip)
+                    except Exception:
+                        pass
+        self.error = last or "lgpio open failed"
+        return False
+
+    def _try_start_rpi_gpio(self) -> bool:
+        try:
+            from esp_handset.gpio_util import get_gpio, last_error
+
+            mod, backend = get_gpio()
+            if mod is None or backend != "RPi.GPIO":
+                raise RuntimeError(last_error() or "no RPi.GPIO backend")
+            mod.setup(self.bcm, mod.IN, pull_up_down=mod.PUD_UP)
+            self._gpio = mod
+            self._backend = backend
+            self._chip = None
+            self._last_level = self._read()
+            self.ok = True
+            self.error = ""
+            return self._finish_start()
+        except Exception as e:
+            self.ok = False
+            self.error = str(e)
+            print(f"[steps] GPIO {self.bcm} failed: {e}", flush=True)
+            return False
 
     def stop(self) -> None:
         self._stop.set()
@@ -152,28 +176,34 @@ class StepsMonitor:
             except Exception:
                 time.sleep(0.05)
                 continue
-            if self._last_level is None:
+            now = time.monotonic()
+            if self._raw_level is None:
+                self._raw_level = level
+                self._stable_level = level
                 self._last_level = level
-                time.sleep(0.02)
+                self._edge_t = now
+                time.sleep(0.012)
                 continue
-            if level != self._last_level:
-                self.edges += 1
-                now = time.monotonic()
-                # Count switch close (pull-up → GND) as a step
-                closed = level == 0
-                if (
-                    closed
-                    and _pi_counting_enabled()
-                    and (now - self._last_t) >= _MIN_INTERVAL_S
-                ):
-                    total = record_step(1)
-                    self._last_t = now
-                    if self.on_step:
-                        try:
-                            self.on_step(total)
-                        except Exception:
-                            pass
-                self._last_level = level
+            if level != self._raw_level:
+                self._raw_level = level
+                self._edge_t = now
+            if (now - self._edge_t) < _DEBOUNCE_S:
+                time.sleep(0.012)
+                continue
+            if level == self._stable_level:
+                time.sleep(0.012)
+                continue
+            self._stable_level = level
+            self._last_level = level
+            self.edges += 1
+            if _pi_counting_enabled() and (now - self._last_t) >= _MIN_INTERVAL_S:
+                total = record_step(1)
+                self._last_t = now
+                if self.on_step:
+                    try:
+                        self.on_step(total)
+                    except Exception:
+                        pass
             time.sleep(0.012)
 
 
@@ -187,9 +217,13 @@ def start_monitor(on_step: Optional[Callable[[int], None]] = None) -> Optional[S
             print("[steps] disabled (DIGI_STEPS_BCM=off)", flush=True)
             return None
         if _monitor is not None and _monitor.ok:
-            if on_step:
-                _monitor.on_step = on_step
-            return _monitor
+            alive = _monitor._thread is not None and _monitor._thread.is_alive()
+            if alive:
+                if on_step:
+                    _monitor.on_step = on_step
+                return _monitor
+            _monitor.stop()
+            _monitor = None
         if _monitor is not None:
             _monitor.stop()
             _monitor = None
