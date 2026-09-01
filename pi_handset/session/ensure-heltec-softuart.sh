@@ -51,13 +51,17 @@ run_softuart() {
 }
 
 run_doctor() {
+  local -a env_args=()
+  if [[ "$RESTART" -ne 1 ]]; then
+    env_args=(env DIGIVICE_ENSURE_HELTEC_NO_RESTART=1)
+  fi
   for script in \
     "$PREFIX/session/digivice-heltec-doctor.sh" \
     "$(dirname "$0")/digivice-heltec-doctor.sh" \
     /usr/local/bin/digivice-heltec-doctor
   do
     if [[ -f "$script" ]]; then
-      bash "$script"
+      "${env_args[@]}" bash "$script"
       return $?
     fi
   done

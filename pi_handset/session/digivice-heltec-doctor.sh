@@ -113,8 +113,10 @@ fi
   systemctl is-active pigpiod 2>&1 || true
   if command -v pigpiod >/dev/null 2>&1; then
     echo "pigpiod binary: $(command -v pigpiod)"
+  elif [[ -x /usr/local/bin/pigpiod ]]; then
+    echo "pigpiod binary: /usr/local/bin/pigpiod (source build — OK if client connected)"
   else
-    echo "pigpiod binary: MISSING (apt install pigpio python3-pigpio)"
+    echo "pigpiod binary: MISSING"
   fi
   if python3 -c "import pigpio; pi=pigpio.pi(); print('pigpio client:', 'connected' if pi.connected else 'NOT connected'); pi.stop()" 2>&1; then
     :
@@ -167,6 +169,10 @@ PY
   echo
 
   echo "--- live soft-UART probe (PING + STATUS) ---"
+  if pgrep -f handset_app.py >/dev/null 2>&1; then
+    echo "SKIP — Digivice bridge already owns soft-UART (Heltec icon = live status)"
+    echo "Stop Digivice first if you need an isolated PING test"
+  else
   export PYTHONPATH="${PREFIX}:${PYTHONPATH:-}"
   python3 - <<'PY'
 import os, sys, time
@@ -202,6 +208,7 @@ for cmd in (b"PING\n", b"STATUS\n"):
         print("RESULT: NO RESPONSE — check TX/RX swap, GND, Heltec on LiPo (not PC USB), firmware flashed")
 link.close()
 PY
+  fi
   echo
 
   echo "--- handset log (bridge / heltec / pigpio) ---"

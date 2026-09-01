@@ -312,14 +312,21 @@ def _refresh_mouse_report() -> Tuple[bool, str]:
 
 
 def _refresh_heltec_report() -> Tuple[bool, str]:
-    # Never --restart / --fix here — that kills Digivice while Transfer is open.
-    env = os.environ.copy()
-    env["DIGIVICE_HELTEC_APT_ONLY"] = "1"
-    env["DIGIVICE_ENSURE_HELTEC_NO_RESTART"] = "1"
+    # Never --restart / --fix from Transfer. Pass flags via sudo env (sudo strips env).
+    heltec_env = (
+        "DIGIVICE_HELTEC_APT_ONLY=1",
+        "DIGIVICE_ENSURE_HELTEC_NO_RESTART=1",
+    )
     cmds = (
-        ["sudo", "-n", "digivice-heltec-doctor"],
-        ["sudo", "-n", "digivice-ensure-heltec", "--doctor"],
-        ["bash", "/opt/esp-handset/session/digivice-heltec-doctor.sh"],
+        ["sudo", "-n", "env", *heltec_env, "digivice-heltec-doctor"],
+        [
+            "sudo",
+            "-n",
+            "env",
+            *heltec_env,
+            "bash",
+            "/opt/esp-handset/session/digivice-heltec-doctor.sh",
+        ],
     )
     last = "doctor not installed"
     for cmd in cmds:
@@ -330,7 +337,6 @@ def _refresh_heltec_report() -> Tuple[bool, str]:
                 text=True,
                 timeout=90,
                 check=False,
-                env=env,
             )
             if r.returncode == 0 or _heltec_report_path() is not None:
                 p = _heltec_report_path()
