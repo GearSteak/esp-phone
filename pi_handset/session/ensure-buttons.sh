@@ -105,6 +105,7 @@ EOF
 
 write_unit() {
   local xauth="${GUI_HOME}/.Xauthority"
+  echo "$GUI_HOME" >/etc/esp-handset/gui-home 2>/dev/null || true
   cat >"$UNIT" <<EOF
 [Unit]
 Description=Digivice hard buttons (GPIO → keys)
@@ -114,6 +115,8 @@ Wants=multi-user.target
 [Service]
 Type=simple
 User=root
+RuntimeDirectory=digivice
+RuntimeDirectoryMode=0755
 # Reach X11 Digivice session (xdotool + uinput)
 Environment=DISPLAY=:0
 Environment=XAUTHORITY=$xauth

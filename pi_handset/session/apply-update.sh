@@ -502,6 +502,15 @@ elif [[ -f "$PREFIX/session/digivice-heltec-softuart.sh" ]]; then
     || log "WARN: digivice-heltec-softuart failed — check $LOG"
 fi
 
+# Buttons daemon + SW-520D steps (BCM17) — must match GUI user home
+echo "$USER_HOME" >/etc/esp-handset/gui-home 2>/dev/null || true
+if [[ -f "$PREFIX/session/ensure-buttons.sh" ]]; then
+  install -m 755 "$PREFIX/session/ensure-buttons.sh" /usr/local/bin/digivice-ensure-buttons
+  log "Ensuring buttons daemon (steps on BCM17)…"
+  SUDO_USER="$USER_NAME" bash /usr/local/bin/digivice-ensure-buttons >>"$LOG" 2>&1 \
+    || log "WARN: digivice-ensure-buttons failed — check $LOG"
+fi
+
 # Pi headphone jack + USB dongle — mirror playback to both (ALSA tee)
 if [[ -f "$PREFIX/session/digivice-analog-audio.sh" ]]; then
   install -m 755 "$PREFIX/session/digivice-analog-audio.sh" /usr/local/bin/digivice-analog-audio
@@ -556,6 +565,7 @@ if [[ -x "$START" ]]; then
     HOME="$USER_HOME" \
     USER="$USER_NAME" \
     LOGNAME="$USER_NAME" \
+    DIGIVICE_USER_HOME="$USER_HOME" \
     ESP_HANDSET_PREFIX="$PREFIX" \
     "$START" >>"$USER_HOME/.esp-handset/handset.log" 2>&1 </dev/null &
 else

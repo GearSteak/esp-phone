@@ -133,7 +133,7 @@ PHONE=/usr/local/bin/handset-phone
 
 log "launching $PHONE…"
 
-run_as_user() {
+  run_as_user() {
   sudo -u "$USER_NAME" -H env \
     DISPLAY="$DISPLAY" \
     XAUTHORITY="${XAUTHORITY:-$USER_HOME/.Xauthority}" \
@@ -142,6 +142,7 @@ run_as_user() {
     ESP_HANDSET_KIOSK=1 \
     ESP_HANDSET_SKIP_PIN=1 \
     ESP_HANDSET_PREFIX="$PREFIX" \
+    DIGIVICE_USER_HOME="$USER_HOME" \
     PYTHONPATH="$PREFIX" \
     QT_QPA_PLATFORM=xcb \
     PATH="/usr/local/bin:/usr/bin:/bin:$PATH" \
@@ -158,6 +159,7 @@ else
     ESP_HANDSET_KIOSK=1 \
     ESP_HANDSET_SKIP_PIN=1 \
     ESP_HANDSET_PREFIX="$PREFIX" \
+    DIGIVICE_USER_HOME="$USER_HOME" \
     PYTHONPATH="$PREFIX" \
     QT_QPA_PLATFORM=xcb \
     "$PHONE" >>"$LOG" 2>&1 &

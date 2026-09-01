@@ -1,7 +1,7 @@
 """Pi-local pedometer via SW-520D on BCM17 (momentary switch → GND).
 
 Counted in digi-buttons-inputd (same GPIO stack as the hard buttons).
-This module reads/writes the user's steps store + debug file for the UI.
+This module reads/writes the user's steps store + shared debug file for the UI.
 """
 from __future__ import annotations
 
@@ -14,41 +14,79 @@ from typing import Any, Callable, Optional
 from esp_handset import store
 from esp_handset.hw_pins import STEPS_BCM
 
+_RUN_DEBUG = Path("/run/digivice/steps-debug.json")
 _monitor: Optional["_DaemonView"] = None
 _lock = __import__("threading").Lock()
 
 
+def _gui_home() -> Path:
+    """Desktop user home — daemon runs as root."""
+    try:
+        raw = Path("/etc/esp-handset/gui-home").read_text(encoding="utf-8").strip()
+        if raw:
+            return Path(raw)
+    except OSError:
+        pass
+    raw = (os.environ.get("DIGIVICE_USER_HOME") or os.environ.get("HOME") or "").strip()
+    if raw and raw != "/root":
+        return Path(raw)
+    return Path.home()
+
+
 def user_data_dir() -> Path:
-    """Handset user data (daemon runs as root — use DIGIVICE_USER_HOME)."""
-    raw = (os.environ.get("DIGIVICE_USER_HOME") or "").strip()
-    if raw:
-        return Path(raw) / ".esp-handset"
-    return store.DATA
+    return _gui_home() / ".esp-handset"
 
 
 def debug_path() -> Path:
-    return user_data_dir() / "steps-debug.json"
+    return _RUN_DEBUG
+
+
+def _debug_candidates() -> list[Path]:
+    paths = [_RUN_DEBUG, user_data_dir() / "steps-debug.json"]
+    for name in ("pi", "isaac", "gearsteak"):
+        paths.append(Path(f"/home/{name}/.esp-handset/steps-debug.json"))
+    paths.append(Path("/root/.esp-handset/steps-debug.json"))
+    out: list[Path] = []
+    for p in paths:
+        if p not in out:
+            out.append(p)
+    return out
 
 
 def read_debug() -> dict:
-    try:
-        if debug_path().exists():
-            return json.loads(debug_path().read_text(encoding="utf-8"))
-    except Exception:
-        pass
-    return {}
+    best: dict = {}
+    best_at = 0.0
+    for path in _debug_candidates():
+        try:
+            if not path.exists():
+                continue
+            data = json.loads(path.read_text(encoding="utf-8"))
+            at = float(data.get("at") or 0)
+            if at >= best_at:
+                best_at = at
+                best = data
+        except Exception:
+            continue
+    return best
 
 
 def write_debug(**fields: Any) -> None:
     data = dict(read_debug())
     data.update(fields)
     data["at"] = time.time()
-    p = debug_path()
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    path = debug_path()
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        os.chmod(path, 0o644)
+    except OSError:
+        # Fallback when /run not writable (dev machine)
+        path = user_data_dir() / "steps-debug.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
 
-def daemon_active(max_age_s: float = 6.0) -> bool:
+def daemon_active(max_age_s: float = 8.0) -> bool:
     d = read_debug()
     if d.get("source") != "buttons_inputd":
         return False
@@ -76,6 +114,10 @@ def record_step(n: int = 1) -> int:
         st = {"date": today, "count": 0, "esp": 0}
     st["count"] = int(st.get("count") or 0) + max(0, int(n))
     path.write_text(json.dumps(st, indent=2), encoding="utf-8")
+    try:
+        os.chmod(path, 0o644)
+    except OSError:
+        pass
     return int(st["count"])
 
 
@@ -98,15 +140,6 @@ class _DaemonView:
     def steps(self) -> int:
         return int(read_debug().get("session_steps") or 0)
 
-    def current_level(self) -> Optional[int]:
-        lvl = read_debug().get("level")
-        return int(lvl) if lvl is not None else None
-
-    def _is_closed(self, level: int) -> bool:
-        raw = (os.environ.get("DIGI_STEPS_ACTIVE_LOW") or "1").strip().lower()
-        active_low = raw not in ("0", "false", "no", "off")
-        return level == 0 if active_low else level != 0
-
 
 def start_monitor(on_step: Optional[Callable[[int], None]] = None) -> Optional[_DaemonView]:
     """Attach UI callbacks; counting runs in digi-buttons-inputd."""
@@ -118,21 +151,10 @@ def start_monitor(on_step: Optional[Callable[[int], None]] = None) -> Optional[_
             _monitor = _DaemonView(STEPS_BCM, on_step=on_step)
         elif on_step:
             _monitor.on_step = on_step
-        if not daemon_active():
-            write_debug(
-                source="handset",
-                bcm=STEPS_BCM,
-                error="digi-buttons-inputd not reporting — run sudo digivice-ensure-buttons",
-            )
         return _monitor
 
 
 def restart_monitor(on_step: Optional[Callable[[int], None]] = None) -> Optional[_DaemonView]:
-    write_debug(
-        source="handset",
-        bcm=STEPS_BCM,
-        note="probe requested — shake sensor; restart buttons daemon if stale",
-    )
     return start_monitor(on_step=on_step)
 
 
@@ -140,21 +162,31 @@ def debug_panel_text() -> str:
     """Large-type lines for the 2\" LCD Steps screen."""
     if STEPS_BCM is None:
         return "Steps disabled"
+    if daemon_active():
+        d = read_debug()
+        pressed = bool(d.get("pressed"))
+        edges = int(d.get("edges") or 0)
+        counted = int(d.get("session_steps") or 0)
+        sensor = "TILT!" if pressed else "open"
+        return (
+            f"Sensor: {sensor}\n"
+            f"Edges: {edges}\n"
+            f"Counted: {counted}\n"
+            f"Shake now"
+        )
     d = read_debug()
-    if not d:
-        return "No sensor data\n\nRun:\nsudo digivice-ensure-buttons"
-    if d.get("source") != "buttons_inputd":
-        err = str(d.get("error") or "Buttons daemon offline")[:48]
-        return f"OFFLINE\n\n{err}\n\nsudo digivice-ensure-buttons"
-    pressed = bool(d.get("pressed"))
-    edges = int(d.get("edges") or 0)
-    counted = int(d.get("session_steps") or 0)
-    sensor = "TILT!" if pressed else "open"
+    age = time.time() - float(d.get("at") or 0) if d.get("at") else 999
+    if d.get("source") == "buttons_inputd" and age < 120:
+        return (
+            "Sensor paused?\n\n"
+            f"Last seen {age:.0f}s ago\n\n"
+            "Reboot Digivice\nor run ensure-buttons"
+        )
     return (
-        f"Sensor: {sensor}\n"
-        f"Edges: {edges}\n"
-        f"Counted: {counted}\n"
-        f"Shake now"
+        "Buttons daemon\n"
+        "OFFLINE\n\n"
+        "Settings → Update\n"
+        "then reboot once"
     )
 
 
@@ -163,15 +195,12 @@ def monitor_status() -> str:
         return "Steps GPIO disabled"
     d = read_debug()
     if not d:
-        return f"BCM{STEPS_BCM} · no daemon data (sudo digivice-ensure-buttons)"
+        return f"BCM{STEPS_BCM} · no daemon"
     age = time.time() - float(d.get("at") or 0)
-    lvl = d.get("level", "?")
-    pressed = d.get("pressed", "?")
     return (
-        f"{d.get('source', '?')} BCM{d.get('bcm', STEPS_BCM)} "
-        f"lvl={lvl} pressed={pressed} edges={d.get('edges', 0)} "
-        f"steps={d.get('session_steps', 0)} age={age:.1f}s"
-        + (f" err={d['error']}" if d.get("error") else "")
+        f"{d.get('source', '?')} lvl={d.get('level', '?')} "
+        f"edges={d.get('edges', 0)} steps={d.get('session_steps', 0)} "
+        f"age={age:.1f}s"
     )
 
 
@@ -181,11 +210,9 @@ def user_status() -> str:
     if not daemon_active():
         return "Daemon offline"
     d = read_debug()
-    if d.get("error"):
-        return "Fix buttons daemon"
     n = int(d.get("session_steps") or 0)
     if n > 0:
-        return f"{n} from sensor today"
+        return f"{n} from sensor"
     if d.get("pressed"):
         return "Tilt detected!"
     return "Ready — shake"
