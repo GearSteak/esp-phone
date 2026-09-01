@@ -43,12 +43,17 @@ install_pigpio_source() {
 
 apt-get update -qq 2>&1 | tail -n 3 || log "WARN: apt-get update failed"
 if ! apt-get install -y pigpio python3-pigpio; then
-  log "WARN: apt install pigpio python3-pigpio failed — trying source build"
-  install_pigpio_source || true
+  log "WARN: apt install pigpio python3-pigpio failed"
+  if [[ "${DIGIVICE_HELTEC_APT_ONLY:-0}" != "1" ]]; then
+    log "trying source build (skipped when DIGIVICE_HELTEC_APT_ONLY=1)"
+    install_pigpio_source || true
+  fi
 fi
 systemctl enable --now pigpiod 2>&1 || true
 if ! command -v pigpiod >/dev/null 2>&1; then
-  install_pigpio_source || true
+  if [[ "${DIGIVICE_HELTEC_APT_ONLY:-0}" != "1" ]]; then
+    install_pigpio_source || true
+  fi
 fi
 if ! command -v pigpiod >/dev/null 2>&1; then
   log "ERROR: pigpiod binary still missing after apt + source"

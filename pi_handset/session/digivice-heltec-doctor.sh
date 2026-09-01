@@ -237,8 +237,10 @@ fi
 
 if [[ "$FIX" -eq 1 ]]; then
   echo
-  echo "[heltec-doctor] Restarting Digivice…"
-  if command -v digivice-start >/dev/null 2>&1; then
+  echo "[heltec-doctor] Restarting Digivice (use after update, not from Transfer)…"
+  if [[ -n "${DIGIVICE_ENSURE_HELTEC_NO_RESTART:-}" && "${DIGIVICE_ENSURE_HELTEC_NO_RESTART}" != "0" ]]; then
+    echo "[heltec-doctor] skip restart — DIGIVICE_ENSURE_HELTEC_NO_RESTART set"
+  elif command -v digivice-start >/dev/null 2>&1; then
     digivice-start 2>&1 | tail -n 15
   elif [[ -f /usr/local/bin/digivice-start ]]; then
     /usr/local/bin/digivice-start 2>&1 | tail -n 15

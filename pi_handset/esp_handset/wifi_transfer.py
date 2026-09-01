@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import html
 import mimetypes
+import os
 import socket
 import subprocess
 import threading
@@ -311,11 +312,13 @@ def _refresh_mouse_report() -> Tuple[bool, str]:
 
 
 def _refresh_heltec_report() -> Tuple[bool, str]:
+    # Never --restart / --fix here — that kills Digivice while Transfer is open.
+    env = os.environ.copy()
+    env["DIGIVICE_HELTEC_APT_ONLY"] = "1"
+    env["DIGIVICE_ENSURE_HELTEC_NO_RESTART"] = "1"
     cmds = (
-        ["sudo", "-n", "digivice-ensure-heltec", "--restart", "--doctor"],
-        ["sudo", "-n", "digivice-heltec-doctor", "--fix"],
         ["sudo", "-n", "digivice-heltec-doctor"],
-        ["bash", "/opt/esp-handset/session/ensure-heltec-softuart.sh", "--restart", "--doctor"],
+        ["sudo", "-n", "digivice-ensure-heltec", "--doctor"],
         ["bash", "/opt/esp-handset/session/digivice-heltec-doctor.sh"],
     )
     last = "doctor not installed"
@@ -325,8 +328,9 @@ def _refresh_heltec_report() -> Tuple[bool, str]:
                 cmd,
                 capture_output=True,
                 text=True,
-                timeout=300,
+                timeout=90,
                 check=False,
+                env=env,
             )
             if r.returncode == 0 or _heltec_report_path() is not None:
                 p = _heltec_report_path()
