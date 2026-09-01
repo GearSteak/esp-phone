@@ -254,36 +254,47 @@ def make_steps_page(on_back: Callable[[], None], bridge=None) -> QWidget:
     title = QLabel("Steps today")
     title.setAlignment(Qt.AlignCenter)
     title.setStyleSheet(
-        f"font-size:14px; font-weight:700; color:{_MUTED};"
+        f"font-size:12px; font-weight:700; color:{_MUTED};"
     )
 
     big = QLabel("0")
     big.setAlignment(Qt.AlignCenter)
-    big.setMinimumHeight(56)
+    big.setMinimumHeight(48)
     big.setStyleSheet(
-        f"font-size:52px; font-weight:800; color:{_ACCENT};"
-        f" background:{_BG}; padding:4px 0;"
+        f"font-size:44px; font-weight:800; color:{_ACCENT};"
+        f" background:{_BG}; padding:2px 0;"
     )
 
     status = QLabel("")
     status.setWordWrap(True)
     status.setAlignment(Qt.AlignCenter)
-    status.setMinimumHeight(32)
+    status.setMinimumHeight(28)
     status.setStyleSheet(
-        f"color:{_TEXT}; font-size:12px; font-weight:600;"
+        f"color:{_TEXT}; font-size:13px; font-weight:700;"
         f" background:#16202c; border:1px solid #243040;"
-        f" border-radius:8px; padding:6px;"
+        f" border-radius:8px; padding:4px;"
     )
 
-    debug = QLabel("Sensor debug…")
+    debug = QLabel("…")
     debug.setWordWrap(True)
-    debug.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-    debug.setMinimumHeight(72)
-    debug.setStyleSheet(
-        "color:#9ab; font-size:10px; font-weight:600; font-family:monospace;"
-        " background:#0a1018; border:1px solid #243040;"
-        " border-radius:8px; padding:8px;"
+    debug.setAlignment(Qt.AlignCenter)
+    debug.setMinimumHeight(88)
+    _debug_normal = (
+        f"color:{_TEXT}; font-size:15px; font-weight:800;"
+        f" background:#16202c; border:2px solid #3a5068;"
+        f" border-radius:8px; padding:10px 6px;"
     )
+    _debug_probe = (
+        f"color:#ffffff; font-size:16px; font-weight:800;"
+        f" background:#1a4d32; border:3px solid #7dffa0;"
+        f" border-radius:8px; padding:10px 6px;"
+    )
+    _debug_warn = (
+        "color:#fff8e8; font-size:15px; font-weight:800;"
+        " background:#4a3810; border:2px solid #ffcc66;"
+        " border-radius:8px; padding:10px 6px;"
+    )
+    debug.setStyleSheet(_debug_normal)
 
     row = QHBoxLayout()
     row.setSpacing(6)
@@ -305,7 +316,6 @@ def make_steps_page(on_back: Callable[[], None], bridge=None) -> QWidget:
     lay.addWidget(debug)
     lay.addLayout(row)
     lay.addLayout(row2)
-    lay.addStretch(1)
 
     probe_until = {"t": 0.0}
 
@@ -313,32 +323,26 @@ def make_steps_page(on_back: Callable[[], None], bridge=None) -> QWidget:
         st = store.steps_state()
         big.setText(str(int(st.get("count") or 0)))
         try:
-            from esp_handset.steps_pi import daemon_active, monitor_status, start_monitor, user_status
+            from esp_handset.steps_pi import (
+                daemon_active,
+                debug_panel_text,
+                start_monitor,
+                user_status,
+            )
 
             start_monitor()
-            status.setText(user_status()[:100])
-            debug.setText(monitor_status())
+            status.setText(user_status()[:80])
+            debug.setText(debug_panel_text())
             if probe_until["t"] > time.monotonic():
-                debug.setStyleSheet(
-                    "color:#7dffa0; font-size:10px; font-weight:700; font-family:monospace;"
-                    " background:#0d2218; border:2px solid #3a8f62;"
-                    " border-radius:8px; padding:8px;"
-                )
+                debug.setStyleSheet(_debug_probe)
             elif daemon_active():
-                debug.setStyleSheet(
-                    "color:#9ab; font-size:10px; font-weight:600; font-family:monospace;"
-                    " background:#0a1018; border:1px solid #243040;"
-                    " border-radius:8px; padding:8px;"
-                )
+                debug.setStyleSheet(_debug_normal)
             else:
-                debug.setStyleSheet(
-                    "color:#ffcc66; font-size:10px; font-weight:600; font-family:monospace;"
-                    " background:#2a2010; border:1px solid #665520;"
-                    " border-radius:8px; padding:8px;"
-                )
+                debug.setStyleSheet(_debug_warn)
         except Exception as e:
-            status.setText(str(e)[:72])
-            debug.setText(str(e)[:200])
+            status.setText(str(e)[:60])
+            debug.setText(str(e)[:120])
+            debug.setStyleSheet(_debug_warn)
 
     def do_refresh() -> None:
         show_local()
@@ -363,7 +367,7 @@ def make_steps_page(on_back: Callable[[], None], bridge=None) -> QWidget:
             if not steps_pi.daemon_active():
                 status.setText("Run: sudo digivice-ensure-buttons")
             else:
-                status.setText(f"Live BCM{STEPS_BCM} — shake now (2 min)")
+                status.setText("Shake sensor — watch box below")
         except Exception as e:
             status.setText(str(e)[:72])
 

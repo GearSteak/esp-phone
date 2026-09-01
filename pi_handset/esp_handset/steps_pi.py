@@ -136,6 +136,28 @@ def restart_monitor(on_step: Optional[Callable[[int], None]] = None) -> Optional
     return start_monitor(on_step=on_step)
 
 
+def debug_panel_text() -> str:
+    """Large-type lines for the 2\" LCD Steps screen."""
+    if STEPS_BCM is None:
+        return "Steps disabled"
+    d = read_debug()
+    if not d:
+        return "No sensor data\n\nRun:\nsudo digivice-ensure-buttons"
+    if d.get("source") != "buttons_inputd":
+        err = str(d.get("error") or "Buttons daemon offline")[:48]
+        return f"OFFLINE\n\n{err}\n\nsudo digivice-ensure-buttons"
+    pressed = bool(d.get("pressed"))
+    edges = int(d.get("edges") or 0)
+    counted = int(d.get("session_steps") or 0)
+    sensor = "TILT!" if pressed else "open"
+    return (
+        f"Sensor: {sensor}\n"
+        f"Edges: {edges}\n"
+        f"Counted: {counted}\n"
+        f"Shake now"
+    )
+
+
 def monitor_status() -> str:
     if STEPS_BCM is None:
         return "Steps GPIO disabled"
@@ -155,16 +177,15 @@ def monitor_status() -> str:
 
 def user_status() -> str:
     if STEPS_BCM is None:
-        return "Tilt sensor disabled"
+        return "Sensor disabled"
     if not daemon_active():
-        return "Buttons daemon offline — sudo digivice-ensure-buttons"
+        return "Daemon offline"
     d = read_debug()
     if d.get("error"):
-        return str(d["error"])[:72]
-    if int(d.get("session_steps") or 0) > 0:
-        return f"Counting · {d.get('session_steps')} from sensor"
-    if int(d.get("edges") or 0) > 0:
-        return f"Edges {d.get('edges')} — check refractory"
+        return "Fix buttons daemon"
+    n = int(d.get("session_steps") or 0)
+    if n > 0:
+        return f"{n} from sensor today"
     if d.get("pressed"):
-        return "Sensor pressed now"
-    return "Shake — watch edges below"
+        return "Tilt detected!"
+    return "Ready — shake"
