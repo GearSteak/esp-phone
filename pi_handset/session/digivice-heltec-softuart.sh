@@ -19,15 +19,41 @@ fi
 
 log "Install pigpio for bit-bang UART"
 export DEBIAN_FRONTEND=noninteractive
+
+install_pigpio_source() {
+  log "Building pigpio from source (apt package unavailable)…"
+  apt-get install -y git make gcc python3-dev 2>&1 | tail -n 5 || true
+  local dir
+  dir="$(mktemp -d /tmp/pigpio-build.XXXXXX)"
+  if git clone --depth 1 https://github.com/joan2937/pigpio "$dir/pigpio" 2>&1; then
+    if make -C "$dir/pigpio" -j"$(nproc 2>/dev/null || echo 2)" 2>&1 \
+      && make -C "$dir/pigpio" install 2>&1; then
+      ldconfig 2>/dev/null || true
+      if [[ -x /usr/local/bin/pigpiod ]]; then
+        ln -sf /usr/local/bin/pigpiod /usr/bin/pigpiod 2>/dev/null || true
+      fi
+      pigpiod 2>/dev/null || true
+      log "pigpio source build OK"
+      return 0
+    fi
+  fi
+  log "ERROR: pigpio source build failed"
+  return 1
+}
+
 apt-get update -qq 2>&1 | tail -n 3 || log "WARN: apt-get update failed"
 if ! apt-get install -y pigpio python3-pigpio; then
-  log "ERROR: apt install pigpio python3-pigpio failed — run: sudo apt-get update && sudo apt-get install -y pigpio python3-pigpio"
+  log "WARN: apt install pigpio python3-pigpio failed — trying source build"
+  install_pigpio_source || true
 fi
 systemctl enable --now pigpiod 2>&1 || true
 if ! command -v pigpiod >/dev/null 2>&1; then
-  log "ERROR: pigpiod binary still missing after apt install"
+  install_pigpio_source || true
+fi
+if ! command -v pigpiod >/dev/null 2>&1; then
+  log "ERROR: pigpiod binary still missing after apt + source"
 elif ! python3 -c "import pigpio" 2>/dev/null; then
-  log "ERROR: python3-pigpio import failed after apt install"
+  log "ERROR: python3-pigpio import failed — apt: python3-pigpio, or pigpio source build"
 elif ! python3 -c "import pigpio; pi=pigpio.pi(); ok=pi.connected; pi.stop(); import sys; sys.exit(0 if ok else 1)" 2>/dev/null; then
   log "WARN: pigpiod not connected — trying systemctl start pigpiod"
   systemctl start pigpiod 2>/dev/null || pigpiod 2>/dev/null || true

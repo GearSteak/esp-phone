@@ -312,8 +312,10 @@ def _refresh_mouse_report() -> Tuple[bool, str]:
 
 def _refresh_heltec_report() -> Tuple[bool, str]:
     cmds = (
-        ["digivice-heltec-doctor"],
+        ["sudo", "-n", "digivice-ensure-heltec", "--restart", "--doctor"],
+        ["sudo", "-n", "digivice-heltec-doctor", "--fix"],
         ["sudo", "-n", "digivice-heltec-doctor"],
+        ["bash", "/opt/esp-handset/session/ensure-heltec-softuart.sh", "--restart", "--doctor"],
         ["bash", "/opt/esp-handset/session/digivice-heltec-doctor.sh"],
     )
     last = "doctor not installed"
@@ -323,7 +325,7 @@ def _refresh_heltec_report() -> Tuple[bool, str]:
                 cmd,
                 capture_output=True,
                 text=True,
-                timeout=120,
+                timeout=300,
                 check=False,
             )
             if r.returncode == 0 or _heltec_report_path() is not None:

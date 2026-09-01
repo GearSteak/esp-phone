@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Digivice Heltec soft-UART doctor — env, pigpiod, GPIO probe, live PING.
-#   digivice-heltec-doctor
-#   digivice-heltec-doctor --fix   # re-run soft-UART setup + restart Digivice
+#   digivice-heltec-doctor              # auto-install pigpio if missing, then report
+#   digivice-heltec-doctor --fix        # ensure + restart Digivice
 # Writes: ~/.esp-handset/heltec-doctor.txt (+ /tmp/digivice-heltec-doctor.txt)
 #
 set +e
@@ -29,21 +29,47 @@ if [[ "$(id -u)" -eq 0 && -n "${SUDO_USER:-}" && "${SUDO_USER}" != "root" ]]; th
   fi
 fi
 
-if [[ "$FIX" -eq 1 ]]; then
-  echo "[heltec-doctor] --fix: ensuring soft-UART env + pigpiod…"
+need_ensure=0
+if ! python3 -c "import pigpio" 2>/dev/null; then
+  need_ensure=1
+fi
+if [[ ! -f "$ENV_FILE" ]] || ! grep -qE '^ESP_BRIDGE_SOFTUART=(1|true|yes|on)' "$ENV_FILE" 2>/dev/null; then
+  need_ensure=1
+fi
+
+run_ensure() {
+  local extra=()
+  [[ "$FIX" -eq 1 ]] && extra+=(--restart)
   for script in \
     "$PREFIX/session/ensure-heltec-softuart.sh" \
     "$(dirname "$0")/ensure-heltec-softuart.sh" \
-    "${ROOT}/pi_handset/session/ensure-heltec-softuart.sh" \
+    "${ROOT}/pi_handset/session/ensure-heltec-softuart.sh"
+  do
+    if [[ -f "$script" ]]; then
+      echo "[heltec-doctor] ensuring soft-UART (pigpio + env)…"
+      bash "$script" "${extra[@]}" 2>&1 | tee -a "$OUT" || true
+      return 0
+    fi
+  done
+  for script in \
     "$PREFIX/session/digivice-heltec-softuart.sh" \
     "$(dirname "$0")/digivice-heltec-softuart.sh" \
     "${ROOT}/pi_handset/session/digivice-heltec-softuart.sh"
   do
     if [[ -f "$script" ]]; then
       bash "$script" 2>&1 | tee -a "$OUT" || true
-      break
+      return 0
     fi
   done
+  echo "[heltec-doctor] ensure script missing" | tee -a "$OUT"
+}
+
+if [[ "$(id -u)" -eq 0 ]]; then
+  if [[ "$FIX" -eq 1 || "$need_ensure" -eq 1 ]]; then
+    run_ensure
+  fi
+elif [[ "$need_ensure" -eq 1 ]]; then
+  echo "[heltec-doctor] pigpio/env missing — re-run via sudo or Prep Heltec report" | tee -a "$OUT"
 fi
 
 {
