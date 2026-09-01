@@ -129,6 +129,7 @@ install_live_from_repo() {
     "digivice-heltec-softuart.sh:digivice-heltec-softuart" \
     "digivice-heltec-doctor.sh:digivice-heltec-doctor" \
     "ensure-heltec-softuart.sh:digivice-ensure-heltec" \
+    "digivice-ensure-pigpiod.sh:digivice-ensure-pigpiod" \
     "digivice-audio-usb.sh:digivice-audio-usb" \
     "digivice-audio-fix.sh:digivice-audio-fix" \
     "digivice-cm108-beep.sh:digivice-cm108-beep" \
@@ -219,6 +220,7 @@ if [[ -d "$STAGE" && -f "$STAGE/.ready" ]]; then
     digivice-heltec-softuart.sh:digivice-heltec-softuart \
     digivice-heltec-doctor.sh:digivice-heltec-doctor \
     ensure-heltec-softuart.sh:digivice-ensure-heltec \
+    digivice-ensure-pigpiod.sh:digivice-ensure-pigpiod \
     digivice-audio-usb.sh:digivice-audio-usb \
     digivice-audio-fix.sh:digivice-audio-fix \
     digivice-cm108-beep.sh:digivice-cm108-beep \
@@ -473,6 +475,12 @@ apt-get update -qq >>"$LOG" 2>&1 || true
 apt-get install -y pigpio python3-pigpio >>"$LOG" 2>&1 \
   || log "WARN: apt install pigpio failed — check $LOG"
 systemctl enable --now pigpiod >>"$LOG" 2>&1 || true
+if [[ -f "$PREFIX/session/digivice-ensure-pigpiod.sh" ]]; then
+  install -m 755 "$PREFIX/session/digivice-ensure-pigpiod.sh" /usr/local/bin/digivice-ensure-pigpiod
+  log "Ensuring pigpiod daemon…"
+  bash /usr/local/bin/digivice-ensure-pigpiod >>"$LOG" 2>&1 \
+    || log "WARN: digivice-ensure-pigpiod failed — check $LOG"
+fi
 if [[ -f "$PREFIX/session/ensure-heltec-softuart.sh" ]]; then
   install -m 755 "$PREFIX/session/ensure-heltec-softuart.sh" /usr/local/bin/digivice-ensure-heltec
   log "Ensuring Heltec soft-UART…"

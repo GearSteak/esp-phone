@@ -247,6 +247,7 @@ install_tree() {
       "digivice-heltec-softuart.sh:digivice-heltec-softuart" \
       "digivice-heltec-doctor.sh:digivice-heltec-doctor" \
       "ensure-heltec-softuart.sh:digivice-ensure-heltec" \
+      "digivice-ensure-pigpiod.sh:digivice-ensure-pigpiod" \
       "digivice-audio-usb.sh:digivice-audio-usb" \
       "digivice-audio-fix.sh:digivice-audio-fix" \
       "digivice-cm108-beep.sh:digivice-cm108-beep" \

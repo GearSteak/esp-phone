@@ -60,7 +60,17 @@ if ! command -v pigpiod >/dev/null 2>&1; then
 elif ! python3 -c "import pigpio" 2>/dev/null; then
   log "ERROR: python3-pigpio import failed — apt: python3-pigpio, or pigpio source build"
 elif ! python3 -c "import pigpio; pi=pigpio.pi(); ok=pi.connected; pi.stop(); import sys; sys.exit(0 if ok else 1)" 2>/dev/null; then
-  log "WARN: pigpiod not connected — trying systemctl start pigpiod"
+  log "WARN: pigpiod not connected — running digivice-ensure-pigpiod"
+  for script in \
+    "$(dirname "$0")/digivice-ensure-pigpiod.sh" \
+    /usr/local/bin/digivice-ensure-pigpiod \
+    /opt/esp-handset/session/digivice-ensure-pigpiod.sh
+  do
+    if [[ -f "$script" ]]; then
+      bash "$script" 2>&1 || true
+      break
+    fi
+  done
   systemctl start pigpiod 2>/dev/null || pigpiod 2>/dev/null || true
 else
   log "pigpio OK (daemon connected)"

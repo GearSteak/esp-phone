@@ -83,6 +83,18 @@ if [[ -f /etc/esp-handset/env ]]; then
   export PYTHONPATH="${PREFIX}${PYTHONPATH:+:$PYTHONPATH}"
 fi
 
+# Heltec soft-UART needs pigpiod before handset_app opens the bridge.
+if grep -qE '^ESP_BRIDGE_SOFTUART=(1|true|yes|on)' /etc/esp-handset/env 2>/dev/null; then
+  for pig in /usr/local/bin/digivice-ensure-pigpiod \
+    "$PREFIX/session/digivice-ensure-pigpiod.sh"; do
+    if [[ -x "$pig" || -f "$pig" ]]; then
+      log "ensuring pigpiod (Heltec soft-UART)…"
+      bash "$pig" >>"$LOG" 2>&1 || log "WARN: digivice-ensure-pigpiod failed"
+      break
+    fi
+  done
+fi
+
 log "DISPLAY=$DISPLAY XAUTHORITY=${XAUTHORITY:-none} user=$USER_NAME PREFIX=$PREFIX"
 log "PYTHONPATH=$PYTHONPATH"
 

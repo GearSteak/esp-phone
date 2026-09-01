@@ -436,6 +436,10 @@ if [[ -f "$ROOT/session/digivice-heltec-doctor.sh" ]]; then
   install -m 755 "$ROOT/session/digivice-heltec-doctor.sh" "$PREFIX/session/digivice-heltec-doctor.sh"
   install -m 755 "$ROOT/session/digivice-heltec-doctor.sh" /usr/local/bin/digivice-heltec-doctor
 fi
+if [[ -f "$ROOT/session/digivice-ensure-pigpiod.sh" ]]; then
+  install -m 755 "$ROOT/session/digivice-ensure-pigpiod.sh" "$PREFIX/session/digivice-ensure-pigpiod.sh"
+  install -m 755 "$ROOT/session/digivice-ensure-pigpiod.sh" /usr/local/bin/digivice-ensure-pigpiod
+fi
 if [[ -f "$ROOT/session/ensure-heltec-softuart.sh" ]]; then
   install -m 755 "$ROOT/session/ensure-heltec-softuart.sh" "$PREFIX/session/ensure-heltec-softuart.sh"
   install -m 755 "$ROOT/session/ensure-heltec-softuart.sh" /usr/local/bin/digivice-ensure-heltec
