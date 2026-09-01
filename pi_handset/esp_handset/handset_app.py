@@ -962,12 +962,23 @@ def main() -> int:
             print(f"[handset] boot splash failed ({e}) — continuing", flush=True)
 
     print("[handset] waking radios…", flush=True)
-    try:
-        bridge = EspBridge()
-        bridge.open()
-    except Exception as e:
-        print(f"[handset] LoRa ESP offline ({e})", flush=True)
-        bridge = None
+    bridge = None
+    bridge_err: Optional[Exception] = None
+    for attempt in range(10):
+        try:
+            candidate = EspBridge()
+            candidate.open()
+            bridge = candidate
+            bridge_err = None
+            if attempt > 0:
+                print(f"[handset] Heltec bridge OK (retry {attempt})", flush=True)
+            break
+        except Exception as e:
+            bridge_err = e
+            if attempt < 9:
+                time.sleep(1.2)
+    if bridge is None and bridge_err is not None:
+        print(f"[handset] LoRa ESP offline ({bridge_err})", flush=True)
 
     win = build_app(bridge, None)
     app.installEventFilter(_KioskKeyFilter(win))

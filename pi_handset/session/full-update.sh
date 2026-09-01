@@ -440,6 +440,12 @@ if [[ -f "$ROOT/session/digivice-ensure-pigpiod.sh" ]]; then
   install -m 755 "$ROOT/session/digivice-ensure-pigpiod.sh" "$PREFIX/session/digivice-ensure-pigpiod.sh"
   install -m 755 "$ROOT/session/digivice-ensure-pigpiod.sh" /usr/local/bin/digivice-ensure-pigpiod
 fi
+if [[ -f "$ROOT/session/digivice-pigpiod.service" ]]; then
+  install -m 644 "$ROOT/session/digivice-pigpiod.service" "$PREFIX/session/digivice-pigpiod.service"
+  install -m 644 "$ROOT/session/digivice-pigpiod.service" /etc/systemd/system/digivice-pigpiod.service
+  systemctl daemon-reload 2>/dev/null || true
+  systemctl enable digivice-pigpiod.service 2>/dev/null || true
+fi
 if [[ -f "$ROOT/session/ensure-heltec-softuart.sh" ]]; then
   install -m 755 "$ROOT/session/ensure-heltec-softuart.sh" "$PREFIX/session/ensure-heltec-softuart.sh"
   install -m 755 "$ROOT/session/ensure-heltec-softuart.sh" /usr/local/bin/digivice-ensure-heltec
@@ -604,6 +610,10 @@ $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-mouse-doctor
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-heltec-doctor
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-heltec-softuart
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-ensure-heltec
+$USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-ensure-pigpiod
+$USER_NAME ALL=(root) NOPASSWD: $PREFIX/session/digivice-ensure-pigpiod.sh
+$USER_NAME ALL=(root) NOPASSWD: /usr/bin/systemctl start digivice-pigpiod.service
+$USER_NAME ALL=(root) NOPASSWD: /bin/systemctl start digivice-pigpiod.service
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-audio-usb
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-audio-fix
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-cm108-wake

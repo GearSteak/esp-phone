@@ -1,0 +1,16 @@
+[Unit]
+Description=pigpio daemon for Digivice Heltec soft-UART
+After=local-fs.target
+Before=graphical.target
+ConditionPathExists=|/usr/local/bin/pigpiod
+ConditionPathExists=|/usr/bin/pigpiod
+
+[Service]
+Type=forking
+# Prefer source-built binary (common on Pi when apt pigpio is missing).
+ExecStart=/bin/sh -c 'if [ -x /usr/local/bin/pigpiod ]; then exec /usr/local/bin/pigpiod; elif [ -x /usr/bin/pigpiod ]; then exec /usr/bin/pigpiod; else exit 1; fi'
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

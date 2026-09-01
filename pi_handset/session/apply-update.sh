@@ -350,6 +350,10 @@ $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-audio-doctor
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-heltec-doctor
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-heltec-softuart
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-ensure-heltec
+$USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-ensure-pigpiod
+$USER_NAME ALL=(root) NOPASSWD: $PREFIX/session/digivice-ensure-pigpiod.sh
+$USER_NAME ALL=(root) NOPASSWD: /usr/bin/systemctl start digivice-pigpiod.service
+$USER_NAME ALL=(root) NOPASSWD: /bin/systemctl start digivice-pigpiod.service
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-audio-usb
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-audio-fix
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-cm108-wake
@@ -475,6 +479,11 @@ apt-get update -qq >>"$LOG" 2>&1 || true
 apt-get install -y pigpio python3-pigpio >>"$LOG" 2>&1 \
   || log "WARN: apt install pigpio failed — check $LOG"
 systemctl enable --now pigpiod >>"$LOG" 2>&1 || true
+if [[ -f "$PREFIX/session/digivice-pigpiod.service" ]]; then
+  install -m 644 "$PREFIX/session/digivice-pigpiod.service" /etc/systemd/system/digivice-pigpiod.service
+  systemctl daemon-reload >>"$LOG" 2>&1 || true
+  systemctl enable digivice-pigpiod.service >>"$LOG" 2>&1 || true
+fi
 if [[ -f "$PREFIX/session/digivice-ensure-pigpiod.sh" ]]; then
   install -m 755 "$PREFIX/session/digivice-ensure-pigpiod.sh" /usr/local/bin/digivice-ensure-pigpiod
   log "Ensuring pigpiod daemon…"

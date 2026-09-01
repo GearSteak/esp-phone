@@ -1,9 +1,26 @@
 #!/usr/bin/env bash
-# Start pigpiod for Heltec soft-UART (source-built binary often misses systemd).
+# Start pigpiod for Heltec soft-UART — must run as root (GPIO). No password prompts.
 set +e
 set -u
 
 log() { echo "[ensure-pigpiod] $*"; }
+
+if [[ "$(id -u)" -ne 0 ]]; then
+  if sudo -n true 2>/dev/null; then
+    exec sudo -n env ESP_HANDSET_PREFIX="${ESP_HANDSET_PREFIX:-/opt/esp-handset}" \
+      /usr/local/bin/digivice-ensure-pigpiod "$@"
+  fi
+  if [[ -f /opt/esp-handset/session/digivice-ensure-pigpiod.sh ]]; then
+    exec sudo -n env ESP_HANDSET_PREFIX="${ESP_HANDSET_PREFIX:-/opt/esp-handset}" \
+      bash /opt/esp-handset/session/digivice-ensure-pigpiod.sh "$@"
+  fi
+  log "need root — run: sudo digivice-ensure-pigpiod"
+  exit 1
+fi
+
+PREFIX="${ESP_HANDSET_PREFIX:-/opt/esp-handset}"
+UNIT_SRC="$PREFIX/session/digivice-pigpiod.service"
+UNIT_DST="/etc/systemd/system/digivice-pigpiod.service"
 
 pigpio_connected() {
   python3 -c "import pigpio; pi=pigpio.pi(); ok=pi.connected; pi.stop(); import sys; sys.exit(0 if ok else 1)" 2>/dev/null
@@ -20,27 +37,15 @@ find_pigpiod() {
 }
 
 install_unit() {
-  local bin="$1"
-  local unit="/etc/systemd/system/pigpiod.service"
-  [[ -f "$unit" ]] && grep -q "$bin" "$unit" 2>/dev/null && return 0
-  log "installing systemd unit → $bin"
-  cat >"$unit" <<EOF
-[Unit]
-Description=pigpio daemon (Digivice Heltec soft-UART)
-After=network.target
-
-[Service]
-Type=forking
-ExecStart=$bin
-ExecStop=/bin/kill -TERM \$MAINPID
-Restart=on-failure
-RestartSec=2
-
-[Install]
-WantedBy=multi-user.target
-EOF
+  if [[ -f "$UNIT_SRC" ]]; then
+    install -m 644 "$UNIT_SRC" "$UNIT_DST"
+  elif [[ ! -f "$UNIT_DST" ]]; then
+    log "ERROR: $UNIT_SRC missing"
+    return 1
+  fi
   systemctl daemon-reload 2>/dev/null || true
-  systemctl enable pigpiod 2>/dev/null || true
+  systemctl enable digivice-pigpiod.service 2>/dev/null || true
+  return 0
 }
 
 if pigpio_connected; then
@@ -48,10 +53,20 @@ if pigpio_connected; then
   exit 0
 fi
 
+install_unit || true
+systemctl start digivice-pigpiod.service 2>/dev/null || true
+sleep 0.5
+if pigpio_connected; then
+  log "started via digivice-pigpiod.service"
+  exit 0
+fi
+
+# Fallback: stock unit name from apt
+systemctl enable --now pigpiod 2>/dev/null || true
 systemctl start pigpiod 2>/dev/null || true
 sleep 0.4
 if pigpio_connected; then
-  log "started via systemctl"
+  log "started via pigpiod.service"
   exit 0
 fi
 
@@ -59,16 +74,6 @@ bin="$(find_pigpiod || true)"
 if [[ -z "$bin" ]]; then
   log "ERROR: pigpiod binary not found"
   exit 1
-fi
-
-if [[ "$(id -u)" -eq 0 ]]; then
-  install_unit "$bin"
-  systemctl start pigpiod 2>/dev/null || true
-  sleep 0.4
-  if pigpio_connected; then
-    log "started via systemd ($bin)"
-    exit 0
-  fi
 fi
 
 pkill -x pigpiod 2>/dev/null || true
