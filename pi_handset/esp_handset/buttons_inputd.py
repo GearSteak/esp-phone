@@ -23,6 +23,7 @@ handset-session writes mode on handset-phone / handset-desktop.
 from __future__ import annotations
 
 import glob
+import json
 import os
 import socket
 import subprocess
@@ -693,6 +694,52 @@ def quit_gb_emulator() -> None:
     threading.Thread(target=_recover, daemon=True).start()
 
 
+def poll_steps_sensor(
+    gpio: GpioBackend,
+    bcm: int,
+    *,
+    raw_level: int,
+    prev_pressed: bool,
+    stable_since: float,
+    edges: int,
+) -> tuple[int, bool, float, int, bool]:
+    """SW-520D on BCM17 — momentary press like a button. Returns updated state + counted."""
+    counted = False
+    try:
+        level = gpio.read(bcm)
+    except Exception as e:
+        log(f"steps read BCM{bcm}: {e}")
+        return raw_level, prev_pressed, stable_since, edges, False
+
+    now = time.monotonic()
+    if level != raw_level:
+        raw_level = level
+        stable_since = now
+
+    if now - stable_since < DEBOUNCE_S:
+        return raw_level, prev_pressed, stable_since, edges, False
+
+    pressed = is_pressed(level)
+    if pressed == prev_pressed:
+        return raw_level, prev_pressed, stable_since, edges, False
+
+    was_pressed = prev_pressed
+    prev_pressed = pressed
+    edges += 1
+
+    if pressed and not was_pressed:
+        try:
+            from esp_handset import steps_pi
+
+            total = steps_pi.record_step(1)
+            counted = True
+            log(f"steps BCM{bcm} → {total}")
+        except Exception as e:
+            log(f"steps count: {e}")
+
+    return raw_level, prev_pressed, stable_since, edges, counted
+
+
 def main() -> int:
     try:
         import uinput
@@ -817,6 +864,38 @@ def main() -> int:
     gb_start = [False]
     gb_select = [False]
     gb_exit_armed = [True]
+
+    steps_gpio: Optional[GpioBackend] = None
+    steps_bcm: Optional[int] = None
+    steps_raw = 1
+    steps_prev = False
+    steps_stable = time.monotonic()
+    steps_edges = 0
+    steps_session = 0
+    try:
+        from esp_handset.hw_pins import STEPS_BCM
+
+        if STEPS_BCM is not None:
+            from esp_handset import steps_pi
+
+            if steps_pi.store.steps_source() != "heltec":
+                steps_gpio = open_gpio({"STEPS": STEPS_BCM})
+                steps_bcm = int(STEPS_BCM)
+                steps_raw = steps_gpio.read(steps_bcm)
+                steps_prev = is_pressed(steps_raw)
+                steps_stable = time.monotonic()
+                steps_pi.write_debug(
+                    source="buttons_inputd",
+                    bcm=steps_bcm,
+                    level=int(steps_raw),
+                    pressed=steps_prev,
+                    edges=0,
+                    session_steps=0,
+                    backend="open_gpio",
+                )
+                log(f"steps BCM{steps_bcm} ready pressed={steps_prev}")
+    except Exception as e:
+        log(f"steps init: {e}")
 
     def gb_emit(logical: str, down: bool) -> None:
         code = gb_map.get(logical)
@@ -1011,6 +1090,38 @@ def main() -> int:
                     gb_exit_since[0] = None
                     gb_exit_armed[0] = True
 
+            if steps_gpio is not None and steps_bcm is not None:
+                try:
+                    from esp_handset import steps_pi
+
+                    (
+                        steps_raw,
+                        steps_prev,
+                        steps_stable,
+                        steps_edges,
+                        counted,
+                    ) = poll_steps_sensor(
+                        steps_gpio,
+                        steps_bcm,
+                        raw_level=steps_raw,
+                        prev_pressed=steps_prev,
+                        stable_since=steps_stable,
+                        edges=steps_edges,
+                    )
+                    if counted:
+                        steps_session += 1
+                    steps_pi.write_debug(
+                        source="buttons_inputd",
+                        bcm=steps_bcm,
+                        level=int(steps_raw),
+                        pressed=steps_prev,
+                        edges=steps_edges,
+                        session_steps=steps_session,
+                        backend="open_gpio",
+                    )
+                except Exception as e:
+                    log(f"steps poll: {e}")
+
             time.sleep(SCAN_S)
     except KeyboardInterrupt:
         pass
@@ -1021,6 +1132,11 @@ def main() -> int:
             pass
         if gpio is not None:
             gpio.cleanup()
+        if steps_gpio is not None:
+            try:
+                steps_gpio.cleanup()
+            except Exception:
+                pass
         try:
             device.destroy()
         except Exception:

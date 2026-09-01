@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import time
 import urllib.parse
 import urllib.request
 from datetime import datetime, date
@@ -267,11 +268,21 @@ def make_steps_page(on_back: Callable[[], None], bridge=None) -> QWidget:
     status = QLabel("")
     status.setWordWrap(True)
     status.setAlignment(Qt.AlignCenter)
-    status.setMinimumHeight(36)
+    status.setMinimumHeight(32)
     status.setStyleSheet(
         f"color:{_TEXT}; font-size:12px; font-weight:600;"
         f" background:#16202c; border:1px solid #243040;"
         f" border-radius:8px; padding:6px;"
+    )
+
+    debug = QLabel("Sensor debug…")
+    debug.setWordWrap(True)
+    debug.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+    debug.setMinimumHeight(72)
+    debug.setStyleSheet(
+        "color:#9ab; font-size:10px; font-weight:600; font-family:monospace;"
+        " background:#0a1018; border:1px solid #243040;"
+        " border-radius:8px; padding:8px;"
     )
 
     row = QHBoxLayout()
@@ -291,25 +302,43 @@ def make_steps_page(on_back: Callable[[], None], bridge=None) -> QWidget:
     lay.addWidget(title)
     lay.addWidget(big)
     lay.addWidget(status)
+    lay.addWidget(debug)
     lay.addLayout(row)
     lay.addLayout(row2)
     lay.addStretch(1)
+
+    probe_until = {"t": 0.0}
 
     def show_local() -> None:
         st = store.steps_state()
         big.setText(str(int(st.get("count") or 0)))
         try:
-            from esp_handset.steps_pi import monitor_status, start_monitor, user_status
+            from esp_handset.steps_pi import daemon_active, monitor_status, start_monitor, user_status
 
             start_monitor()
-            hint = user_status()
-            if store.steps_source() == "pi":
-                hint = f"BCM17 · {hint}"
-            status.setText(hint[:120])
-            # Second line via tooltip — full GPIO debug on long-press refresh
-            status.setToolTip(monitor_status())
+            status.setText(user_status()[:100])
+            debug.setText(monitor_status())
+            if probe_until["t"] > time.monotonic():
+                debug.setStyleSheet(
+                    "color:#7dffa0; font-size:10px; font-weight:700; font-family:monospace;"
+                    " background:#0d2218; border:2px solid #3a8f62;"
+                    " border-radius:8px; padding:8px;"
+                )
+            elif daemon_active():
+                debug.setStyleSheet(
+                    "color:#9ab; font-size:10px; font-weight:600; font-family:monospace;"
+                    " background:#0a1018; border:1px solid #243040;"
+                    " border-radius:8px; padding:8px;"
+                )
+            else:
+                debug.setStyleSheet(
+                    "color:#ffcc66; font-size:10px; font-weight:600; font-family:monospace;"
+                    " background:#2a2010; border:1px solid #665520;"
+                    " border-radius:8px; padding:8px;"
+                )
         except Exception as e:
             status.setText(str(e)[:72])
+            debug.setText(str(e)[:200])
 
     def do_refresh() -> None:
         show_local()
@@ -323,17 +352,18 @@ def make_steps_page(on_back: Callable[[], None], bridge=None) -> QWidget:
         show_local()
 
     def do_probe() -> None:
-        """Force a re-init and show live level (for wiring checks)."""
+        """Restart buttons daemon step counter view; keep debug visible 2 min."""
         try:
             from esp_handset import steps_pi
             from esp_handset.hw_pins import STEPS_BCM
 
-            mon = steps_pi.restart_monitor()
-            if mon is None:
-                status.setText(f"No sensor (BCM {STEPS_BCM})")
+            probe_until["t"] = time.monotonic() + 120
+            steps_pi.restart_monitor()
+            show_local()
+            if not steps_pi.daemon_active():
+                status.setText("Run: sudo digivice-ensure-buttons")
             else:
-                show_local()
-                status.setText(steps_pi.monitor_status() + " · shake")
+                status.setText(f"Live BCM{STEPS_BCM} — shake now (2 min)")
         except Exception as e:
             status.setText(str(e)[:72])
 

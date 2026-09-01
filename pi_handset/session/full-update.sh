@@ -682,6 +682,7 @@ User=root
 Environment=DISPLAY=:0
 Environment=XAUTHORITY=$USER_HOME/.Xauthority
 Environment=ESP_HANDSET_PREFIX=$PREFIX
+Environment=DIGIVICE_USER_HOME=$USER_HOME
 ExecStartPre=-/sbin/modprobe uinput
 ExecStart=/usr/bin/python3 $PREFIX/buttons_inputd.py
 Restart=always

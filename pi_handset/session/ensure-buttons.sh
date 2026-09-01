@@ -118,6 +118,7 @@ User=root
 Environment=DISPLAY=:0
 Environment=XAUTHORITY=$xauth
 Environment=ESP_HANDSET_PREFIX=$PREFIX
+Environment=DIGIVICE_USER_HOME=$GUI_HOME
 ExecStartPre=-/sbin/modprobe uinput
 ExecStart=/usr/bin/python3 $SCRIPT
 Restart=always
