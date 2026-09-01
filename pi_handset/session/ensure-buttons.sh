@@ -105,6 +105,7 @@ EOF
 
 write_unit() {
   local xauth="${GUI_HOME}/.Xauthority"
+  mkdir -p /etc/esp-handset
   echo "$GUI_HOME" >/etc/esp-handset/gui-home 2>/dev/null || true
   cat >"$UNIT" <<EOF
 [Unit]
