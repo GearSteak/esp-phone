@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Digivice Heltec soft-UART doctor — env, pigpiod, GPIO probe, live PING.
-#   digivice-heltec-doctor              # auto-install pigpio if missing, then report
-#   digivice-heltec-doctor --fix        # ensure + restart Digivice
+#   digivice-heltec-doctor              # safe report only (no UART probe)
+#   digivice-heltec-doctor --fix        # ensure pigpio/env + restart Digivice
+#   digivice-heltec-doctor --live-probe # isolated PING (Digivice must be stopped)
 # Writes: ~/.esp-handset/heltec-doctor.txt (+ /tmp/digivice-heltec-doctor.txt)
 #
 set +e
@@ -15,13 +16,14 @@ mkdir -p "$OUT_DIR" /etc/esp-handset /tmp 2>/dev/null || true
 OUT="$OUT_DIR/heltec-doctor.txt"
 OUT2="/tmp/digivice-heltec-doctor.txt"
 FIX=0
-REPORT_ONLY=0
+REPORT_ONLY=1
+LIVE_PROBE=0
 for a in "$@"; do
   [[ "$a" == "--fix" ]] && FIX=1
+  [[ "$a" == "--live-probe" || "$a" == "live-probe" ]] && LIVE_PROBE=1
   [[ "$a" == "--report-only" || "$a" == "report-only" ]] && REPORT_ONLY=1
 done
 [[ "${DIGIVICE_HELTEC_REPORT_ONLY:-0}" == "1" ]] && REPORT_ONLY=1
-[[ "${DIGIVICE_ENSURE_HELTEC_NO_RESTART:-0}" == "1" ]] && REPORT_ONLY=1
 
 if [[ "$(id -u)" -eq 0 && -n "${SUDO_USER:-}" && "${SUDO_USER}" != "root" ]]; then
   UH="$(getent passwd "$SUDO_USER" | cut -d: -f6)"
@@ -69,7 +71,7 @@ run_ensure() {
 }
 
 if [[ "$(id -u)" -eq 0 ]]; then
-  if [[ "$REPORT_ONLY" -ne 1 && ( "$FIX" -eq 1 || "$need_ensure" -eq 1 ) ]]; then
+  if [[ "$FIX" -eq 1 || ( "$need_ensure" -eq 1 && "$REPORT_ONLY" -ne 1 ) ]]; then
     run_ensure
   fi
 elif [[ "$need_ensure" -eq 1 && "$REPORT_ONLY" -ne 1 ]]; then
@@ -78,7 +80,7 @@ fi
 
 {
   echo "=== digivice-heltec-doctor $(date -Iseconds) ==="
-  echo "host=$(hostname) user=$(id -un) prefix=$PREFIX fix=$FIX report_only=$REPORT_ONLY"
+  echo "host=$(hostname) user=$(id -un) prefix=$PREFIX fix=$FIX report_only=$REPORT_ONLY live_probe=$LIVE_PROBE"
   echo
 
   echo "--- wiring (Digivice soft-UART) ---"
@@ -173,8 +175,8 @@ PY
   echo
 
   echo "--- live soft-UART probe (PING + STATUS) ---"
-  if [[ "$REPORT_ONLY" -eq 1 ]]; then
-    echo "SKIP — report-only mode (no UART probe)"
+  if [[ "$LIVE_PROBE" -ne 1 ]]; then
+    echo "SKIP — probe disabled (safe default; use --live-probe with Digivice stopped)"
   elif pgrep -f handset_app.py >/dev/null 2>&1; then
     echo "SKIP — Digivice bridge already owns soft-UART (Heltec icon = live status)"
     echo "Stop Digivice first if you need an isolated PING test"

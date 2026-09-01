@@ -61,7 +61,7 @@ run_doctor() {
     /usr/local/bin/digivice-heltec-doctor
   do
     if [[ -f "$script" ]]; then
-      "${env_args[@]}" bash "$script"
+      "${env_args[@]}" bash "$script" --report-only
       return $?
     fi
   done

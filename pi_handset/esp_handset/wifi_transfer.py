@@ -131,6 +131,7 @@ MOUSE_REPORT = DATA / "mouse-doctor.txt"
 MOUSE_REPORT_TMP = Path("/tmp/digivice-mouse-doctor.txt")
 HELTEC_REPORT = DATA / "heltec-doctor.txt"
 HELTEC_REPORT_TMP = Path("/tmp/digivice-heltec-doctor.txt")
+HELTEC_REPORT_BUILD = "safe-inline-3"
 SIP_REPORT = DATA / "sip-doctor.txt"
 SIP_REPORT_TMP = Path("/tmp/digivice-sip-doctor.txt")
 
@@ -317,7 +318,10 @@ def _write_heltec_report_safe() -> Tuple[bool, str]:
 
     lines: List[str] = []
     lines.append(f"=== digivice-heltec-doctor {datetime.now().isoformat()} ===")
-    lines.append("host=transfer-inline mode=safe (no subprocess, no live PING)")
+    lines.append(
+        f"host=transfer-inline mode=safe build={HELTEC_REPORT_BUILD} "
+        "(no subprocess, no UART probe, no pigpio open)"
+    )
     lines.append("")
 
     env_path = Path("/etc/esp-handset/env")
@@ -345,15 +349,24 @@ def _write_heltec_report_safe() -> Tuple[bool, str]:
 
     lines.append("--- pigpio ---")
     pigpio_ok = False
+    for pigpiod in ("/usr/local/bin/pigpiod", "/usr/bin/pigpiod"):
+        if Path(pigpiod).is_file():
+            lines.append(f"pigpiod binary: {pigpiod}")
+            break
+    else:
+        lines.append("pigpiod binary: not found")
     try:
-        import pigpio  # type: ignore
+        import importlib.util
 
-        pi = pigpio.pi()
-        pigpio_ok = bool(pi.connected)
-        lines.append(f"pigpio client: {'connected' if pigpio_ok else 'NOT connected'}")
-        pi.stop()
+        pigpio_ok = importlib.util.find_spec("pigpio") is not None
+        lines.append(
+            f"python3-pigpio: {'installed' if pigpio_ok else 'MISSING'}"
+        )
+        lines.append(
+            "pigpio client: skipped in Transfer (opening pigpio can disturb bridge)"
+        )
     except Exception as e:
-        lines.append(f"pigpio: FAIL ({e})")
+        lines.append(f"pigpio check: FAIL ({e})")
     lines.append("")
 
     handset_on = False
@@ -423,7 +436,7 @@ def _write_heltec_report_safe() -> Tuple[bool, str]:
             pass
     except OSError as e:
         return False, f"write failed: {e}"
-    return True, "Report ready (inline, safe)"
+    return True, f"Report ready ({HELTEC_REPORT_BUILD})"
 
 
 def _refresh_heltec_report() -> Tuple[bool, str]:
@@ -1153,24 +1166,22 @@ def _make_handler(get_dest: Callable[[], str], signals: _UploadSignals):
             self.wfile.write(data)
 
         def _serve_heltec_report(self, *, download: bool) -> None:
+            # Never regenerate on download — Prep writes the file; regen crashed Digivice.
             path = _heltec_report_path()
             if path is None:
-                ok, msg = _refresh_heltec_report()
-                path = _heltec_report_path() if ok else None
-                if path is None:
-                    body = (
-                        "No heltec-doctor.txt yet.\n\n"
-                        "On Digivice: Tools → Transfer → Prep Heltec report,\n"
-                        "or run: sudo digivice-heltec-doctor\n\n"
-                        f"({msg})\n"
-                    ).encode("utf-8")
-                    self.send_response(404)
-                    self.send_header("Content-Type", "text/plain; charset=utf-8")
-                    self.send_header("Content-Length", str(len(body)))
-                    self.end_headers()
-                    self.wfile.write(body)
-                    signals.activity.emit("No Heltec report yet")
-                    return
+                body = (
+                    "No heltec-doctor.txt yet.\n\n"
+                    "On Digivice: Tools → Transfer → Prep Heltec report,\n"
+                    "then open this link again.\n\n"
+                    f"(expected build marker: {HELTEC_REPORT_BUILD})\n"
+                ).encode("utf-8")
+                self.send_response(404)
+                self.send_header("Content-Type", "text/plain; charset=utf-8")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                signals.activity.emit("No Heltec report yet")
+                return
             try:
                 data = path.read_bytes()
             except OSError:
