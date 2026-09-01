@@ -15,9 +15,13 @@ mkdir -p "$OUT_DIR" /etc/esp-handset /tmp 2>/dev/null || true
 OUT="$OUT_DIR/heltec-doctor.txt"
 OUT2="/tmp/digivice-heltec-doctor.txt"
 FIX=0
+REPORT_ONLY=0
 for a in "$@"; do
   [[ "$a" == "--fix" ]] && FIX=1
+  [[ "$a" == "--report-only" || "$a" == "report-only" ]] && REPORT_ONLY=1
 done
+[[ "${DIGIVICE_HELTEC_REPORT_ONLY:-0}" == "1" ]] && REPORT_ONLY=1
+[[ "${DIGIVICE_ENSURE_HELTEC_NO_RESTART:-0}" == "1" ]] && REPORT_ONLY=1
 
 if [[ "$(id -u)" -eq 0 && -n "${SUDO_USER:-}" && "${SUDO_USER}" != "root" ]]; then
   UH="$(getent passwd "$SUDO_USER" | cut -d: -f6)"
@@ -65,16 +69,16 @@ run_ensure() {
 }
 
 if [[ "$(id -u)" -eq 0 ]]; then
-  if [[ "$FIX" -eq 1 || "$need_ensure" -eq 1 ]]; then
+  if [[ "$REPORT_ONLY" -ne 1 && ( "$FIX" -eq 1 || "$need_ensure" -eq 1 ) ]]; then
     run_ensure
   fi
-elif [[ "$need_ensure" -eq 1 ]]; then
+elif [[ "$need_ensure" -eq 1 && "$REPORT_ONLY" -ne 1 ]]; then
   echo "[heltec-doctor] pigpio/env missing — re-run via sudo or Prep Heltec report" | tee -a "$OUT"
 fi
 
 {
   echo "=== digivice-heltec-doctor $(date -Iseconds) ==="
-  echo "host=$(hostname) user=$(id -un) prefix=$PREFIX fix=$FIX"
+  echo "host=$(hostname) user=$(id -un) prefix=$PREFIX fix=$FIX report_only=$REPORT_ONLY"
   echo
 
   echo "--- wiring (Digivice soft-UART) ---"
@@ -169,7 +173,9 @@ PY
   echo
 
   echo "--- live soft-UART probe (PING + STATUS) ---"
-  if pgrep -f handset_app.py >/dev/null 2>&1; then
+  if [[ "$REPORT_ONLY" -eq 1 ]]; then
+    echo "SKIP — report-only mode (no UART probe)"
+  elif pgrep -f handset_app.py >/dev/null 2>&1; then
     echo "SKIP — Digivice bridge already owns soft-UART (Heltec icon = live status)"
     echo "Stop Digivice first if you need an isolated PING test"
   else
@@ -242,7 +248,7 @@ if [[ "$(id -u)" -eq 0 && -n "${SUDO_USER:-}" && "${SUDO_USER}" != "root" ]]; th
   chown "$SUDO_USER:$SUDO_USER" "$OUT" "$OUT2" 2>/dev/null || true
 fi
 
-if [[ "$FIX" -eq 1 ]]; then
+if [[ "$FIX" -eq 1 && "$REPORT_ONLY" -ne 1 ]]; then
   echo
   echo "[heltec-doctor] Restarting Digivice (use after update, not from Transfer)…"
   if [[ -n "${DIGIVICE_ENSURE_HELTEC_NO_RESTART:-}" && "${DIGIVICE_ENSURE_HELTEC_NO_RESTART}" != "0" ]]; then

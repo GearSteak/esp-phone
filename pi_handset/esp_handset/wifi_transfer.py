@@ -311,45 +311,130 @@ def _refresh_mouse_report() -> Tuple[bool, str]:
     return False, last
 
 
-def _refresh_heltec_report() -> Tuple[bool, str]:
-    # Never --restart / --fix from Transfer. Pass flags via sudo env (sudo strips env).
-    heltec_env = (
-        "DIGIVICE_HELTEC_APT_ONLY=1",
-        "DIGIVICE_ENSURE_HELTEC_NO_RESTART=1",
-    )
-    cmds = (
-        ["sudo", "-n", "env", *heltec_env, "digivice-heltec-doctor"],
-        [
-            "sudo",
-            "-n",
-            "env",
-            *heltec_env,
-            "bash",
-            "/opt/esp-handset/session/digivice-heltec-doctor.sh",
-        ],
-    )
-    last = "doctor not installed"
-    for cmd in cmds:
-        try:
-            r = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=90,
-                check=False,
+def _write_heltec_report_safe() -> Tuple[bool, str]:
+    """Write heltec-doctor.txt in-process — never shells out (avoids UART fight + restart)."""
+    from datetime import datetime
+
+    lines: List[str] = []
+    lines.append(f"=== digivice-heltec-doctor {datetime.now().isoformat()} ===")
+    lines.append("host=transfer-inline mode=safe (no subprocess, no live PING)")
+    lines.append("")
+
+    env_path = Path("/etc/esp-handset/env")
+    soft_ok = False
+    lines.append("--- /etc/esp-handset/env (bridge) ---")
+    if env_path.is_file():
+        text = env_path.read_text(encoding="utf-8", errors="replace")
+        bridge = [ln for ln in text.splitlines() if ln.startswith("ESP_BRIDGE_")]
+        if bridge:
+            lines.extend(bridge)
+            soft_ok = any(
+                ln.startswith("ESP_BRIDGE_SOFTUART=")
+                and ln.split("=", 1)[1].strip().lower() in ("1", "true", "yes", "on")
+                for ln in bridge
             )
-            if r.returncode == 0 or _heltec_report_path() is not None:
-                p = _heltec_report_path()
-                return True, f"Report ready ({p.name if p else 'ok'})"
-            last = (r.stderr or r.stdout or last).strip()[:80] or last
-        except FileNotFoundError:
-            continue
-        except Exception as e:
-            last = str(e)[:80]
+        else:
+            lines.append("(no ESP_BRIDGE_* lines)")
+        lines.append("--- full env ---")
+        lines.append(text.rstrip())
+    else:
+        lines.append(f"MISSING {env_path}")
+    lines.append("")
+    lines.append(f"soft-UART env: {'OK' if soft_ok else 'MISSING'}")
+    lines.append("")
+
+    lines.append("--- pigpio ---")
+    pigpio_ok = False
+    try:
+        import pigpio  # type: ignore
+
+        pi = pigpio.pi()
+        pigpio_ok = bool(pi.connected)
+        lines.append(f"pigpio client: {'connected' if pigpio_ok else 'NOT connected'}")
+        pi.stop()
+    except Exception as e:
+        lines.append(f"pigpio: FAIL ({e})")
+    lines.append("")
+
+    handset_on = False
+    try:
+        r = subprocess.run(
+            ["pgrep", "-f", "handset_app.py"],
+            capture_output=True,
+            text=True,
+            timeout=3,
+            check=False,
+        )
+        handset_on = r.returncode == 0 and bool((r.stdout or "").strip())
+    except Exception:
+        pass
+
+    lines.append("--- Digivice bridge ---")
+    if handset_on:
+        lines.append("handset_app: running")
+        lines.append(
+            "live PING: SKIPPED (bridge owns soft-UART — Heltec status icon is authoritative)"
+        )
+    else:
+        lines.append("handset_app: not running")
+        lines.append("live PING: skipped in Transfer safe report")
+    lines.append("")
+
+    log_path = DATA / "handset.log"
+    lines.append("--- handset log (heltec / bridge) ---")
+    if log_path.is_file():
+        try:
+            log_text = log_path.read_text(encoding="utf-8", errors="replace")
+            hits = [
+                ln
+                for ln in log_text.splitlines()
+                if any(
+                    k in ln.lower()
+                    for k in (
+                        "heltec",
+                        "lora esp",
+                        "softuart",
+                        "pigpio",
+                        "bridge",
+                        "pong",
+                        "status",
+                        "ready",
+                    )
+                )
+            ]
+            if hits:
+                lines.extend(hits[-25:])
+            else:
+                lines.append("(no heltec/bridge lines in log yet)")
+        except OSError as e:
+            lines.append(f"read FAIL: {e}")
+    else:
+        lines.append(f"(no {log_path})")
+    lines.append("")
+    lines.append("=== end doctor ===")
+
+    body = "\n".join(lines) + "\n"
+    try:
+        DATA.mkdir(parents=True, exist_ok=True)
+        HELTEC_REPORT.write_text(body, encoding="utf-8")
+        try:
+            HELTEC_REPORT_TMP.write_text(body, encoding="utf-8")
+        except OSError:
+            pass
+    except OSError as e:
+        return False, f"write failed: {e}"
+    return True, "Report ready (inline, safe)"
+
+
+def _refresh_heltec_report() -> Tuple[bool, str]:
+    # Transfer must never run shell doctor — it can install packages, probe UART, or restart.
+    ok, msg = _write_heltec_report_safe()
+    if ok:
+        return ok, msg
     p = _heltec_report_path()
     if p is not None:
         return True, f"Using existing {p.name}"
-    return False, last
+    return False, msg
 
 
 def _refresh_modem_report() -> Tuple[bool, str]:
@@ -1455,7 +1540,7 @@ def make_wifi_transfer_page(
         threading.Thread(target=work, daemon=True).start()
 
     def prep_heltec() -> None:
-        status.setText("Running Heltec doctor…")
+        status.setText("Writing Heltec report…")
         _prep_busy(True)
 
         def work() -> None:
