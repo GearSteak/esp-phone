@@ -200,6 +200,49 @@ class DigiviceHome(QWidget):
             self._refresh_steps_display()
         self.step_detected.emit()
 
+    def _settings_icon_center(self, w: int, h: int) -> tuple[int, int]:
+        """Bottom-row Settings icon center (cx, cy)."""
+        bot = self._bot()
+        col = 0
+        for i, e in enumerate(bot):
+            if e.key == "settings":
+                col = i
+                break
+        else:
+            col = max(0, len(bot) - 1)
+        n = max(1, len(bot))
+        slot = w / n
+        cx = int(slot * (col + 0.5))
+        cy = h - 22
+        return cx, cy
+
+    def _draw_steps_badge(self, p: QPainter, w: int, h: int) -> None:
+        """Steps count just above the Settings icon."""
+        cx, settings_y = self._settings_icon_center(w, h)
+        steps_txt = f"{self._steps_count:,}"
+        p.setFont(QFont(font_family(), 10, QFont.Bold))
+        badge_w = max(52, p.fontMetrics().width(steps_txt) + 22)
+        badge_h = 20
+        bubble_r = 16
+        gap = 6
+        badge_y = settings_y - bubble_r - gap - badge_h
+        badge_x = cx - badge_w // 2
+        badge_x = max(4, min(badge_x, w - badge_w - 4))
+        p.setPen(Qt.NoPen)
+        p.setBrush(QColor(0, 0, 0, 170))
+        p.drawRoundedRect(badge_x, badge_y, badge_w, badge_h, 6, 6)
+        p.setPen(QColor("#9ab"))
+        p.drawText(badge_x, badge_y, 18, badge_h, Qt.AlignCenter, "👟")
+        p.setPen(QColor("#e8eef5"))
+        p.drawText(
+            badge_x + 16,
+            badge_y,
+            badge_w - 18,
+            badge_h,
+            Qt.AlignVCenter | Qt.AlignLeft,
+            steps_txt,
+        )
+
     def keyPressEvent(self, event) -> None:  # noqa: N802
         w = self.window()
         if w is not None and hasattr(w, "keyPressEvent"):
@@ -274,28 +317,6 @@ class DigiviceHome(QWidget):
         # Top row
         draw_row(self._top(), 22, 0)
 
-        # Steps badge (top-right)
-        steps_txt = f"{self._steps_count:,}"
-        p.setFont(QFont(font_family(), 10, QFont.Bold))
-        badge_w = max(52, p.fontMetrics().width(steps_txt) + 22)
-        badge_h = 20
-        badge_x = w - badge_w - 6
-        badge_y = 4
-        p.setPen(Qt.NoPen)
-        p.setBrush(QColor(0, 0, 0, 170))
-        p.drawRoundedRect(badge_x, badge_y, badge_w, badge_h, 6, 6)
-        p.setPen(QColor("#9ab"))
-        p.drawText(badge_x, badge_y, 18, badge_h, Qt.AlignCenter, "👟")
-        p.setPen(QColor("#e8eef5"))
-        p.drawText(
-            badge_x + 16,
-            badge_y,
-            badge_w - 18,
-            badge_h,
-            Qt.AlignVCenter | Qt.AlignLeft,
-            steps_txt,
-        )
-
         # Center Digivice stage
         stage_m = 28
         stage = self.rect().adjusted(stage_m, 44, -stage_m, -44)
@@ -332,3 +353,4 @@ class DigiviceHome(QWidget):
 
         # Bottom row
         draw_row(self._bot(), h - 22, 1)
+        self._draw_steps_badge(p, w, h)
