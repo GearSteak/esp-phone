@@ -468,10 +468,15 @@ if [[ -f "$PREFIX/session/ensure-libretro-cores.sh" ]]; then
 fi
 
 # Heltec notify — pigpio + soft-UART env (display updates may wipe ESP_BRIDGE_*)
+export DEBIAN_FRONTEND=noninteractive
+apt-get update -qq >>"$LOG" 2>&1 || true
+apt-get install -y pigpio python3-pigpio >>"$LOG" 2>&1 \
+  || log "WARN: apt install pigpio failed — check $LOG"
+systemctl enable --now pigpiod >>"$LOG" 2>&1 || true
 if [[ -f "$PREFIX/session/ensure-heltec-softuart.sh" ]]; then
   install -m 755 "$PREFIX/session/ensure-heltec-softuart.sh" /usr/local/bin/digivice-ensure-heltec
   log "Ensuring Heltec soft-UART…"
-  bash /usr/local/bin/digivice-ensure-heltec >>"$LOG" 2>&1 \
+  bash /usr/local/bin/digivice-ensure-heltec --restart >>"$LOG" 2>&1 \
     || log "WARN: digivice-ensure-heltec failed — check $LOG"
 elif [[ -f "$PREFIX/session/digivice-heltec-softuart.sh" ]]; then
   install -m 755 "$PREFIX/session/digivice-heltec-softuart.sh" /usr/local/bin/digivice-heltec-softuart

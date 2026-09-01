@@ -28,6 +28,7 @@ apt-get install -y \
   python3-rpi.gpio \
   python3-lgpio \
   python3-spidev \
+  pigpio python3-pigpio \
   python3-pil \
   python3-mss \
   imagemagick \
@@ -46,6 +47,8 @@ apt-get install -y \
   wmctrl \
   x11-xserver-utils \
   wlr-randr || true
+
+systemctl enable --now pigpiod 2>/dev/null || true
 
 # Optional Wayland mirror tool (bookworm may or may not package it)
 apt-get install -y wl-mirror 2>/dev/null || true

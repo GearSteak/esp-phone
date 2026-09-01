@@ -149,7 +149,8 @@ install_tree() {
   if ! command -v i2cdetect >/dev/null 2>&1; then
     log "i2c-tools missing — installing scanner…"
     apt-get update -qq 2>&1 | tee -a "$LOG" || true
-    apt-get install -y i2c-tools 2>&1 | tee -a "$LOG" || true
+    apt-get install -y i2c-tools pigpio python3-pigpio 2>&1 | tee -a "$LOG" || true
+    systemctl enable --now pigpiod 2>&1 | tee -a "$LOG" || true
   fi
 
   local USER_NAME
@@ -424,7 +425,7 @@ EOF
       systemctl restart cardkb-inputd.service 2>/dev/null || true
     fi
     if [[ -f "$PREFIX/session/ensure-heltec-softuart.sh" ]]; then
-      bash "$PREFIX/session/ensure-heltec-softuart.sh" 2>&1 | tee -a "$LOG" || true
+      bash "$PREFIX/session/ensure-heltec-softuart.sh" --restart 2>&1 | tee -a "$LOG" || true
     elif [[ -f "$PREFIX/session/digivice-heltec-softuart.sh" ]]; then
       bash "$PREFIX/session/digivice-heltec-softuart.sh" 2>&1 | tee -a "$LOG" || true
     fi

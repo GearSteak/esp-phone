@@ -93,12 +93,15 @@ apt-get install -y \
   python3 python3-pip python3-pyqt5 python3-pyqt5.qtwebkit python3-pyqt5.qtwebengine python3-serial \
   python3-uinput python3-smbus python3-rpi.gpio python3-lgpio \
   python3-spidev python3-pil python3-mss \
+  pigpio python3-pigpio \
   imagemagick \
   i2c-tools xdotool xbitmaps x11-xserver-utils \
   wmctrl fonts-dejavu-core \
   mpv \
   alsa-utils \
   2>&1 | tee -a "$LOG" | tail -n 20
+
+systemctl enable --now pigpiod 2>&1 | tee -a "$LOG" | tail -n 5 || true
 
 # In-Digivice Browser — WebEngine often absent on Pi OS; install WebKit too
 log "apt: Digivice Browser (qtwebkit + qtwebengine)…"
@@ -871,7 +874,8 @@ chown -R "$USER_NAME:$USER_NAME" \
 
 if [[ -f "$ROOT/session/ensure-heltec-softuart.sh" ]]; then
   log "Ensuring Heltec soft-UART (pigpio + bridge env)…"
-  bash "$ROOT/session/ensure-heltec-softuart.sh" 2>&1 | tee -a "$LOG" || true
+  DIGIVICE_ENSURE_HELTEC_NO_RESTART=1 \
+    bash "$ROOT/session/ensure-heltec-softuart.sh" 2>&1 | tee -a "$LOG" || true
 elif [[ -f "$ROOT/session/digivice-heltec-softuart.sh" ]]; then
   log "Ensuring Heltec soft-UART…"
   bash "$ROOT/session/digivice-heltec-softuart.sh" 2>&1 | tee -a "$LOG" || true
