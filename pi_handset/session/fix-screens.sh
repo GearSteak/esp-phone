@@ -75,10 +75,18 @@ fi
 mkdir -p /etc/esp-handset
 echo userspace >/etc/esp-handset/spi-userspace
 echo userspace >/etc/esp-handset/spi-backend
-cat >/etc/esp-handset/env <<'EOF'
+ENV_FILE=/etc/esp-handset/env
+BRIDGE_BACKUP=""
+if [[ -f "$ENV_FILE" ]]; then
+  BRIDGE_BACKUP="$(grep -E '^ESP_BRIDGE_' "$ENV_FILE" 2>/dev/null || true)"
+fi
+cat >"$ENV_FILE" <<'EOF'
 ESP_HANDSET_SPI_BACKEND=userspace
 ESP_HANDSET_SKIP_LAYOUT=1
 EOF
+if [[ -n "$BRIDGE_BACKUP" ]]; then
+  printf '%s\n' "$BRIDGE_BACKUP" >>"$ENV_FILE"
+fi
 [[ -f /etc/esp-handset/panel-rotation ]] || echo 0 >/etc/esp-handset/panel-rotation
 apt-get install -y python3-spidev python3-rpi.gpio 2>/dev/null \
   || apt-get install -y python3-spidev python3-rpi.lgpio 2>/dev/null || true

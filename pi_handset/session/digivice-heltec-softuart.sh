@@ -5,7 +5,8 @@
 #   Pi pin 18 BCM24 RX  ←  Heltec GPIO43 TX
 #   Pi GND              →  Heltec GND
 #   Heltec power        =  LiPo only (no USB to Pi — pops the polyfuse)
-set -euo pipefail
+set +e
+set -u
 
 ENV_FILE="/etc/esp-handset/env"
 

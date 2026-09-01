@@ -128,6 +128,7 @@ install_live_from_repo() {
     "digivice-mouse-doctor.sh:digivice-mouse-doctor" \
     "digivice-heltec-softuart.sh:digivice-heltec-softuart" \
     "digivice-heltec-doctor.sh:digivice-heltec-doctor" \
+    "ensure-heltec-softuart.sh:digivice-ensure-heltec" \
     "digivice-audio-usb.sh:digivice-audio-usb" \
     "digivice-audio-fix.sh:digivice-audio-fix" \
     "digivice-cm108-beep.sh:digivice-cm108-beep" \
@@ -217,6 +218,7 @@ if [[ -d "$STAGE" && -f "$STAGE/.ready" ]]; then
     digivice-mouse-doctor.sh:digivice-mouse-doctor \
     digivice-heltec-softuart.sh:digivice-heltec-softuart \
     digivice-heltec-doctor.sh:digivice-heltec-doctor \
+    ensure-heltec-softuart.sh:digivice-ensure-heltec \
     digivice-audio-usb.sh:digivice-audio-usb \
     digivice-audio-fix.sh:digivice-audio-fix \
     digivice-cm108-beep.sh:digivice-cm108-beep \
@@ -345,6 +347,7 @@ $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-modem-doctor
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-audio-doctor
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-heltec-doctor
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-heltec-softuart
+$USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-ensure-heltec
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-audio-usb
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-audio-fix
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-cm108-wake
@@ -462,6 +465,19 @@ if [[ -f "$PREFIX/session/ensure-libretro-cores.sh" ]]; then
   SUDO_USER="$USER_NAME" DIGI_GUI_USER="$USER_NAME" \
     timeout 240 bash /usr/local/bin/digivice-libretro-cores >>"$LOG" 2>&1 \
     || log "WARN: digivice-libretro-cores failed/timed out — check $LOG"
+fi
+
+# Heltec notify — pigpio + soft-UART env (display updates may wipe ESP_BRIDGE_*)
+if [[ -f "$PREFIX/session/ensure-heltec-softuart.sh" ]]; then
+  install -m 755 "$PREFIX/session/ensure-heltec-softuart.sh" /usr/local/bin/digivice-ensure-heltec
+  log "Ensuring Heltec soft-UART…"
+  bash /usr/local/bin/digivice-ensure-heltec >>"$LOG" 2>&1 \
+    || log "WARN: digivice-ensure-heltec failed — check $LOG"
+elif [[ -f "$PREFIX/session/digivice-heltec-softuart.sh" ]]; then
+  install -m 755 "$PREFIX/session/digivice-heltec-softuart.sh" /usr/local/bin/digivice-heltec-softuart
+  log "Ensuring Heltec soft-UART…"
+  bash /usr/local/bin/digivice-heltec-softuart >>"$LOG" 2>&1 \
+    || log "WARN: digivice-heltec-softuart failed — check $LOG"
 fi
 
 # Pi headphone jack + USB dongle — mirror playback to both (ALSA tee)

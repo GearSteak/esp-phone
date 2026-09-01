@@ -30,8 +30,11 @@ if [[ "$(id -u)" -eq 0 && -n "${SUDO_USER:-}" && "${SUDO_USER}" != "root" ]]; th
 fi
 
 if [[ "$FIX" -eq 1 ]]; then
-  echo "[heltec-doctor] --fix: installing soft-UART env + pigpiod…"
+  echo "[heltec-doctor] --fix: ensuring soft-UART env + pigpiod…"
   for script in \
+    "$PREFIX/session/ensure-heltec-softuart.sh" \
+    "$(dirname "$0")/ensure-heltec-softuart.sh" \
+    "${ROOT}/pi_handset/session/ensure-heltec-softuart.sh" \
     "$PREFIX/session/digivice-heltec-softuart.sh" \
     "$(dirname "$0")/digivice-heltec-softuart.sh" \
     "${ROOT}/pi_handset/session/digivice-heltec-softuart.sh"

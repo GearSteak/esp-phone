@@ -66,6 +66,8 @@ sudo digivice-heltec-doctor          # report → ~/.esp-handset/heltec-doctor.t
 sudo digivice-heltec-doctor --fix    # re-apply soft-UART env + restart Digivice
 ```
 
+**Updates:** `digivice-full-update` and Settings → Update run `digivice-ensure-heltec` automatically (installs pigpio, writes `ESP_BRIDGE_SOFTUART=1`). Display installs preserve existing `ESP_BRIDGE_*` lines when rewriting env.
+
 Or **Tools → Transfer → Prep Heltec report**, then download `/diag/heltec.txt`.
 
 ## Do not run

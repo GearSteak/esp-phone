@@ -245,6 +245,7 @@ install_tree() {
       "digivice-mouse-doctor.sh:digivice-mouse-doctor" \
       "digivice-heltec-softuart.sh:digivice-heltec-softuart" \
       "digivice-heltec-doctor.sh:digivice-heltec-doctor" \
+      "ensure-heltec-softuart.sh:digivice-ensure-heltec" \
       "digivice-audio-usb.sh:digivice-audio-usb" \
       "digivice-audio-fix.sh:digivice-audio-fix" \
       "digivice-cm108-beep.sh:digivice-cm108-beep" \
@@ -350,6 +351,7 @@ $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-audio-doctor
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-i2c-doctor
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-heltec-doctor
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-heltec-softuart
+$USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-ensure-heltec
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-audio-usb
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-audio-fix
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-cm108-wake
@@ -420,6 +422,11 @@ EOF
     else
       systemctl enable cardkb-inputd.service 2>/dev/null || true
       systemctl restart cardkb-inputd.service 2>/dev/null || true
+    fi
+    if [[ -f "$PREFIX/session/ensure-heltec-softuart.sh" ]]; then
+      bash "$PREFIX/session/ensure-heltec-softuart.sh" 2>&1 | tee -a "$LOG" || true
+    elif [[ -f "$PREFIX/session/digivice-heltec-softuart.sh" ]]; then
+      bash "$PREFIX/session/digivice-heltec-softuart.sh" 2>&1 | tee -a "$LOG" || true
     fi
     systemctl enable esp-keyd.service 2>/dev/null || true
     systemctl restart esp-keyd.service 2>/dev/null || true

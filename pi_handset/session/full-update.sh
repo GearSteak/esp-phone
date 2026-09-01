@@ -433,6 +433,10 @@ if [[ -f "$ROOT/session/digivice-heltec-doctor.sh" ]]; then
   install -m 755 "$ROOT/session/digivice-heltec-doctor.sh" "$PREFIX/session/digivice-heltec-doctor.sh"
   install -m 755 "$ROOT/session/digivice-heltec-doctor.sh" /usr/local/bin/digivice-heltec-doctor
 fi
+if [[ -f "$ROOT/session/ensure-heltec-softuart.sh" ]]; then
+  install -m 755 "$ROOT/session/ensure-heltec-softuart.sh" "$PREFIX/session/ensure-heltec-softuart.sh"
+  install -m 755 "$ROOT/session/ensure-heltec-softuart.sh" /usr/local/bin/digivice-ensure-heltec
+fi
 if [[ -f "$ROOT/session/digivice-audio-usb.sh" ]]; then
   install -m 755 "$ROOT/session/digivice-audio-usb.sh" "$PREFIX/session/digivice-audio-usb.sh"
   install -m 755 "$ROOT/session/digivice-audio-usb.sh" /usr/local/bin/digivice-audio-usb
@@ -592,6 +596,7 @@ $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-i2c-doctor
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-mouse-doctor
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-heltec-doctor
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-heltec-softuart
+$USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-ensure-heltec
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-audio-usb
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-audio-fix
 $USER_NAME ALL=(root) NOPASSWD: /usr/local/bin/digivice-cm108-wake
@@ -786,9 +791,17 @@ if [[ "$SPI_FIX" -eq 1 ]]; then
     rm -f /etc/esp-handset/spi-userspace
     echo drm >/etc/esp-handset/spi-backend
     echo instructables >/etc/esp-handset/spi-mode
-    cat >/etc/esp-handset/env <<'EOF'
+    ENV_FILE=/etc/esp-handset/env
+    BRIDGE_BACKUP=""
+    if [[ -f "$ENV_FILE" ]]; then
+      BRIDGE_BACKUP="$(grep -E '^ESP_BRIDGE_' "$ENV_FILE" 2>/dev/null || true)"
+    fi
+    cat >"$ENV_FILE" <<'EOF'
 ESP_HANDSET_SPI_BACKEND=drm
 EOF
+    if [[ -n "$BRIDGE_BACKUP" ]]; then
+      printf '%s\n' "$BRIDGE_BACKUP" >>"$ENV_FILE"
+    fi
   else
     log "WARN: install-instructables / install-display missing in $ROOT"
   fi
@@ -855,6 +868,14 @@ chown -R "$USER_NAME:$USER_NAME" \
   "$USER_HOME/.local/share/applications" \
   "$USER_HOME/Desktop/return-to-phone.desktop" \
   "$USER_HOME/.esp-handset/session_mode" 2>/dev/null || true
+
+if [[ -f "$ROOT/session/ensure-heltec-softuart.sh" ]]; then
+  log "Ensuring Heltec soft-UART (pigpio + bridge env)…"
+  bash "$ROOT/session/ensure-heltec-softuart.sh" 2>&1 | tee -a "$LOG" || true
+elif [[ -f "$ROOT/session/digivice-heltec-softuart.sh" ]]; then
+  log "Ensuring Heltec soft-UART…"
+  bash "$ROOT/session/digivice-heltec-softuart.sh" 2>&1 | tee -a "$LOG" || true
+fi
 
 if [[ "$DO_REBOOT" -eq 1 || "$NEED_REBOOT" -eq 1 ]]; then
   log "Rebooting in 4s (session_mode=phone + autostart restored)…"

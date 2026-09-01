@@ -56,12 +56,20 @@ fi
 rm -f /etc/esp-handset/spi-userspace
 echo drm >/etc/esp-handset/spi-backend
 mkdir -p /etc/esp-handset
-cat >/etc/esp-handset/env <<'EOF'
+ENV_FILE=/etc/esp-handset/env
+BRIDGE_SAVE=""
+if [[ -f "$ENV_FILE" ]]; then
+  BRIDGE_SAVE="$(grep -E '^ESP_BRIDGE_' "$ENV_FILE" 2>/dev/null || true)"
+fi
+cat >"$ENV_FILE" <<'EOF'
 # Instructables / Adafruit PiTFT model: OS draws on ST7789 DRM
 ESP_HANDSET_SPI_BACKEND=drm
 # Do not thrash layout for dual-head — activate SPI via digivice-spi-drm-activate
 ESP_HANDSET_SKIP_LAYOUT=0
 EOF
+if [[ -n "$BRIDGE_SAVE" ]]; then
+  printf '%s\n' "$BRIDGE_SAVE" >>"$ENV_FILE"
+fi
 
 mkdir -p /etc/profile.d
 cat >/etc/profile.d/esp-handset-spi.sh <<'EOF'

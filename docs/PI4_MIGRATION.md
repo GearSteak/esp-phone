@@ -120,7 +120,7 @@ Order matches [`DIGIVICE_WIRING.md`](DIGIVICE_WIRING.md):
 2. **Buttons** — `buttons_inputd` / Settings debug
 3. **CardKB** — `i2cdetect` shows **5f**; typing in UI
 4. **SIM7600 UART** — `sudo digivice-modem-uart`, `modem-backend=uart`, AT on `/dev/serial0`
-5. **Heltec soft-UART** — `sudo bash pi_handset/session/digivice-heltec-softuart.sh`, flash gateway firmware, `pigpiod` running, `Hxx%` in bar
+5. **Heltec soft-UART** — runs on **full-update / apply-update** (`digivice-ensure-heltec`); flash gateway firmware; Heltec icon in bar when PING works
 6. **Onboard audio** — `dtparam=audio=on`; test `speaker-test -D plughw:0,0` (card index may vary); plan **digivice-analog-audio** script (to add) instead of `digivice-audio-usb`
 7. **CSI camera** — Pi 4 cable; photo + preview in Camera app
 
