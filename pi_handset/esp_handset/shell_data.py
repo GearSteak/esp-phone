@@ -138,7 +138,7 @@ EMU_PAGE_KEYS = ("gb", "nes", "smsgg", "gba", "snes", "genesis")
 # Settings → Debug hub
 DEBUG_APPS = [
     AppEntry("dbg_sound", "Sound", "Beep · mic · USB · profile", "♪"),
-    AppEntry("dbg_notifs", "Alerts", "Toasts · incoming call", "⚑"),
+    AppEntry("dbg_notifs", "Alerts", "Toasts · Heltec · calls", "⚑"),
 ]
 
 COMM_APPS = CALLS_APPS + SMS_APPS

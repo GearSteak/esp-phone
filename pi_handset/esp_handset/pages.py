@@ -3058,7 +3058,7 @@ def make_debug_notifs_page(
     lay = QVBoxLayout(body)
     lay.setContentsMargins(4, 2, 4, 2)
     lay.setSpacing(4)
-    status = QLabel("Test alerts")
+    status = QLabel("Test alerts + Heltec panel")
     status.setAlignment(Qt.AlignCenter)
     status.setWordWrap(True)
     status.setFixedHeight(36)
@@ -3078,10 +3078,14 @@ def make_debug_notifs_page(
     lora_btn = _btn("Test LoRa toast")
     call_btn = _btn("Test call (unknown)")
     call_known_btn = _btn("Test call (contact)")
+    heltec_btn = _btn("Heltec panel test")
+    heltec_clear_btn = _btn("Clear Heltec panel")
     lay.addWidget(sms_btn)
     lay.addWidget(lora_btn)
     lay.addWidget(call_btn)
     lay.addWidget(call_known_btn)
+    lay.addWidget(heltec_btn)
+    lay.addWidget(heltec_clear_btn)
     lay.addStretch(1)
 
     def _toast(title: str, body: str, kind: str) -> None:
@@ -3093,6 +3097,19 @@ def make_debug_notifs_page(
 
     def do_lora() -> None:
         _toast("LoRa", "mesh-peer: hello from Debug", "lora")
+
+    def do_heltec() -> None:
+        store.push_heltec_notif(
+            "Digivice",
+            "Hello from Pi — Heltec notify OK",
+            "info",
+            toast=False,
+        )
+        status.setText("Sent to Heltec panel (12s)")
+
+    def do_heltec_clear() -> None:
+        store.clear_esp_notif()
+        status.setText("Heltec panel cleared")
 
     def _fire_call(number: str, name: str = "") -> None:
         if not callable(show_incoming):
@@ -3158,6 +3175,8 @@ def make_debug_notifs_page(
     lora_btn.clicked.connect(do_lora)
     call_btn.clicked.connect(do_call_unknown)
     call_known_btn.clicked.connect(do_call_known)
+    heltec_btn.clicked.connect(do_heltec)
+    heltec_clear_btn.clicked.connect(do_heltec_clear)
     return page_chrome("Debug · Alerts", body, on_back, scroll=False)
 
 

@@ -92,6 +92,32 @@ def set_esp_notif_handler(cb) -> None:
     globals()["_esp_notif_cb"] = cb
 
 
+def set_esp_clear_handler(cb) -> None:
+    """Register ESP bridge clear notify panel. cb() -> None."""
+    globals()["_esp_clear_cb"] = cb
+
+
+def clear_esp_notif() -> None:
+    """Clear Heltec ST7735 notify panel (if bridge wired)."""
+    cb = globals().get("_esp_clear_cb")
+    if callable(cb):
+        try:
+            cb()
+        except Exception:
+            pass
+
+
+def push_heltec_notif(
+    title: str,
+    body: str,
+    kind: str = "info",
+    *,
+    toast: bool = False,
+) -> None:
+    """Push to Heltec panel only (optional Digivice toast)."""
+    push_notif(title, body, kind, toast=toast)
+
+
 def steps_state() -> dict:
     """Daily step count from Pi tilt GPIO (SW-520D), not Heltec."""
     from datetime import date

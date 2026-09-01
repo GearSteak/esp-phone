@@ -358,6 +358,9 @@ def build_app(bridge: Optional[EspBridge], modem: Optional[Sim7600]) -> PhoneShe
         store.set_esp_notif_handler(
             lambda t, b, k: bridge.notif(t, b, k)  # type: ignore[union-attr]
         )
+        store.set_esp_clear_handler(
+            lambda: bridge.notif_clear()  # type: ignore[union-attr]
+        )
 
     # Radial submenus (main → folder → app)
     shell.register_page(
