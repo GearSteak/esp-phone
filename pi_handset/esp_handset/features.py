@@ -299,20 +299,15 @@ def make_steps_page(on_back: Callable[[], None], bridge=None) -> QWidget:
         st = store.steps_state()
         big.setText(str(int(st.get("count") or 0)))
         try:
-            from esp_handset.steps_pi import start_monitor, user_status
+            from esp_handset.steps_pi import monitor_status, start_monitor, user_status
 
             start_monitor()
-            src = store.steps_source()
             hint = user_status()
-            if src == "pi":
-                hint = f"Pi tilt BCM17 · {hint}"
-            elif src == "heltec":
-                hint = "Heltec tilt · counts via UART"
-            elif store.pi_steps_active():
-                hint = f"Pi tilt · {hint}"
-            else:
-                hint = f"No Pi sensor · {hint}"
-            status.setText(hint)
+            if store.steps_source() == "pi":
+                hint = f"BCM17 · {hint}"
+            status.setText(hint[:120])
+            # Second line via tooltip — full GPIO debug on long-press refresh
+            status.setToolTip(monitor_status())
         except Exception as e:
             status.setText(str(e)[:72])
 
@@ -333,13 +328,12 @@ def make_steps_page(on_back: Callable[[], None], bridge=None) -> QWidget:
             from esp_handset import steps_pi
             from esp_handset.hw_pins import STEPS_BCM
 
-            steps_pi._monitor = None  # type: ignore[attr-defined]
-            mon = steps_pi.start_monitor()
+            mon = steps_pi.restart_monitor()
             if mon is None:
                 status.setText(f"No sensor (BCM {STEPS_BCM})")
             else:
                 show_local()
-                status.setText(steps_pi.monitor_status() + " · shake now")
+                status.setText(steps_pi.monitor_status() + " · shake")
         except Exception as e:
             status.setText(str(e)[:72])
 
@@ -350,7 +344,7 @@ def make_steps_page(on_back: Callable[[], None], bridge=None) -> QWidget:
     show_local()
     tick = QTimer(body)
     tick.timeout.connect(show_local)
-    tick.start(1500)
+    tick.start(400)
     page = page_chrome("Steps", body, on_back, scroll=False)
     page.refresh_steps = show_local  # type: ignore[attr-defined]
     return page
