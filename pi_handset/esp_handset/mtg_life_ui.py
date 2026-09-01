@@ -98,6 +98,72 @@ def _segment_font(pixels: int) -> QFont:
     return font
 
 
+_LCD_INK = QColor("#202719")
+_GHOST_ALPHA = 42
+_GHOST_ALPHA_FAINT = 28
+
+
+def _ghost_color(ink: Optional[QColor] = None, alpha: int = _GHOST_ALPHA) -> QColor:
+    color = QColor(ink or _LCD_INK)
+    color.setAlpha(alpha)
+    return color
+
+
+def _digit_ghost(width: int = 3) -> str:
+    return "0" * max(1, width)
+
+
+def _text_ghost(text: str) -> str:
+    """LCD placeholder — every segment position lit dimly (8 for alnum)."""
+    out: List[str] = []
+    for ch in text:
+        if ch.isdigit():
+            out.append("8")
+        elif ch.isalpha():
+            out.append("8")
+        else:
+            out.append(ch)
+    return "".join(out)
+
+
+def _draw_ghosted_text(
+    painter: QPainter,
+    rect: QRect,
+    text: str,
+    *,
+    align: int = Qt.AlignCenter,
+    ghost: Optional[str] = None,
+    ink: Optional[QColor] = None,
+    ghost_alpha: int = _GHOST_ALPHA,
+    font_px: Optional[int] = None,
+) -> None:
+    ink = ink or _LCD_INK
+    px = font_px or max(8, rect.height())
+    painter.setFont(_segment_font(px))
+    ghost_text = ghost if ghost is not None else _text_ghost(text)
+    painter.setPen(_ghost_color(ink, ghost_alpha))
+    painter.drawText(rect, align, ghost_text)
+    painter.setPen(ink)
+    painter.drawText(rect, align, text)
+
+
+def _draw_ghost_only(
+    painter: QPainter,
+    rect: QRect,
+    text: str,
+    *,
+    align: int = Qt.AlignCenter,
+    ghost: Optional[str] = None,
+    ink: Optional[QColor] = None,
+    ghost_alpha: int = _GHOST_ALPHA_FAINT,
+    font_px: Optional[int] = None,
+) -> None:
+    px = font_px or max(8, rect.height())
+    painter.setFont(_segment_font(px))
+    painter.setPen(_ghost_color(ink, ghost_alpha))
+    painter.drawText(rect, align, ghost if ghost is not None else _text_ghost(text))
+
+
 def _draw_ghosted_digits(
     painter: QPainter,
     rect: QRect,
@@ -105,15 +171,13 @@ def _draw_ghosted_digits(
     *,
     ghost: str = "000",
     ink: Optional[QColor] = None,
-    ghost_alpha: int = 48,
+    ghost_alpha: int = _GHOST_ALPHA,
     font_px: Optional[int] = None,
 ) -> None:
-    ink = ink or QColor("#202719")
-    ghost_color = QColor(ink)
-    ghost_color.setAlpha(ghost_alpha)
+    ink = ink or _LCD_INK
     px = font_px or max(12, rect.height() // 2)
     painter.setFont(_segment_font(px))
-    painter.setPen(ghost_color)
+    painter.setPen(_ghost_color(ink, ghost_alpha))
     painter.drawText(rect, Qt.AlignCenter, ghost)
     painter.setPen(ink)
     painter.drawText(rect, Qt.AlignCenter, text)
@@ -328,7 +392,10 @@ class MtgLifeCounter(QWidget):
         painter = QPainter(self)
         try:
             origin = self._draw_background(painter)
+            if self._mode in ("players", "menu", "damage"):
+                self._draw_center_lcd_ghost(painter, origin)
             if self._mode in ("resume", "setup"):
+                self._draw_center_lcd_ghost(painter, origin)
                 self._draw_setup(painter, origin)
             elif self._mode == "players":
                 self._draw_players(painter, origin)
@@ -357,6 +424,29 @@ class MtgLifeCounter(QWidget):
         font.setBold(bold)
         return font
 
+    def _draw_ghosted_text(
+        self,
+        painter: QPainter,
+        rect: QRect,
+        text: str,
+        *,
+        align: int = Qt.AlignCenter,
+        ghost: Optional[str] = None,
+        ink: Optional[QColor] = None,
+        ghost_alpha: int = _GHOST_ALPHA,
+        font_px: Optional[int] = None,
+    ) -> None:
+        _draw_ghosted_text(
+            painter,
+            rect,
+            text,
+            align=align,
+            ghost=ghost,
+            ink=ink,
+            ghost_alpha=ghost_alpha,
+            font_px=font_px,
+        )
+
     def _draw_ghosted_digits(
         self,
         painter: QPainter,
@@ -365,7 +455,7 @@ class MtgLifeCounter(QWidget):
         *,
         ghost: str = "000",
         ink: Optional[QColor] = None,
-        ghost_alpha: int = 48,
+        ghost_alpha: int = _GHOST_ALPHA,
         font_px: Optional[int] = None,
     ) -> None:
         _draw_ghosted_digits(
@@ -378,6 +468,113 @@ class MtgLifeCounter(QWidget):
             font_px=font_px,
         )
 
+    def _counter_menu_layout(self, rect: QRect) -> tuple:
+        title_height = max(14, rect.height() // 6)
+        row_height = max(14, (rect.height() - title_height) // 4)
+        return title_height, row_height
+
+    def _draw_center_lcd_ghost(self, painter: QPainter, origin: tuple) -> None:
+        """Dim full LCD template — menus, hints, digits always etched on screen."""
+        rect = self._menu_rect(origin)
+        title_h, row_h = self._counter_menu_layout(rect)
+        title_font = max(9, rect.height() // 12)
+        row_font = max(9, row_h - 2)
+        digit_font = max(10, row_h - 2)
+        ghost = _GHOST_ALPHA_FAINT
+
+        _draw_ghost_only(
+            painter,
+            QRect(rect.left() + 6, rect.top() + 2, rect.width() - 12, title_h),
+            f"P{self._player + 1} COUNTERS",
+            font_px=title_font,
+            ghost_alpha=ghost,
+        )
+        for index, label in enumerate(_COUNTERS):
+            row = QRect(
+                rect.left() + 8,
+                rect.top() + title_h + row_h * index,
+                rect.width() - 16,
+                row_h,
+            )
+            _draw_ghost_only(
+                painter,
+                QRect(row.left(), row.top(), row.width() // 2, row.height()),
+                label[:9],
+                align=Qt.AlignVCenter | Qt.AlignLeft,
+                font_px=row_font,
+                ghost_alpha=ghost,
+            )
+            _draw_ghost_only(
+                painter,
+                QRect(
+                    row.left() + row.width() // 2,
+                    row.top(),
+                    row.width() // 2 - 4,
+                    row.height(),
+                ),
+                _digit_ghost(3),
+                ghost=_digit_ghost(3),
+                font_px=digit_font,
+                ghost_alpha=ghost,
+            )
+
+        dmg_top = rect.top() + title_h + row_h * 4 + 4
+        dmg_title_h = max(12, row_h)
+        _draw_ghost_only(
+            painter,
+            QRect(rect.left() + 5, dmg_top, rect.width() - 10, dmg_title_h),
+            "COMMANDER DAMAGE",
+            font_px=title_font,
+            ghost_alpha=ghost,
+        )
+        for index in range(3):
+            row = QRect(
+                rect.left() + 8,
+                dmg_top + dmg_title_h + index * row_h,
+                rect.width() - 16,
+                row_h,
+            )
+            _draw_ghost_only(
+                painter,
+                QRect(row.left(), row.top(), row.width() // 2, row.height()),
+                f"P{index + 1}",
+                align=Qt.AlignVCenter | Qt.AlignLeft,
+                font_px=row_font,
+                ghost_alpha=ghost,
+            )
+            _draw_ghost_only(
+                painter,
+                QRect(
+                    row.left() + row.width() // 2,
+                    row.top(),
+                    row.width() // 2 - 4,
+                    row.height(),
+                ),
+                _digit_ghost(3),
+                ghost=_digit_ghost(3),
+                font_px=digit_font,
+                ghost_alpha=ghost,
+            )
+
+        hints = (
+            "RESUME GAME?",
+            "RESUME",
+            "NEW GAME",
+            "↑↓ DIGIT  ←→ CHANGE",
+            "OK STARTS GAME",
+        )
+        hint_h = max(7, rect.height() // 18)
+        hint_y = rect.bottom() - len(hints) * hint_h - 4
+        for line in hints:
+            _draw_ghost_only(
+                painter,
+                QRect(rect.left() + 6, hint_y, rect.width() - 12, hint_h),
+                line,
+                font_px=hint_h,
+                ghost_alpha=ghost,
+            )
+            hint_y += hint_h
+
     def _draw_players(self, painter: QPainter, origin: tuple) -> None:
         if self._match is None:
             return
@@ -387,21 +584,30 @@ class MtgLifeCounter(QWidget):
             (48, 526, 224, 177),
             (752, 526, 224, 177),
         )
-        ink = QColor("#202719")
+        # Ghost all four life slots first (LCD always shows digit positions)
+        for box in boxes:
+            rect = self._image_rect(origin, box)
+            _draw_ghost_only(
+                painter,
+                rect,
+                _digit_ghost(3),
+                ghost=_digit_ghost(3),
+                font_px=max(18, rect.height() // 2),
+                ghost_alpha=_GHOST_ALPHA_FAINT,
+            )
         for index, box in enumerate(boxes):
             rect = self._image_rect(origin, box)
             if index == self._player:
                 painter.setPen(QPen(QColor("#d7db9d"), max(1, rect.width() // 28)))
                 painter.setBrush(QColor(210, 220, 150, 55))
                 painter.drawRoundedRect(rect.adjusted(2, 2, -2, -2), 3, 3)
-            painter.setPen(ink)
             life = self._match["players"][index]["life"]
             display = str(life) if life < 0 else f"{life:03d}"
             self._draw_ghosted_digits(
                 painter,
                 rect,
                 display,
-                ghost="000",
+                ghost=_digit_ghost(3),
                 font_px=max(18, rect.height() // 2),
             )
 
@@ -429,14 +635,16 @@ class MtgLifeCounter(QWidget):
             player["tax"],
             player["poison"],
         ]
-        painter.setPen(QColor("#202719"))
-        painter.setFont(self._lcd_font(max(9, rect.height() // 12), True))
-        title_height = max(14, rect.height() // 6)
-        row_height = max(14, (rect.height() - title_height) // 4)
+        title_height, row_height = self._counter_menu_layout(rect)
         title = QRect(
             rect.left() + 6, rect.top() + 2, rect.width() - 12, title_height
         )
-        painter.drawText(title, Qt.AlignCenter, f"P{self._player + 1} COUNTERS")
+        self._draw_ghosted_text(
+            painter,
+            title,
+            f"P{self._player + 1} COUNTERS",
+            font_px=max(9, rect.height() // 12),
+        )
         for index, (label, value) in enumerate(zip(_COUNTERS, values)):
             row = QRect(
                 rect.left() + 8,
@@ -446,10 +654,13 @@ class MtgLifeCounter(QWidget):
             )
             if index == self._menu_index:
                 painter.fillRect(row, QColor(45, 55, 34, 95))
-            painter.drawText(
-                QRect(row.left(), row.top(), row.width() // 2, row.height()),
-                Qt.AlignVCenter | Qt.AlignLeft,
+            label_rect = QRect(row.left(), row.top(), row.width() // 2, row.height())
+            self._draw_ghosted_text(
+                painter,
+                label_rect,
                 label[:9],
+                align=Qt.AlignVCenter | Qt.AlignLeft,
+                font_px=max(9, row_height - 2),
             )
             value_rect = QRect(
                 row.left() + row.width() // 2,
@@ -457,36 +668,34 @@ class MtgLifeCounter(QWidget):
                 row.width() // 2 - 4,
                 row.height(),
             )
-            if index == 0:
-                display = str(value) if value < 0 else f"{value:03d}"
-                self._draw_ghosted_digits(
-                    painter,
-                    value_rect,
-                    display,
-                    ghost="000",
-                    font_px=max(10, row_height - 2),
-                )
+            if index == 0 and value < 0:
+                display = str(value)
             else:
-                painter.drawText(
-                    value_rect,
-                    Qt.AlignVCenter | Qt.AlignRight,
-                    f"{value:03d}",
-                )
+                display = f"{value:03d}"
+            self._draw_ghosted_digits(
+                painter,
+                value_rect,
+                display,
+                ghost=_digit_ghost(3),
+                font_px=max(10, row_height - 2),
+            )
 
     def _draw_damage_menu(self, painter: QPainter, origin: tuple) -> None:
         rect = self._menu_rect(origin)
         self._draw_panel(painter, rect)
         player = self._player_data()
         opponents = self._opponents()
-        painter.setPen(QColor("#202719"))
-        painter.setFont(self._lcd_font(max(9, rect.height() // 11), True))
         title_height = max(16, rect.height() // 5)
+        row_height = max(16, (rect.height() - title_height) // 3)
         title = QRect(
             rect.left() + 5, rect.top() + 2, rect.width() - 10, title_height
         )
-        painter.drawText(title, Qt.AlignCenter, "COMMANDER DAMAGE")
-        row_height = max(16, (rect.height() - title_height) // 3)
-        painter.setFont(self._lcd_font(max(10, row_height // 2), True))
+        self._draw_ghosted_text(
+            painter,
+            title,
+            "COMMANDER DAMAGE",
+            font_px=max(9, rect.height() // 11),
+        )
         for index, opponent in enumerate(opponents):
             row = QRect(
                 rect.left() + 8,
@@ -496,8 +705,15 @@ class MtgLifeCounter(QWidget):
             )
             if opponent == self._opponent_index:
                 painter.fillRect(row, QColor(45, 55, 34, 95))
+            label_rect = QRect(row.left(), row.top(), row.width() // 2, row.height())
+            self._draw_ghosted_text(
+                painter,
+                label_rect,
+                f"P{opponent + 1}",
+                align=Qt.AlignVCenter | Qt.AlignLeft,
+                font_px=max(10, row_height // 2),
+            )
             damage = player["commander_damage"][opponent]
-            painter.drawText(row, Qt.AlignVCenter | Qt.AlignLeft, f"P{opponent + 1}")
             damage_rect = QRect(
                 row.left() + row.width() // 2,
                 row.top(),
@@ -508,20 +724,21 @@ class MtgLifeCounter(QWidget):
                 painter,
                 damage_rect,
                 f"{damage:03d}",
-                ghost="000",
+                ghost=_digit_ghost(3),
                 font_px=max(10, row_height // 2),
             )
 
     def _draw_setup(self, painter: QPainter, origin: tuple) -> None:
         rect = self._menu_rect(origin)
         self._draw_panel(painter, rect)
-        painter.setPen(QColor("#202719"))
-        painter.setFont(self._lcd_font(max(10, rect.height() // 10), True))
+        ink = _LCD_INK
         if self._mode == "resume":
-            painter.drawText(
-                QRect(rect.left() + 5, rect.top() + 3, rect.width() - 10, 17),
-                Qt.AlignCenter,
+            title_rect = QRect(rect.left() + 5, rect.top() + 3, rect.width() - 10, 17)
+            self._draw_ghosted_text(
+                painter,
+                title_rect,
                 "RESUME GAME?",
+                font_px=max(10, rect.height() // 10),
             )
             options = ("RESUME", "NEW GAME")
             for index, option in enumerate(options):
@@ -533,21 +750,27 @@ class MtgLifeCounter(QWidget):
                 )
                 if index == self._resume_index:
                     painter.fillRect(row, QColor(45, 55, 34, 95))
-                painter.drawText(row, Qt.AlignCenter, option)
+                self._draw_ghosted_text(
+                    painter,
+                    row,
+                    option,
+                    font_px=max(10, rect.height() // 10),
+                )
             return
-        painter.drawText(
-            QRect(rect.left() + 5, rect.top() + 3, rect.width() - 10, 17),
-            Qt.AlignCenter,
+        title_rect = QRect(rect.left() + 5, rect.top() + 3, rect.width() - 10, 17)
+        self._draw_ghosted_text(
+            painter,
+            title_rect,
             "NEW GAME",
+            font_px=max(10, rect.height() // 10),
         )
-        painter.setFont(self._lcd_font(max(22, rect.height() // 4), True))
         digits = f"{self._setup_value:03d}"
         digit_rect = QRect(rect.left() + 8, rect.top() + 20, rect.width() - 16, 35)
         self._draw_ghosted_digits(
             painter,
             digit_rect,
             digits,
-            ghost="000",
+            ghost=_digit_ghost(3),
             font_px=max(22, rect.height() // 4),
         )
         digit_width = max(12, rect.width() // 5)
@@ -556,18 +779,21 @@ class MtgLifeCounter(QWidget):
             - digit_width * 1.5
             + self._setup_digit * digit_width
         )
-        painter.setPen(QPen(QColor("#202719"), 2))
+        painter.setPen(QPen(ink, 2))
         painter.drawLine(x, rect.top() + 56, x + digit_width - 4, rect.top() + 56)
-        painter.setFont(self._lcd_font(max(8, rect.height() // 16)))
-        painter.drawText(
-            QRect(rect.left() + 6, rect.top() + 59, rect.width() - 12, 12),
-            Qt.AlignCenter,
+        hint1 = QRect(rect.left() + 6, rect.top() + 59, rect.width() - 12, 12)
+        hint2 = QRect(rect.left() + 6, rect.top() + 72, rect.width() - 12, 12)
+        self._draw_ghosted_text(
+            painter,
+            hint1,
             "↑↓ DIGIT  ←→ CHANGE",
+            font_px=max(8, rect.height() // 16),
         )
-        painter.drawText(
-            QRect(rect.left() + 6, rect.top() + 72, rect.width() - 12, 12),
-            Qt.AlignCenter,
+        self._draw_ghosted_text(
+            painter,
+            hint2,
             "OK STARTS GAME",
+            font_px=max(8, rect.height() // 16),
         )
 
 
@@ -632,8 +858,13 @@ class MtgSettingsPage(QWidget):
             painter.fillRect(self.rect(), QColor("#969a79"))
             painter.setPen(ink)
             title_rect = self.rect().adjusted(8, 16, -8, -self.height() // 2)
-            painter.setFont(_segment_font(max(14, self.height() // 12)))
-            painter.drawText(title_rect, Qt.AlignCenter, "MTG STARTING LIFE")
+            _draw_ghosted_text(
+                painter,
+                title_rect,
+                "MTG STARTING LIFE",
+                ink=ink,
+                font_px=max(14, self.height() // 12),
+            )
             value_rect = self.rect().adjusted(
                 8, self.height() // 4, -8, -self.height() // 3
             )
@@ -642,7 +873,7 @@ class MtgSettingsPage(QWidget):
                 painter,
                 value_rect,
                 digits,
-                ghost="000",
+                ghost=_digit_ghost(3),
                 ink=ink,
                 font_px=max(28, self.height() // 5),
             )
@@ -655,11 +886,13 @@ class MtgSettingsPage(QWidget):
                 x + span - 4,
                 self.height() // 2 + 12,
             )
-            painter.setFont(_segment_font(max(9, self.height() // 22)))
-            painter.drawText(
-                self.rect().adjusted(8, self.height() // 2 + 25, -8, -12),
-                Qt.AlignCenter,
+            hint_rect = self.rect().adjusted(8, self.height() // 2 + 25, -8, -12)
+            _draw_ghosted_text(
+                painter,
+                hint_rect,
                 "↑↓ DIGIT   ←→ CHANGE   BACK SAVE",
+                ink=ink,
+                font_px=max(9, self.height() // 22),
             )
         except Exception as e:
             print(f"[mtg] settings paint error: {e}", flush=True)
