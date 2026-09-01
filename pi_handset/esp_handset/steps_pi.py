@@ -1,4 +1,4 @@
-"""Pi-local pedometer via SW-520D (or any tilt / vibration switch → GND)."""
+"""Pi-local pedometer via SW-520D (momentary tilt switch → GND, like a button)."""
 from __future__ import annotations
 
 import os
@@ -10,9 +10,8 @@ from typing import Any, Callable, List, Optional
 from esp_handset import store
 from esp_handset.hw_pins import STEPS_BCM
 
-# Match heltec step_tilt.cpp
-_DEBOUNCE_S = 0.025
-_MIN_INTERVAL_S = 0.28
+# SW-520D pulses are short — count edges, not long "settled" tilts.
+_MIN_INTERVAL_S = 0.22
 
 _monitor: Optional["StepsMonitor"] = None
 _lock = threading.Lock()
@@ -54,7 +53,7 @@ def record_step(n: int = 1) -> int:
 
 
 class StepsMonitor:
-    """Poll BCM GPIO; count settled tilt transitions."""
+    """Watch BCM GPIO; count each brief close (SW-520D = momentary button)."""
 
     def __init__(self, bcm: int, on_step: Optional[Callable[[int], None]] = None):
         self.bcm = int(bcm)
@@ -64,10 +63,10 @@ class StepsMonitor:
         self._gpio: Any = None
         self._backend = ""
         self._chip = None
-        self._raw_closed = False
-        self._stable_closed = False
-        self._edge_t = 0.0
+        self._pigpio_cb: Any = None
+        self._was_closed = False
         self._last_step_t = 0.0
+        self._count_lock = threading.Lock()
         self.ok = False
         self.error = ""
         self.edges = 0
@@ -93,10 +92,40 @@ class StepsMonitor:
         except Exception:
             return None
 
+    def _count_edge(self) -> None:
+        with self._count_lock:
+            self.edges += 1
+            if not _pi_counting_enabled():
+                return
+            now = time.monotonic()
+            if self._last_step_t and (now - self._last_step_t) < _MIN_INTERVAL_S:
+                return
+            self._last_step_t = now
+            self.steps += 1
+            total = record_step(1)
+        if self.on_step:
+            try:
+                self.on_step(total)
+            except Exception:
+                pass
+
+    def _pigpio_edge(self, _gpio: int, level: int, _tick: int) -> None:
+        # pigpio: 0=falling (→GND), 1=rising (→pull-up)
+        if level not in (0, 1):
+            return
+        if _active_low():
+            if level != 0:
+                return
+        elif level != 1:
+            return
+        self._count_edge()
+
     def start(self) -> bool:
-        if self._thread and self._thread.is_alive():
-            return self.ok
-        # pigpiod is already up for Heltec soft-UART — most reliable in-process.
+        if self.ok and (
+            self._pigpio_cb is not None
+            or (self._thread and self._thread.is_alive())
+        ):
+            return True
         if self._try_start_pigpio():
             return True
         if self._try_start_lgpio():
@@ -109,20 +138,23 @@ class StepsMonitor:
         )
         return False
 
-    def _finish_start(self) -> bool:
-        closed = self._is_closed(self._read())
-        self._raw_closed = closed
-        self._stable_closed = closed
-        self._edge_t = time.monotonic()
+    def _finish_start_poll(self) -> bool:
+        try:
+            self._was_closed = self._is_closed(self._read())
+        except Exception as e:
+            self.error = str(e)
+            self.ok = False
+            return False
         self._last_step_t = 0.0
         self._stop.clear()
-        self._thread = threading.Thread(target=self._loop, name="digi-steps", daemon=True)
+        self._thread = threading.Thread(target=self._poll_loop, name="digi-steps", daemon=True)
         self._thread.start()
         print(
-            f"[steps] monitoring BCM{self.bcm} via {self._backend} "
-            f"(closed={int(closed)}, active_low={_active_low()})",
+            f"[steps] poll BCM{self.bcm} via {self._backend} "
+            f"(closed={int(self._was_closed)}, button edges)",
             flush=True,
         )
+        self.ok = True
         return True
 
     def _try_start_pigpio(self) -> bool:
@@ -140,10 +172,16 @@ class StepsMonitor:
             pi.set_pull_up_down(self.bcm, pigpio.PUD_UP)
             self._gpio = pi
             self._backend = "pigpio"
-            self._chip = None
-            self.ok = True
+            self._pigpio_cb = pi.callback(self.bcm, pigpio.EITHER_EDGE, self._pigpio_edge)
             self.error = ""
-            return self._finish_start()
+            self.ok = True
+            closed = self._is_closed(pi.read(self.bcm))
+            print(
+                f"[steps] irq BCM{self.bcm} via pigpio "
+                f"(closed={int(closed)}, button edges)",
+                flush=True,
+            )
+            return True
         except Exception as e:
             self.error = str(e)
             if pi is not None:
@@ -151,6 +189,8 @@ class StepsMonitor:
                     pi.stop()
                 except Exception:
                     pass
+            self._gpio = None
+            self._pigpio_cb = None
             return False
 
     def _try_start_lgpio(self) -> bool:
@@ -167,9 +207,7 @@ class StepsMonitor:
                 self._chip = chip
                 self._gpio = mod
                 self._backend = "lgpio"
-                self.ok = True
-                self.error = ""
-                return self._finish_start()
+                return self._finish_start_poll()
             except Exception as e:
                 last = str(e)
                 if chip is not None:
@@ -191,9 +229,7 @@ class StepsMonitor:
             self._gpio = mod
             self._backend = backend
             self._chip = None
-            self.ok = True
-            self.error = ""
-            return self._finish_start()
+            return self._finish_start_poll()
         except Exception as e:
             self.ok = False
             self.error = str(e)
@@ -202,6 +238,12 @@ class StepsMonitor:
 
     def stop(self) -> None:
         self._stop.set()
+        if self._pigpio_cb is not None:
+            try:
+                self._pigpio_cb.cancel()
+            except Exception:
+                pass
+            self._pigpio_cb = None
         if self._thread and self._thread.is_alive():
             self._thread.join(timeout=0.6)
         if self._backend == "pigpio" and self._gpio is not None:
@@ -223,40 +265,20 @@ class StepsMonitor:
         self._backend = ""
         self.ok = False
 
-    def _loop(self) -> None:
+    def _poll_loop(self) -> None:
+        """Fast poll for backends without hardware edge IRQ."""
         while not self._stop.is_set():
             try:
                 closed = self._is_closed(self._read())
             except Exception:
-                time.sleep(0.05)
+                time.sleep(0.01)
                 continue
-            now = time.monotonic()
-            if closed != self._raw_closed:
-                self._raw_closed = closed
-                self._edge_t = now
-            if (now - self._edge_t) < _DEBOUNCE_S:
-                time.sleep(0.005)
-                continue
-            if closed == self._stable_closed:
-                time.sleep(0.005)
-                continue
-            self._stable_closed = closed
-            self.edges += 1
-            if self._last_step_t != 0.0 and (now - self._last_step_t) < _MIN_INTERVAL_S:
-                time.sleep(0.005)
-                continue
-            if not _pi_counting_enabled():
-                time.sleep(0.005)
-                continue
-            self._last_step_t = now
-            self.steps += 1
-            total = record_step(1)
-            if self.on_step:
-                try:
-                    self.on_step(total)
-                except Exception:
-                    pass
-            time.sleep(0.005)
+            if closed != self._was_closed:
+                self._was_closed = closed
+                # Count on press (→ closed), same as pigpio falling edge.
+                if closed:
+                    self._count_edge()
+            time.sleep(0.002)
 
 
 def start_monitor(on_step: Optional[Callable[[int], None]] = None) -> Optional[StepsMonitor]:
@@ -269,13 +291,9 @@ def start_monitor(on_step: Optional[Callable[[int], None]] = None) -> Optional[S
             print("[steps] disabled (DIGI_STEPS_BCM=off)", flush=True)
             return None
         if _monitor is not None and _monitor.ok:
-            alive = _monitor._thread is not None and _monitor._thread.is_alive()
-            if alive:
-                if on_step:
-                    _monitor.on_step = on_step
-                return _monitor
-            _monitor.stop()
-            _monitor = None
+            if on_step:
+                _monitor.on_step = on_step
+            return _monitor
         if _monitor is not None:
             _monitor.stop()
             _monitor = None
@@ -324,9 +342,8 @@ def user_status() -> str:
     if not _monitor.ok:
         err = (_monitor.error or "could not open GPIO").strip()
         return f"Sensor error: {err[:56]}"
-    lvl = _monitor.current_level()
-    if lvl is not None and _monitor._is_closed(lvl):
-        return "Tilt detected · shake to count"
+    if _monitor.steps > 0:
+        return f"Counting · { _monitor.steps } steps today"
     if _monitor.edges > 0:
-        return f"Counting · {_monitor.edges} transitions"
-    return "Shake sensor — watch edges on Probe"
+        return f"Edges seen · {_monitor.edges} (shake harder?)"
+    return "Shake — Probe shows edges/steps"
