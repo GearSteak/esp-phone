@@ -165,14 +165,16 @@ def debug_panel_text() -> str:
     if daemon_active():
         d = read_debug()
         pressed = bool(d.get("pressed"))
+        level = int(d.get("level") if d.get("level") is not None else 1)
+        toggles = int(d.get("toggles") or 0)
         edges = int(d.get("edges") or 0)
         counted = int(d.get("session_steps") or 0)
         sensor = "TILT!" if pressed else "open"
         return (
-            f"Sensor: {sensor}\n"
+            f"Lvl: {level} ({sensor})\n"
+            f"Toggles: {toggles}\n"
             f"Edges: {edges}\n"
-            f"Counted: {counted}\n"
-            f"Shake now"
+            f"Counted: {counted}"
         )
     d = read_debug()
     age = time.time() - float(d.get("at") or 0) if d.get("at") else 999

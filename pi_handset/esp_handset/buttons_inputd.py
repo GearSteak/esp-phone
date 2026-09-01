@@ -601,6 +601,17 @@ def is_pressed(level: int) -> bool:
     return level == 0
 
 
+def steps_active_low() -> bool:
+    raw = (os.environ.get("DIGI_STEPS_ACTIVE_LOW") or "1").strip().lower()
+    return raw not in ("0", "false", "no", "off")
+
+
+def steps_pressed(level: int) -> bool:
+    if steps_active_low():
+        return level == 0
+    return level != 0
+
+
 def _pgrep_f(pat: str) -> bool:
     try:
         r = subprocess.run(
@@ -702,32 +713,23 @@ def poll_steps_sensor(
     prev_pressed: bool,
     stable_since: float,
     edges: int,
-) -> tuple[int, bool, float, int, bool]:
-    """SW-520D on BCM17 — momentary press like a button. Returns updated state + counted."""
+    toggles: int = 0,
+) -> tuple[int, bool, float, int, int, bool]:
+    """SW-520D on BCM17 — brief tilt contacts; no debounce (too short to survive it)."""
     counted = False
     try:
-        level = gpio.read(bcm)
+        level = int(gpio.read(bcm))
     except Exception as e:
         log(f"steps read BCM{bcm}: {e}")
-        return raw_level, prev_pressed, stable_since, edges, False
+        return raw_level, prev_pressed, stable_since, edges, toggles, False
 
-    now = time.monotonic()
     if level != raw_level:
+        toggles += 1
         raw_level = level
-        stable_since = now
 
-    if now - stable_since < DEBOUNCE_S:
-        return raw_level, prev_pressed, stable_since, edges, False
-
-    pressed = is_pressed(level)
-    if pressed == prev_pressed:
-        return raw_level, prev_pressed, stable_since, edges, False
-
-    was_pressed = prev_pressed
-    prev_pressed = pressed
-    edges += 1
-
-    if pressed and not was_pressed:
+    pressed = steps_pressed(level)
+    if pressed and not prev_pressed:
+        edges += 1
         try:
             from esp_handset import steps_pi
 
@@ -737,7 +739,65 @@ def poll_steps_sensor(
         except Exception as e:
             log(f"steps count: {e}")
 
-    return raw_level, prev_pressed, stable_since, edges, counted
+    prev_pressed = pressed
+    return raw_level, prev_pressed, stable_since, edges, toggles, counted
+
+
+def open_steps_pigpio(bcm: int):
+    """Hardware edge IRQ via pigpiod — catches sub-ms SW-520D pulses."""
+    try:
+        import pigpio  # type: ignore
+    except ImportError:
+        return None
+
+    pi = pigpio.pi()
+    if not pi.connected:
+        try:
+            pi.stop()
+        except Exception:
+            pass
+        return None
+
+    active_low = steps_active_low()
+    edge = pigpio.FALLING_EDGE if active_low else pigpio.RISING_EDGE
+    state = {
+        "level": int(pi.read(bcm)),
+        "toggles": 0,
+        "edges": 0,
+        "session": 0,
+        "backend": "pigpio",
+    }
+
+    try:
+        pi.set_mode(bcm, pigpio.INPUT)
+        pi.set_pull_up_down(bcm, pigpio.PUD_UP)
+
+        def _cbf(gpio: int, level: int, tick: int) -> None:
+            state["level"] = int(level)
+            state["toggles"] += 1
+            hit = (level == 0) if active_low else (level != 0)
+            if not hit:
+                return
+            state["edges"] += 1
+            state["session"] += 1
+            try:
+                from esp_handset import steps_pi
+
+                steps_pi.record_step(1)
+                log(f"steps BCM{bcm} pigpio → {state['session']}")
+            except Exception as e:
+                log(f"steps count: {e}")
+
+        pi.callback(bcm, edge, _cbf)
+        log(f"steps BCM{bcm} pigpio {('FALLING' if active_low else 'RISING')} edge")
+        return pi, state
+    except Exception as e:
+        log(f"steps pigpio setup BCM{bcm}: {e}")
+        try:
+            pi.stop()
+        except Exception:
+            pass
+        return None
 
 
 def main() -> int:
@@ -866,11 +926,14 @@ def main() -> int:
     gb_exit_armed = [True]
 
     steps_gpio: Optional[GpioBackend] = None
+    steps_pigpio = None
+    steps_pigpio_state: Optional[dict] = None
     steps_bcm: Optional[int] = None
     steps_raw = 1
     steps_prev = False
     steps_stable = time.monotonic()
     steps_edges = 0
+    steps_toggles = 0
     steps_session = 0
     try:
         from esp_handset.hw_pins import STEPS_BCM
@@ -879,21 +942,33 @@ def main() -> int:
             from esp_handset import steps_pi
 
             if steps_pi.store.steps_source() != "heltec":
-                steps_gpio = open_gpio({"STEPS": STEPS_BCM})
                 steps_bcm = int(STEPS_BCM)
-                steps_raw = steps_gpio.read(steps_bcm)
-                steps_prev = is_pressed(steps_raw)
-                steps_stable = time.monotonic()
+                opened = open_steps_pigpio(steps_bcm)
+                if opened:
+                    steps_pigpio, steps_pigpio_state = opened
+                    steps_raw = int(steps_pigpio_state["level"])
+                    steps_prev = steps_pressed(steps_raw)
+                else:
+                    steps_gpio = open_gpio({"STEPS": steps_bcm})
+                    steps_raw = int(steps_gpio.read(steps_bcm))
+                    steps_prev = steps_pressed(steps_raw)
+                    steps_stable = time.monotonic()
+                backend = (
+                    steps_pigpio_state.get("backend", "open_gpio")
+                    if steps_pigpio_state
+                    else "open_gpio"
+                )
                 steps_pi.write_debug(
                     source="buttons_inputd",
                     bcm=steps_bcm,
                     level=int(steps_raw),
                     pressed=steps_prev,
                     edges=0,
+                    toggles=0,
                     session_steps=0,
-                    backend="open_gpio",
+                    backend=backend,
                 )
-                log(f"steps BCM{steps_bcm} ready pressed={steps_prev}")
+                log(f"steps BCM{steps_bcm} ready lvl={steps_raw} backend={backend}")
     except Exception as e:
         log(f"steps init: {e}")
 
@@ -1090,7 +1165,29 @@ def main() -> int:
                     gb_exit_since[0] = None
                     gb_exit_armed[0] = True
 
-            if steps_gpio is not None and steps_bcm is not None:
+            if steps_pigpio_state is not None and steps_bcm is not None:
+                try:
+                    from esp_handset import steps_pi
+
+                    steps_raw = int(steps_pigpio.read(steps_bcm))
+                    steps_pigpio_state["level"] = steps_raw
+                    steps_prev = steps_pressed(steps_raw)
+                    steps_edges = int(steps_pigpio_state["edges"])
+                    steps_toggles = int(steps_pigpio_state["toggles"])
+                    steps_session = int(steps_pigpio_state["session"])
+                    steps_pi.write_debug(
+                        source="buttons_inputd",
+                        bcm=steps_bcm,
+                        level=steps_raw,
+                        pressed=steps_prev,
+                        edges=steps_edges,
+                        toggles=steps_toggles,
+                        session_steps=steps_session,
+                        backend="pigpio",
+                    )
+                except Exception as e:
+                    log(f"steps pigpio poll: {e}")
+            elif steps_gpio is not None and steps_bcm is not None:
                 try:
                     from esp_handset import steps_pi
 
@@ -1099,6 +1196,7 @@ def main() -> int:
                         steps_prev,
                         steps_stable,
                         steps_edges,
+                        steps_toggles,
                         counted,
                     ) = poll_steps_sensor(
                         steps_gpio,
@@ -1107,6 +1205,7 @@ def main() -> int:
                         prev_pressed=steps_prev,
                         stable_since=steps_stable,
                         edges=steps_edges,
+                        toggles=steps_toggles,
                     )
                     if counted:
                         steps_session += 1
@@ -1116,6 +1215,7 @@ def main() -> int:
                         level=int(steps_raw),
                         pressed=steps_prev,
                         edges=steps_edges,
+                        toggles=steps_toggles,
                         session_steps=steps_session,
                         backend="open_gpio",
                     )
@@ -1132,6 +1232,11 @@ def main() -> int:
             pass
         if gpio is not None:
             gpio.cleanup()
+        if steps_pigpio is not None:
+            try:
+                steps_pigpio.stop()
+            except Exception:
+                pass
         if steps_gpio is not None:
             try:
                 steps_gpio.cleanup()
