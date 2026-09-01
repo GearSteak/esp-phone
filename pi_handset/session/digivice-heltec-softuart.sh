@@ -18,8 +18,22 @@ if [[ "$(id -u)" -ne 0 ]]; then
 fi
 
 log "Install pigpio for bit-bang UART"
-apt-get install -y pigpio python3-pigpio 2>/dev/null || true
-systemctl enable --now pigpiod 2>/dev/null || true
+export DEBIAN_FRONTEND=noninteractive
+apt-get update -qq 2>&1 | tail -n 3 || log "WARN: apt-get update failed"
+if ! apt-get install -y pigpio python3-pigpio; then
+  log "ERROR: apt install pigpio python3-pigpio failed — run: sudo apt-get update && sudo apt-get install -y pigpio python3-pigpio"
+fi
+systemctl enable --now pigpiod 2>&1 || true
+if ! command -v pigpiod >/dev/null 2>&1; then
+  log "ERROR: pigpiod binary still missing after apt install"
+elif ! python3 -c "import pigpio" 2>/dev/null; then
+  log "ERROR: python3-pigpio import failed after apt install"
+elif ! python3 -c "import pigpio; pi=pigpio.pi(); ok=pi.connected; pi.stop(); import sys; sys.exit(0 if ok else 1)" 2>/dev/null; then
+  log "WARN: pigpiod not connected — trying systemctl start pigpiod"
+  systemctl start pigpiod 2>/dev/null || pigpiod 2>/dev/null || true
+else
+  log "pigpio OK (daemon connected)"
+fi
 
 mkdir -p /etc/esp-handset
 touch "$ENV_FILE"
