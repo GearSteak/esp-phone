@@ -13,6 +13,7 @@ from PyQt5.QtWidgets import QWidget
 from esp_handset.asset_icons import bubble_for_state, icon_for_key
 from esp_handset.shell_data import AppEntry
 from esp_handset.ui_font import font_family
+from esp_handset import store
 
 _PENGUN_ASSET_DIR = Path(__file__).resolve().parents[1] / "Assets"
 
@@ -63,6 +64,12 @@ class DigiviceHome(QWidget):
         self._pengun_timer = QTimer(self)
         self._pengun_timer.setInterval(140)
         self._pengun_timer.timeout.connect(self._advance_pengun)
+        self._steps_count = 0
+        self._steps_timer = QTimer(self)
+        self._steps_timer.setInterval(2000)
+        self._steps_timer.timeout.connect(self._refresh_steps_display)
+        self._steps_timer.start()
+        self._refresh_steps_display()
         self.step_detected.connect(self._on_step_detected)
         if self._pengun_walk_frames or self._pengun_idle_frames:
             self._pengun_timer.start()
@@ -164,6 +171,15 @@ class DigiviceHome(QWidget):
                 )
         self.update()
 
+    def _refresh_steps_display(self) -> None:
+        try:
+            total = int(store.steps_state().get("count") or 0)
+        except Exception:
+            total = 0
+        if total != self._steps_count:
+            self._steps_count = total
+            self.update()
+
     def _on_step_detected(self) -> None:
         if not self._pengun_walk_frames:
             return
@@ -175,8 +191,13 @@ class DigiviceHome(QWidget):
         self._pengun_walk_until = now + len(self._pengun_walk_sequence) * 0.14
         self.update()
 
-    def notify_step(self) -> None:
+    def notify_step(self, total: Optional[int] = None) -> None:
         """Notify the home animation that the pedometer count increased."""
+        if total is not None:
+            self._steps_count = max(0, int(total))
+            self.update()
+        else:
+            self._refresh_steps_display()
         self.step_detected.emit()
 
     def keyPressEvent(self, event) -> None:  # noqa: N802
@@ -252,6 +273,28 @@ class DigiviceHome(QWidget):
 
         # Top row
         draw_row(self._top(), 22, 0)
+
+        # Steps badge (top-right)
+        steps_txt = f"{self._steps_count:,}"
+        p.setFont(QFont(font_family(), 10, QFont.Bold))
+        badge_w = max(52, p.fontMetrics().width(steps_txt) + 22)
+        badge_h = 20
+        badge_x = w - badge_w - 6
+        badge_y = 4
+        p.setPen(Qt.NoPen)
+        p.setBrush(QColor(0, 0, 0, 170))
+        p.drawRoundedRect(badge_x, badge_y, badge_w, badge_h, 6, 6)
+        p.setPen(QColor("#9ab"))
+        p.drawText(badge_x, badge_y, 18, badge_h, Qt.AlignCenter, "👟")
+        p.setPen(QColor("#e8eef5"))
+        p.drawText(
+            badge_x + 16,
+            badge_y,
+            badge_w - 18,
+            badge_h,
+            Qt.AlignVCenter | Qt.AlignLeft,
+            steps_txt,
+        )
 
         # Center Digivice stage
         stage_m = 28

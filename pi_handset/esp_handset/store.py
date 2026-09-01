@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
-from typing import Any, List
+from typing import Any, List, Optional
 
 DATA = Path.home() / ".esp-handset"
 BOOKS = Path.home() / "Books"
@@ -36,12 +37,33 @@ def save(name: str, data: Any) -> None:
     (DATA / name).write_text(json.dumps(data, indent=2))
 
 
+def _vibe_for_notif(kind: str) -> None:
+    """Vibration motor on incoming notifications (respects sounds.json / Silent)."""
+    k = (kind or "info").strip().lower()
+    # Alarms/timers use play_alert() in handset_app (longer pattern + CM108 fallback).
+    if k in ("alarm", "timer"):
+        return
+    # Settings/security toasts are confirmations, not inbox alerts.
+    if k in ("settings", "security"):
+        return
+    try:
+        from esp_handset.vibe import vibe_async
+
+        if k in ("call", "sos"):
+            vibe_async("alert")
+        else:
+            vibe_async("chirp")
+    except Exception:
+        pass
+
+
 def push_notif(
     title: str,
     body: str,
     kind: str = "info",
     *,
     toast: bool = True,
+    vibe: Optional[bool] = None,
 ) -> None:
     items: List[dict] = load("notifs.json", [])
     from datetime import datetime
@@ -64,20 +86,15 @@ def push_notif(
             esp_cb(title, body, kind)
         except Exception:
             pass
+    should_vibe = vibe if vibe is not None else True
+    if should_vibe:
+        _vibe_for_notif(kind)
     # Digivice on-screen toast (always when requested — even if ESP also got it)
     if toast:
         cb = globals().get("_toast_cb")
         if callable(cb):
             try:
                 cb(title, body, kind)
-            except Exception:
-                pass
-        # Piezo for inbox-style alerts; alarms/timers use play_alert() separately
-        if kind in ("sms", "call", "lora"):
-            try:
-                from esp_handset.buzzer import beep_async
-
-                beep_async("chirp" if kind != "call" else "alert")
             except Exception:
                 pass
 
@@ -113,31 +130,62 @@ def push_heltec_notif(
     kind: str = "info",
     *,
     toast: bool = False,
+    vibe: bool = True,
 ) -> None:
-    """Push to Heltec panel only (optional Digivice toast)."""
-    push_notif(title, body, kind, toast=toast)
+    """Push to Heltec panel (optional Digivice toast + vibration)."""
+    push_notif(title, body, kind, toast=toast, vibe=vibe)
+
+
+def steps_source() -> str:
+    """pi | heltec | auto — auto prefers Pi GPIO when the monitor is running."""
+    raw = (os.environ.get("DIGI_STEPS_SOURCE") or "auto").strip().lower()
+    if raw in ("pi", "heltec", "auto"):
+        return raw
+    return "auto"
+
+
+def pi_steps_active() -> bool:
+    """True when the Pi tilt monitor is counting (not Heltec-only)."""
+    if steps_source() == "heltec":
+        return False
+    try:
+        from esp_handset.steps_pi import monitor_ok
+
+        return monitor_ok()
+    except Exception:
+        return steps_source() == "pi"
 
 
 def steps_state() -> dict:
-    """Daily step count from Pi tilt GPIO (SW-520D), not Heltec."""
+    """Daily step total (Pi GPIO and/or Heltec STEPS UART sync)."""
     from datetime import date
 
     today = date.today().isoformat()
-    st = load("steps.json", {"date": today, "count": 0})
+    st = load("steps.json", {"date": today, "count": 0, "esp": 0})
     if st.get("date") != today:
-        st = {"date": today, "count": 0}
+        st = {"date": today, "count": 0, "esp": 0}
         save("steps.json", st)
-    # Drop legacy Heltec session field if present
-    if "esp" in st:
-        st = {"date": st.get("date") or today, "count": int(st.get("count") or 0)}
-        save("steps.json", st)
+    st.setdefault("esp", 0)
     return st
 
 
 def apply_esp_steps(esp_count: int) -> int:
-    """Deprecated Heltec path — ignored; returns current Pi total."""
-    del esp_count
-    return int(steps_state().get("count") or 0)
+    """Merge Heltec session counter into today's Digivice total."""
+    if steps_source() == "pi":
+        return int(steps_state().get("count") or 0)
+    if steps_source() == "auto" and pi_steps_active():
+        return int(steps_state().get("count") or 0)
+    st = steps_state()
+    prev_esp = int(st.get("esp") or 0)
+    esp_count = max(0, int(esp_count))
+    if esp_count >= prev_esp:
+        st["count"] = int(st.get("count") or 0) + (esp_count - prev_esp)
+    else:
+        # ESP rebooted / STEPS RESET — treat as new session delta
+        st["count"] = int(st.get("count") or 0) + esp_count
+    st["esp"] = esp_count
+    save("steps.json", st)
+    return int(st["count"])
 
 
 def add_steps(n: int = 1) -> int:
@@ -150,4 +198,4 @@ def add_steps(n: int = 1) -> int:
 def reset_steps_today() -> None:
     from datetime import date
 
-    save("steps.json", {"date": date.today().isoformat(), "count": 0})
+    save("steps.json", {"date": date.today().isoformat(), "count": 0, "esp": 0})

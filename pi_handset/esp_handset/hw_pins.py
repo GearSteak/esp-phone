@@ -8,6 +8,7 @@ Defaults avoid LCD SPI, CardKB I2C, and hard buttons:
 | Buzzer  | 22  | 15        | Passive piezo + → GPIO, − → GND |
 
 Override: DIGI_STEPS_BCM, DIGI_BUZZER_BCM (or `off` to disable).
+DIGI_STEPS_SOURCE: `pi` | `heltec` | `auto` (default `auto` — Pi GPIO when monitor OK, else Heltec UART).
 """
 from __future__ import annotations
 

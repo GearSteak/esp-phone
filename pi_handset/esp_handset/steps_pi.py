@@ -3,7 +3,8 @@ from __future__ import annotations
 
 import threading
 import time
-from typing import Any, Callable, Optional
+from pathlib import Path
+from typing import Any, Callable, List, Optional
 
 from esp_handset import store
 from esp_handset.hw_pins import STEPS_BCM
@@ -13,6 +14,31 @@ _MIN_INTERVAL_S = 0.22
 
 _monitor: Optional["StepsMonitor"] = None
 _lock = threading.Lock()
+
+
+def _chip_candidates() -> List[int]:
+    found: List[int] = []
+    for p in sorted(Path("/dev").glob("gpiochip*")):
+        try:
+            found.append(int(p.name.replace("gpiochip", "")))
+        except ValueError:
+            continue
+    order: List[int] = []
+    for n in (0, 4, 5, *found):
+        if n not in order:
+            order.append(n)
+    return order
+
+
+def _pi_counting_enabled() -> bool:
+    src = store.steps_source()
+    if src == "heltec":
+        return False
+    return True
+
+
+def monitor_ok() -> bool:
+    return _monitor is not None and _monitor.ok
 
 
 def record_step(n: int = 1) -> int:
@@ -61,12 +87,26 @@ class StepsMonitor:
                 self._gpio = mod
                 self._backend = backend
             elif backend == "lgpio":
-                chip = mod.gpiochip_open(0)
-                # Flags: pull-up input
-                mod.gpio_claim_input(chip, self.bcm, mod.SET_PULL_UP)
-                self._chip = chip
-                self._gpio = mod
-                self._backend = backend
+                last = ""
+                for n in _chip_candidates():
+                    chip = None
+                    try:
+                        chip = mod.gpiochip_open(n)
+                        mod.gpio_claim_input(chip, self.bcm, mod.SET_PULL_UP)
+                        self._chip = chip
+                        self._gpio = mod
+                        self._backend = backend
+                        break
+                    except Exception as e:
+                        last = str(e)
+                        if chip is not None:
+                            try:
+                                mod.gpiochip_close(chip)
+                            except Exception:
+                                pass
+                        chip = None
+                if chip is None:
+                    raise RuntimeError(last or "lgpio open failed")
             else:
                 raise RuntimeError(f"unknown backend {backend}")
             self._last_level = self._read()
@@ -89,6 +129,21 @@ class StepsMonitor:
 
     def stop(self) -> None:
         self._stop.set()
+        if self._thread and self._thread.is_alive():
+            self._thread.join(timeout=0.6)
+        if self._backend == "lgpio" and self._gpio is not None and self._chip is not None:
+            try:
+                self._gpio.gpio_free(self._chip, self.bcm)
+            except Exception:
+                pass
+            try:
+                self._gpio.gpiochip_close(self._chip)
+            except Exception:
+                pass
+        self._chip = None
+        self._gpio = None
+        self._backend = ""
+        self.ok = False
 
     def _loop(self) -> None:
         while not self._stop.is_set():
@@ -106,7 +161,11 @@ class StepsMonitor:
                 now = time.monotonic()
                 # Count switch close (pull-up → GND) as a step
                 closed = level == 0
-                if closed and (now - self._last_t) >= _MIN_INTERVAL_S:
+                if (
+                    closed
+                    and _pi_counting_enabled()
+                    and (now - self._last_t) >= _MIN_INTERVAL_S
+                ):
                     total = record_step(1)
                     self._last_t = now
                     if self.on_step:
@@ -119,9 +178,11 @@ class StepsMonitor:
 
 
 def start_monitor(on_step: Optional[Callable[[int], None]] = None) -> Optional[StepsMonitor]:
-    """Start the process-wide step monitor (idempotent)."""
+    """Start the process-wide step monitor (idempotent; retries after failure)."""
     global _monitor
     with _lock:
+        if not _pi_counting_enabled():
+            return None
         if STEPS_BCM is None:
             print("[steps] disabled (DIGI_STEPS_BCM=off)", flush=True)
             return None
@@ -129,7 +190,9 @@ def start_monitor(on_step: Optional[Callable[[int], None]] = None) -> Optional[S
             if on_step:
                 _monitor.on_step = on_step
             return _monitor
-        # Retry if a previous attempt failed (e.g. GPIO not ready at boot)
+        if _monitor is not None:
+            _monitor.stop()
+            _monitor = None
         mon = StepsMonitor(STEPS_BCM, on_step=on_step)
         if mon.start():
             _monitor = mon

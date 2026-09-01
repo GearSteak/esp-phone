@@ -615,11 +615,17 @@ def build_app(bridge: Optional[EspBridge], modem: Optional[Sim7600]) -> PhoneShe
 
         home = getattr(shell, "_home", None)
 
-        def on_step(_total: int) -> None:
+        def on_step(total: int) -> None:
             if home is not None:
-                home.notify_step()
+                home.notify_step(total)
 
-        QTimer.singleShot(1500, lambda: start_monitor(on_step=on_step))
+        def _try_steps_monitor() -> None:
+            mon = start_monitor(on_step=on_step)
+            if mon is None or not mon.ok:
+                QTimer.singleShot(15000, _try_steps_monitor)
+
+        if store.steps_source() != "heltec":
+            QTimer.singleShot(1500, _try_steps_monitor)
     except Exception as e:
         print(f"[handset] steps monitor: {e}", flush=True)
     shell.register_page(
@@ -722,6 +728,9 @@ def build_app(bridge: Optional[EspBridge], modem: Optional[Sim7600]) -> PhoneShe
                 ref = getattr(steps_page, "refresh_steps", None)
                 if callable(ref):
                     ref()
+                home = getattr(shell, "_home", None)
+                if home is not None:
+                    home.notify_step(total)
                 status(f"Steps {total}")
             return
         if line.startswith("LORA RX") or line.startswith("ACK LORA") or line.startswith(
@@ -760,10 +769,13 @@ def build_app(bridge: Optional[EspBridge], modem: Optional[Sim7600]) -> PhoneShe
             if "steps=" in line:
                 try:
                     tok = [t for t in line.split() if t.startswith("steps=")][0]
-                    store.apply_esp_steps(int(tok.split("=", 1)[1]))
+                    total = store.apply_esp_steps(int(tok.split("=", 1)[1]))
                     ref = getattr(steps_page, "refresh_steps", None)
                     if callable(ref):
                         ref()
+                    home = getattr(shell, "_home", None)
+                    if home is not None:
+                        home.notify_step(total)
                 except Exception:
                     pass
             if "SIM7600" not in (shell.signal_lab.text() or ""):

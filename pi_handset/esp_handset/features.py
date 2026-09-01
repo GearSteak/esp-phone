@@ -235,9 +235,9 @@ def make_weather_page(on_back: Callable[[], None], modem=None) -> QWidget:
     return _make(on_back, modem)
 
 
-# ----- Steps (Pi SW-520D / tilt switch) -----
+# ----- Steps (Pi SW-520D / Heltec tilt switch) -----
 def make_steps_page(on_back: Callable[[], None], bridge=None) -> QWidget:
-    del bridge  # Heltec gone — steps are local GPIO only
+    del bridge  # optional Heltec STEPS sync via bridge in handset_app
     from esp_handset.media_ui import media_btn, style_media_body
 
     _BG = "#0e1620"
@@ -302,8 +302,17 @@ def make_steps_page(on_back: Callable[[], None], bridge=None) -> QWidget:
         try:
             from esp_handset.steps_pi import start_monitor, user_status
 
-            start_monitor()
-            status.setText(user_status())
+            src = store.steps_source()
+            if src != "heltec":
+                start_monitor()
+            hint = user_status()
+            if src == "heltec":
+                hint = "Heltec tilt · counts via UART"
+            elif src == "auto" and store.pi_steps_active():
+                hint = f"Pi tilt · {hint}"
+            elif src == "auto":
+                hint = f"Heltec fallback · {hint}"
+            status.setText(hint)
         except Exception as e:
             status.setText(str(e)[:72])
 
