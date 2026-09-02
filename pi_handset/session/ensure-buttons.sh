@@ -122,7 +122,9 @@ RuntimeDirectoryMode=0755
 Environment=DISPLAY=:0
 Environment=XAUTHORITY=$xauth
 Environment=ESP_HANDSET_PREFIX=$PREFIX
+Environment=PYTHONPATH=$PREFIX
 Environment=DIGIVICE_USER_HOME=$GUI_HOME
+EnvironmentFile=-/etc/esp-handset/env
 ExecStartPre=-/sbin/modprobe uinput
 ExecStart=/usr/bin/python3 $SCRIPT
 Restart=always

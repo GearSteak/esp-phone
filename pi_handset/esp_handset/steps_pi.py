@@ -169,13 +169,20 @@ def debug_panel_text() -> str:
         toggles = int(d.get("toggles") or 0)
         edges = int(d.get("edges") or 0)
         counted = int(d.get("session_steps") or 0)
+        backend = str(d.get("backend") or "?")
+        bcm = d.get("bcm", STEPS_BCM)
         sensor = "TILT!" if pressed else "open"
-        return (
-            f"Lvl: {level} ({sensor})\n"
-            f"Toggles: {toggles}\n"
-            f"Edges: {edges}\n"
-            f"Counted: {counted}"
-        )
+        err = (d.get("init_error") or "").strip()
+        lines = [
+            f"BCM{bcm} {backend}",
+            f"Lvl: {level} ({sensor})",
+            f"Toggles: {toggles}",
+            f"Edges: {edges}",
+            f"Counted: {counted}",
+        ]
+        if err:
+            lines.append(f"Err: {err[:28]}")
+        return "\n".join(lines)
     d = read_debug()
     age = time.time() - float(d.get("at") or 0) if d.get("at") else 999
     if d.get("source") == "buttons_inputd" and age < 120:

@@ -111,6 +111,7 @@ install_live_from_repo() {
     "power.sh:digivice-power" \
     "desktop-spi-mirror.sh:digivice-desktop-mirror" \
     "ensure-buttons.sh:digivice-ensure-buttons" \
+    "digivice-steps-doctor.sh:digivice-steps-doctor" \
     "ensure-cardkb.sh:digivice-ensure-cardkb" \
     "digivice-cardkb-ctl.sh:digivice-cardkb-ctl" \
     "digivice-ensure-browser.sh:digivice-ensure-browser" \
