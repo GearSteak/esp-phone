@@ -45,6 +45,7 @@ from esp_handset.shell_data import (
     SYSTEM_APPS,
     DISPLAY_APPS,
     TOOLS_APPS,
+    TCG_APPS,
     AppEntry,
 )
 from esp_handset.toasts import ToastHost
@@ -57,7 +58,7 @@ _ARCADE_PAGES = {"snake", "pong", "tetris"}
 _CARD_GAME_PAGES = {"solitaire", "uno"}
 # Arcade/cards always use the pad. Emulators only while a ROM is running.
 _GAMEPAD_PAGES = _ARCADE_PAGES | _CARD_GAME_PAGES
-_CUSTOM_INPUT_PAGES = {"mtg", "mtg_settings"}
+_CUSTOM_INPUT_PAGES = {"mtg", "mtg_settings", "mtg_cards"}
 _MENU_BACKGROUND_PATH = Path(__file__).resolve().parents[1] / "Assets" / "background.png"
 
 __all__ = [
@@ -71,6 +72,7 @@ __all__ = [
     "COMM_APPS",
     "CLOCK_APPS",
     "TOOLS_APPS",
+    "TCG_APPS",
     "SETTINGS_APPS",
     "SETUP_APPS",
     "MEDIA_APPS",

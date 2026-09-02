@@ -259,7 +259,8 @@ from esp_handset import apps as handset_apps  # noqa: E402
 from esp_handset import pages  # noqa: E402
 from esp_handset import features  # noqa: E402
 from esp_handset import games_ui  # noqa: E402
-from esp_handset import mtg_life_ui  # noqa: E402
+from esp_handset.tcg.mtg import life_ui as mtg_life_ui  # noqa: E402
+from esp_handset.tcg.mtg import cards_ui as mtg_cards_ui  # noqa: E402
 from esp_handset import emu_ui  # noqa: E402
 from esp_handset import wifi_transfer  # noqa: E402
 from esp_handset import ollama_chat  # noqa: E402
@@ -279,6 +280,7 @@ from esp_handset.shell import (  # noqa: E402
     SYSTEM_APPS,
     DISPLAY_APPS,
     TOOLS_APPS,
+    TCG_APPS,
     PhoneShell,
 )
 from esp_handset import accounts_ui  # noqa: E402
@@ -366,6 +368,10 @@ def build_app(bridge: Optional[EspBridge], modem: Optional[Sim7600]) -> PhoneShe
     shell.register_page(
         "folder_apps",
         shell.build_folder_keyed("folder_apps", "Apps", APPS_APPS),
+    )
+    shell.register_page(
+        "folder_tcg",
+        shell.build_folder_keyed("folder_tcg", "TCG", TCG_APPS),
     )
     shell.register_page(
         "folder_calls",
@@ -685,6 +691,7 @@ def build_app(bridge: Optional[EspBridge], modem: Optional[Sim7600]) -> PhoneShe
     shell.register_page("solitaire", games_ui.make_solitaire(back))
     shell.register_page("uno", games_ui.make_uno(back))
     shell.register_page("mtg", mtg_life_ui.make_mtg_life_page(back))
+    shell.register_page("mtg_cards", mtg_cards_ui.make_mtg_cards_page(back))
     shell.register_page(
         "mtg_settings", mtg_life_ui.make_mtg_settings_page(back)
     )

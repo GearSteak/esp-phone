@@ -73,7 +73,6 @@ SETTINGS_APPS = [
     AppEntry("set_accounts", "Accounts", "SIP · Email · AI", "@"),
     AppEntry("set_security", "Security", "PIN", "🔒"),
     AppEntry("set_debug", "Debug", "Sound · alerts · tests", "⚒"),
-    AppEntry("mtg_settings", "MTG Defaults", "Starting life", "♠"),
     AppEntry("help", "Help", "Joystick map", "?"),
 ]
 
@@ -128,9 +127,15 @@ GAMES_APPS = [
 
 APPS_APPS = [
     AppEntry("games", "Games", "Emu · arcade · cards", "♠"),
-    AppEntry("mtg", "MTG Life", "4-player Commander", "♠"),
+    AppEntry("tcg", "TCG", "MTG · card search", "♠"),
     AppEntry("tools", "Tools", "Calc · steps · AI", "⚒"),
     AppEntry("shadowdark", "Shadowdark", "Dice · torch timer", "⚔"),
+]
+
+TCG_APPS = [
+    AppEntry("mtg", "MTG Life", "4-player Commander", "♠"),
+    AppEntry("mtg_cards", "MTG Cards", "Local search · art", "▤"),
+    AppEntry("mtg_settings", "MTG Defaults", "Starting life", "♠"),
 ]
 
 EMU_PAGE_KEYS = ("gb", "nes", "smsgg", "gba", "snes", "genesis")
@@ -146,6 +151,7 @@ SETUP_APPS = TOOLS_APPS + SETTINGS_APPS  # legacy alias
 
 FOLDER_MAP = {
     "apps": ("folder_apps", "Apps", APPS_APPS),
+    "tcg": ("folder_tcg", "TCG", TCG_APPS),
     "calls": ("folder_calls", "Calls", CALLS_APPS),
     "sms": ("folder_sms", "SMS", SMS_APPS),
     "time": ("folder_time", "Time", TIME_APPS),
