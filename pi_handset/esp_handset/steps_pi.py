@@ -17,7 +17,7 @@ from esp_handset.hw_pins import STEPS_BCM
 
 _RUN_DEBUG = Path("/run/digivice/steps-debug.json")
 _BURST = max(1, int(os.environ.get("DIGI_STEPS_BURST", "64")))
-_MIN_INTERVAL_S = float(os.environ.get("DIGI_STEPS_REFRACTORY", "0.28"))
+_MIN_INTERVAL_S = float(os.environ.get("DIGI_STEPS_REFRACTORY", "0.07"))
 _monitor: Optional["StepsMonitor"] = None
 _lock = threading.Lock()
 
