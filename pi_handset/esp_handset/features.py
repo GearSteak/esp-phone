@@ -356,16 +356,15 @@ def make_steps_page(on_back: Callable[[], None], bridge=None) -> QWidget:
         show_local()
 
     def do_probe() -> None:
-        """Restart buttons daemon step counter view; keep debug visible 2 min."""
+        """Restart in-process GPIO monitor; keep debug visible 2 min."""
         try:
             from esp_handset import steps_pi
-            from esp_handset.hw_pins import STEPS_BCM
 
             probe_until["t"] = time.monotonic() + 120
             steps_pi.restart_monitor()
             show_local()
-            if not steps_pi.daemon_active():
-                status.setText("Run: sudo digivice-ensure-buttons")
+            if not steps_pi.sensor_active():
+                status.setText("GPIO failed — reboot Digivice")
             else:
                 status.setText("Shake sensor — watch box below")
         except Exception as e:

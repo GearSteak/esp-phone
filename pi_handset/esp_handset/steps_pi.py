@@ -1,26 +1,37 @@
 """Pi-local pedometer via SW-520D on BCM17 (momentary switch → GND).
 
-Counted in digi-buttons-inputd (same GPIO stack as the hard buttons).
-This module reads/writes the user's steps store + shared debug file for the UI.
+Counted inside handset_app (same GPIO stack as ST7789). The root buttons
+daemon cannot reliably read this pin on all Pi builds.
 """
 from __future__ import annotations
 
 import json
 import os
+import threading
 import time
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any, Callable, List, Optional
 
 from esp_handset import store
 from esp_handset.hw_pins import STEPS_BCM
 
 _RUN_DEBUG = Path("/run/digivice/steps-debug.json")
-_monitor: Optional["_DaemonView"] = None
-_lock = __import__("threading").Lock()
+_BURST = max(1, int(os.environ.get("DIGI_STEPS_BURST", "64")))
+_MIN_INTERVAL_S = float(os.environ.get("DIGI_STEPS_REFRACTORY", "0.28"))
+_monitor: Optional["StepsMonitor"] = None
+_lock = threading.Lock()
+
+
+def _active_low() -> bool:
+    raw = (os.environ.get("DIGI_STEPS_ACTIVE_LOW") or "1").strip().lower()
+    return raw not in ("0", "false", "no", "off")
+
+
+def _pressed(level: int) -> bool:
+    return level == 0 if _active_low() else level != 0
 
 
 def _gui_home() -> Path:
-    """Desktop user home — daemon runs as root."""
     try:
         raw = Path("/etc/esp-handset/gui-home").read_text(encoding="utf-8").strip()
         if raw:
@@ -80,22 +91,35 @@ def write_debug(**fields: Any) -> None:
         path.write_text(json.dumps(data, indent=2), encoding="utf-8")
         os.chmod(path, 0o644)
     except OSError:
-        # Fallback when /run not writable (dev machine)
         path = user_data_dir() / "steps-debug.json"
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
 
-def daemon_active(max_age_s: float = 8.0) -> bool:
+def _pi_counting_enabled() -> bool:
+    return store.steps_source() != "heltec"
+
+
+def sensor_active(max_age_s: float = 8.0) -> bool:
+    mon = _monitor
+    if mon is not None and mon.ok:
+        t = mon._thread
+        if t is not None and t.is_alive():
+            return True
     d = read_debug()
-    if d.get("source") != "buttons_inputd":
+    if d.get("source") not in ("handset", "buttons_inputd"):
         return False
     at = float(d.get("at") or 0)
     return at > 0 and (time.time() - at) < max_age_s
 
 
+def daemon_active(max_age_s: float = 8.0) -> bool:
+    """Back-compat name — True when the local sensor thread or debug is live."""
+    return sensor_active(max_age_s)
+
+
 def monitor_ok() -> bool:
-    return daemon_active() or (_monitor is not None and _monitor.ok)
+    return sensor_active()
 
 
 def record_step(n: int = 1) -> int:
@@ -121,49 +145,251 @@ def record_step(n: int = 1) -> int:
     return int(st["count"])
 
 
-class _DaemonView:
-    """UI-facing view of the buttons-inputd step counter."""
+def _chip_candidates() -> List[int]:
+    found: List[int] = []
+    for p in sorted(Path("/dev").glob("gpiochip*")):
+        try:
+            found.append(int(p.name.replace("gpiochip", "")))
+        except ValueError:
+            continue
+    order: List[int] = []
+    for n in (0, 4, 5, *found):
+        if n not in order:
+            order.append(n)
+    return order
 
-    ok = True
-    error = ""
+
+class StepsMonitor:
+    """Burst-poll BCM17 in the Digivice process (shares gpio_util with LCD)."""
 
     def __init__(self, bcm: int, on_step: Optional[Callable[[int], None]] = None):
-        self.bcm = bcm
+        self.bcm = int(bcm)
         self.on_step = on_step
-        self._backend = "buttons_inputd"
+        self._stop = threading.Event()
+        self._thread: Optional[threading.Thread] = None
+        self._gpio: Any = None
+        self.backend = "none"
+        self._chip: Optional[int] = None
+        self.raw_level = 1
+        self.prev_pressed = False
+        self.edges = 0
+        self.toggles = 0
+        self.session = 0
+        self._last_t = 0.0
+        self.ok = False
+        self.error = ""
 
-    @property
-    def edges(self) -> int:
-        return int(read_debug().get("edges") or 0)
+    def _read(self) -> int:
+        if self.backend == "RPi.GPIO" and self._gpio is not None:
+            return int(self._gpio.input(self.bcm))
+        if self.backend == "lgpio" and self._gpio is not None and self._chip is not None:
+            return int(self._gpio.gpio_read(self._chip, self.bcm))
+        raise RuntimeError("no gpio backend")
 
-    @property
-    def steps(self) -> int:
-        return int(read_debug().get("session_steps") or 0)
+    def start(self) -> bool:
+        if self._thread and self._thread.is_alive():
+            return self.ok
+        if self._try_rpi_gpio():
+            return True
+        if self._try_lgpio():
+            return True
+        print(
+            f"[steps] all GPIO backends failed for BCM{self.bcm}: {self.error}",
+            flush=True,
+        )
+        write_debug(
+            source="handset",
+            bcm=self.bcm,
+            level=-1,
+            pressed=False,
+            edges=0,
+            toggles=0,
+            session_steps=0,
+            backend="none",
+            init_error=self.error[:120],
+        )
+        return False
+
+    def _finish_start(self) -> bool:
+        self.raw_level = self._read()
+        self.prev_pressed = _pressed(self.raw_level)
+        self._stop.clear()
+        self._thread = threading.Thread(target=self._loop, name="digi-steps", daemon=True)
+        self._thread.start()
+        print(
+            f"[steps] monitoring BCM{self.bcm} via {self.backend} "
+            f"(lvl={self.raw_level}, tilt→GND)",
+            flush=True,
+        )
+        self._publish_debug()
+        return True
+
+    def _try_rpi_gpio(self) -> bool:
+        try:
+            from esp_handset.gpio_util import get_gpio, last_error
+
+            mod, backend = get_gpio()
+            if mod is None or backend != "RPi.GPIO":
+                raise RuntimeError(last_error() or "no RPi.GPIO backend")
+            mod.setup(self.bcm, mod.IN, pull_up_down=mod.PUD_UP)
+            self._gpio = mod
+            self.backend = backend
+            self._chip = None
+            self.ok = True
+            self.error = ""
+            return self._finish_start()
+        except Exception as e:
+            self.ok = False
+            self.error = str(e)
+            return False
+
+    def _try_lgpio(self) -> bool:
+        try:
+            import lgpio as mod  # type: ignore
+        except ImportError:
+            return False
+        last = ""
+        for n in _chip_candidates():
+            chip = None
+            try:
+                chip = mod.gpiochip_open(n)
+                mod.gpio_claim_input(chip, self.bcm, mod.SET_PULL_UP)
+                self._chip = chip
+                self._gpio = mod
+                self.backend = "lgpio"
+                self.ok = True
+                self.error = ""
+                return self._finish_start()
+            except Exception as e:
+                last = str(e)
+                if chip is not None:
+                    try:
+                        mod.gpiochip_close(chip)
+                    except Exception:
+                        pass
+        self.error = last or "lgpio open failed"
+        return False
+
+    def stop(self) -> None:
+        self._stop.set()
+        if self._thread and self._thread.is_alive():
+            self._thread.join(timeout=0.8)
+        if self.backend == "lgpio" and self._gpio is not None and self._chip is not None:
+            try:
+                self._gpio.gpio_free(self._chip, self.bcm)
+            except Exception:
+                pass
+            try:
+                self._gpio.gpiochip_close(self._chip)
+            except Exception:
+                pass
+        self._gpio = None
+        self._chip = None
+        self.backend = "none"
+        self.ok = False
+
+    def _publish_debug(self) -> None:
+        write_debug(
+            source="handset",
+            bcm=self.bcm,
+            level=int(self.raw_level),
+            pressed=bool(self.prev_pressed),
+            edges=int(self.edges),
+            toggles=int(self.toggles),
+            session_steps=int(self.session),
+            backend=self.backend,
+            init_error=self.error[:120] if self.error else None,
+        )
+
+    def _loop(self) -> None:
+        while not self._stop.is_set():
+            for _ in range(_BURST):
+                if self._stop.is_set():
+                    break
+                try:
+                    level = int(self._read())
+                except Exception as e:
+                    self.error = str(e)
+                    time.sleep(0.05)
+                    break
+                if level != self.raw_level:
+                    self.toggles += 1
+                    self.raw_level = level
+                pressed = _pressed(level)
+                if pressed and not self.prev_pressed:
+                    self.edges += 1
+                    now = time.monotonic()
+                    if (now - self._last_t) >= _MIN_INTERVAL_S:
+                        self.session += 1
+                        self._last_t = now
+                        total = record_step(1)
+                        if self.on_step:
+                            try:
+                                self.on_step(total)
+                            except Exception:
+                                pass
+                self.prev_pressed = pressed
+            self._publish_debug()
+            time.sleep(0.002)
 
 
-def start_monitor(on_step: Optional[Callable[[int], None]] = None) -> Optional[_DaemonView]:
-    """Attach UI callbacks; counting runs in digi-buttons-inputd."""
+def start_monitor(on_step: Optional[Callable[[int], None]] = None) -> Optional[StepsMonitor]:
+    """Start the in-process step monitor (idempotent; retries after failure)."""
     global _monitor
     with _lock:
-        if STEPS_BCM is None or store.steps_source() == "heltec":
+        if not _pi_counting_enabled() or STEPS_BCM is None:
             return None
-        if _monitor is None:
-            _monitor = _DaemonView(STEPS_BCM, on_step=on_step)
-        elif on_step:
-            _monitor.on_step = on_step
-        return _monitor
+        if _monitor is not None and _monitor.ok:
+            t = _monitor._thread
+            if t is not None and t.is_alive():
+                if on_step:
+                    _monitor.on_step = on_step
+                return _monitor
+            _monitor.stop()
+            _monitor = None
+        if _monitor is not None:
+            _monitor.stop()
+            _monitor = None
+        mon = StepsMonitor(STEPS_BCM, on_step=on_step)
+        if mon.start():
+            _monitor = mon
+            return mon
+        _monitor = mon
+        return mon
 
 
-def restart_monitor(on_step: Optional[Callable[[int], None]] = None) -> Optional[_DaemonView]:
+def restart_monitor(on_step: Optional[Callable[[int], None]] = None) -> Optional[StepsMonitor]:
+    global _monitor
+    with _lock:
+        if _monitor is not None:
+            _monitor.stop()
+            _monitor = None
     return start_monitor(on_step=on_step)
+
+
+def _live_debug() -> dict:
+    mon = _monitor
+    if mon is not None and mon.ok:
+        return {
+            "source": "handset",
+            "bcm": mon.bcm,
+            "backend": mon.backend,
+            "level": mon.raw_level,
+            "pressed": mon.prev_pressed,
+            "toggles": mon.toggles,
+            "edges": mon.edges,
+            "session_steps": mon.session,
+            "init_error": mon.error,
+        }
+    return read_debug()
 
 
 def debug_panel_text() -> str:
     """Large-type lines for the 2\" LCD Steps screen."""
     if STEPS_BCM is None:
         return "Steps disabled"
-    if daemon_active():
-        d = read_debug()
+    d = _live_debug()
+    if sensor_active() or (d.get("source") == "handset" and _monitor and _monitor.ok):
         pressed = bool(d.get("pressed"))
         level = int(d.get("level") if d.get("level") is not None else 1)
         toggles = int(d.get("toggles") or 0)
@@ -183,29 +409,34 @@ def debug_panel_text() -> str:
         if err:
             lines.append(f"Err: {err[:28]}")
         return "\n".join(lines)
-    d = read_debug()
+    mon = _monitor
+    if mon is not None and mon.error:
+        return (
+            "GPIO failed\n\n"
+            f"{mon.error[:80]}\n\n"
+            "Reboot Digivice"
+        )
     age = time.time() - float(d.get("at") or 0) if d.get("at") else 999
-    if d.get("source") == "buttons_inputd" and age < 120:
+    if d.get("source") in ("handset", "buttons_inputd") and age < 120:
         return (
             "Sensor paused?\n\n"
             f"Last seen {age:.0f}s ago\n\n"
-            "Reboot Digivice\nor run ensure-buttons"
+            "Reboot Digivice"
         )
     return (
-        "Buttons daemon\n"
+        "Step sensor\n"
         "OFFLINE\n\n"
-        "Settings → Update\n"
-        "then reboot once"
+        "Reboot Digivice"
     )
 
 
 def monitor_status() -> str:
     if STEPS_BCM is None:
         return "Steps GPIO disabled"
-    d = read_debug()
+    d = _live_debug()
     if not d:
-        return f"BCM{STEPS_BCM} · no daemon"
-    age = time.time() - float(d.get("at") or 0)
+        return f"BCM{STEPS_BCM} · not started"
+    age = time.time() - float(d.get("at") or 0) if d.get("at") else 0.0
     return (
         f"{d.get('source', '?')} lvl={d.get('level', '?')} "
         f"edges={d.get('edges', 0)} steps={d.get('session_steps', 0)} "
@@ -216,9 +447,12 @@ def monitor_status() -> str:
 def user_status() -> str:
     if STEPS_BCM is None:
         return "Sensor disabled"
-    if not daemon_active():
-        return "Daemon offline"
-    d = read_debug()
+    mon = _monitor
+    if mon is not None and not mon.ok and mon.error:
+        return f"GPIO error: {mon.error[:40]}"
+    if not sensor_active():
+        return "Sensor offline"
+    d = _live_debug()
     n = int(d.get("session_steps") or 0)
     if n > 0:
         return f"{n} from sensor"
