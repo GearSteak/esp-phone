@@ -11,6 +11,7 @@ Override: DIGI_STEPS_BCM, DIGI_BUZZER_BCM (or `off` to disable).
 DIGI_STEPS_SOURCE: `pi` (default) | `heltec` | `auto`.
 DIGI_STEPS_ACTIVE_LOW: `1` (default) — SW-520D closes to GND; set `0` if wired active-high.
 DIGI_STEPS_REFRACTORY: seconds between counted steps (default `0.07`; was 0.28).
+DIGI_STEPS_BUTTON_MUTE: ignore tilt pulses for this long after a pad press (default `0.35`).
 """
 from __future__ import annotations
 

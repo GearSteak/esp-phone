@@ -18,6 +18,7 @@ from esp_handset.hw_pins import STEPS_BCM
 _RUN_DEBUG = Path("/run/digivice/steps-debug.json")
 _BURST = max(1, int(os.environ.get("DIGI_STEPS_BURST", "64")))
 _MIN_INTERVAL_S = float(os.environ.get("DIGI_STEPS_REFRACTORY", "0.07"))
+_BUTTON_MUTE_S = float(os.environ.get("DIGI_STEPS_BUTTON_MUTE", "0.35"))
 _monitor: Optional["StepsMonitor"] = None
 _lock = threading.Lock()
 
@@ -29,6 +30,18 @@ def _active_low() -> bool:
 
 def _pressed(level: int) -> bool:
     return level == 0 if _active_low() else level != 0
+
+
+def _any_button_pressed() -> bool:
+    """MCP pad activity — button clicks shake the SW-520D in the same case."""
+    try:
+        from esp_handset import mcp23017
+
+        if not mcp23017.backend_enabled():
+            return False
+        return any(mcp23017.read_phone_buttons().values())
+    except Exception:
+        return False
 
 
 def _gui_home() -> Path:
@@ -176,6 +189,7 @@ class StepsMonitor:
         self.toggles = 0
         self.session = 0
         self._last_t = 0.0
+        self._mute_until = 0.0
         self.ok = False
         self.error = ""
 
@@ -303,6 +317,9 @@ class StepsMonitor:
 
     def _loop(self) -> None:
         while not self._stop.is_set():
+            now = time.monotonic()
+            if _any_button_pressed():
+                self._mute_until = now + _BUTTON_MUTE_S
             for _ in range(_BURST):
                 if self._stop.is_set():
                     break
@@ -318,10 +335,10 @@ class StepsMonitor:
                 pressed = _pressed(level)
                 if pressed and not self.prev_pressed:
                     self.edges += 1
-                    now = time.monotonic()
-                    if (now - self._last_t) >= _MIN_INTERVAL_S:
+                    tick = time.monotonic()
+                    if tick >= self._mute_until and (tick - self._last_t) >= _MIN_INTERVAL_S:
                         self.session += 1
-                        self._last_t = now
+                        self._last_t = tick
                         total = record_step(1)
                         if self.on_step:
                             try:
