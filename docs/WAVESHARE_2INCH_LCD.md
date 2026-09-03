@@ -25,7 +25,7 @@ Same pins whether you use the **8‑wire harness** or seat the module on a **GPI
 | RST | **27** | 13 |
 | BL | **18** | 12 |
 
-On a passthrough header: LCD owns those pins; buttons + CardKB use the free pins on top — full map [`DIGIVICE_WIRING.md`](DIGIVICE_WIRING.md).
+On a passthrough header: LCD owns the **SPI** + backlight pins; buttons + CardKB (**I2C Grove**, shared bus) use the free pins on top — full map [`DIGIVICE_WIRING.md`](DIGIVICE_WIRING.md). CardKB detail (Grove vs ISP pads): [`CARDKB_PI.md`](CARDKB_PI.md).
 
 Installer enables `mipi-dbi-spi` + `panel.bin` (`waveshare2inch`). After reboot the panel is primary DRM output (`vc4-kms-v3d,nohdmi`).
 

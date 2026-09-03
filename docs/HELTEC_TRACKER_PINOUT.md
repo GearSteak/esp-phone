@@ -2,7 +2,7 @@
 
 Gateway firmware: `pio run -e heltec-wireless-tracker-gateway -t upload`
 
-USB-C is for **flashing only**. Day-to-day Digivice: Heltec on **LiPo** + **soft-UART** to Pi pins 16/18 (modem owns `serial0`, CardKB owns I2C, USB is audio). See `docs/HELTEC_UART_NOTIFY.md`. Cellular is SIM7600 on **GPIO UART**.
+USB-C is for **flashing only**. Day-to-day Digivice: Heltec on **LiPo** + **soft-UART** to Pi pins 16/18 (modem owns `serial0`, **I2C1 is shared** by CardKB / MCP / UPS on the Pi, USB is audio). See `docs/HELTEC_UART_NOTIFY.md`. Cellular is SIM7600 on **GPIO UART**.
 
 ## Reserved onboard (do not wire)
 
@@ -95,7 +95,9 @@ pio device monitor -e heltec-wireless-tracker-gateway
 
 ## CardKB (M5Stack Unit) — detachable typing
 
-I2C Grove hotplug into Heltec. Firmware polls `@0x5F` and emits `KEY` lines to the Pi.
+**Preferred Digivice path:** plug CardKB into the **Pi** over **Grove I2C** (pins 3/5) — see [`CARDKB_PI.md`](CARDKB_PI.md). The six pads on the CardKB PCB edge are **ISP only** (ATmega flash), not the Pi key link.
+
+**Legacy Heltec path** (optional): I2C Grove hotplug into Heltec. Firmware polls `@0x5F` and emits `KEY` lines to the Pi.
 
 | Grove wire | Signal | Heltec GPIO / rail |
 | --- | --- | --- |

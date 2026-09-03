@@ -10,13 +10,15 @@ Pi USB **polyfuse** trips if the modem or Heltec draw on that port. Keep USB for
 |-----|--------|--------|
 | **USB** | **USB audio** (headphones + mic) | Nothing else |
 | **GPIO UART** pins **8 / 10** (`/dev/serial0`) | **SIM7600** | `sudo digivice-modem-uart` |
-| **I2C** pins **3 / 5** | **CardKB** | Do not hang Heltec here |
+| **SPI** (LCD) | **Waveshare 2″** | MOSI/CLK/CS/DC/RST + BL — **not** I2C |
+| **I2C** pins **3 / 5** | **Shared** CardKB + MCP + UPS | Addresses `0x5F` / `0x20–0x27` / `0x41` — Heltec stays off this bus |
 | **Soft-UART** pins **16 / 18** (BCM 23 / 24) | **Heltec** notify + battery % | Heltec on **LiPo**; common **GND** only — [`HELTEC_UART_NOTIFY.md`](HELTEC_UART_NOTIFY.md) |
 
 ```
 Pi USB ──────── audio dongle only
 SIM7600 ─────── UART 8/10
-CardKB ──────── I2C 3/5
+I2C 3/5 ─────── CardKB Grove + MCP + UPS (shared; not CardKB ISP pads)
+SPI ─────────── Waveshare 2″ LCD (separate from I2C)
 Heltec LiPo ─── soft-UART 16/18 + GND  (no USB to Pi)
 ```
 
@@ -55,16 +57,18 @@ Those eight pins are **owned by the LCD**. On a passthrough header, do not also 
 
 Details: [`DIGI_BUTTONS.md`](DIGI_BUTTONS.md).
 
-## 3. CardKB → passthrough (I2C)
+## 3. CardKB → passthrough (I2C Grove / cable)
 
-| CardKB | Pi pin | BCM |
-|--------|--------|-----|
+Use the **4-wire Grove** (or an equivalent cable). **Not** the six ISP pads on the bottom of the CardKB PCB — those are for ATmega firmware flash only.
+
+| CardKB (Grove) | Pi pin | BCM |
+|----------------|--------|-----|
 | 5V | **2** | 5V |
 | GND | **6** | GND |
 | SDA | **3** | **2** |
 | SCL | **5** | **3** |
 
-[`CARDKB_PI.md`](CARDKB_PI.md).
+Same I2C1 bus as **MCP23017** and **UPS INA219**. Full detail: [`CARDKB_PI.md`](CARDKB_PI.md).
 
 ## 4. Steps tilt + passive piezo (Pi GPIO)
 
@@ -131,7 +135,7 @@ Green USB jack → headphones. **PAM8403** / **MAX98357** + inline switch: [`MAX
 | Pins / bus | Owner |
 |------------|--------|
 | 1, 9, 12, 13, 19, 22, 23, 24 (+ BCM 8/10/11/18/25/27) | Waveshare 2″ |
-| 2, 3, 5, 6 | CardKB |
+| 2, 3, 5, 6 | I2C1 — CardKB Grove + MCP + UPS (shared) |
 | 8 / 10 (BCM 14 / 15) | SIM7600 UART |
 | 11 (BCM17) | Steps |
 | 15 (BCM22) | Piezo |

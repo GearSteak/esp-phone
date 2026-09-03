@@ -17,11 +17,11 @@ Eight tactile buttons (Select is optional). Each switch: one side on the listed 
 Mode is `phone` while Digivice runs and `desktop` after `handset-desktop`.
 In-UI PyBoy remaps the phone keys itself (Back→B, Home→Start) so you don’t need `gb` mode.
 
-Typing: **CardKB** (I2C) or on-screen keyboard — see [`CARDKB_PI.md`](CARDKB_PI.md).
+Typing: **CardKB** over **I2C Grove** (4 wires — not the six ISP pads) or on-screen keyboard — see [`CARDKB_PI.md`](CARDKB_PI.md).
 
 ## Wiring (BCM → 40-pin)
 
-Avoids LCD SPI (**8, 10, 11, 18, 25, 27**) and CardKB I2C (**2, 3**).
+Avoids LCD **SPI** (pins **19 / 23 / 24 / 22 / 13 / 12**, BCM **10 / 11 / 8 / 25 / 27 / 18**) and the shared **I2C1** pins used by CardKB Grove (**3 / 5**, BCM **2 / 3**).
 
 | Button | BCM GPIO | Board pin |
 |--------|----------|-----------|

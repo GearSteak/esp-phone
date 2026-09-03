@@ -5,7 +5,8 @@
 | Bus | Digivice owner | Why Heltec is not here |
 |-----|----------------|------------------------|
 | **USB** | Headphones + mic | Modem **or** Heltec on USB trips the Pi **polyfuse** |
-| **I2C** pins 3/5 | **CardKB** | Leave that bus alone |
+| **I2C** pins 3/5 | **Shared** CardKB + MCP + UPS | Different I2C addresses OK — Heltec notify is not an I2C device; keep it off this bus |
+| **SPI** | Waveshare LCD | Separate from I2C / Heltec |
 | **UART** pins 8/10 `/dev/serial0` | **SIM7600** | Modem AT only |
 | **Soft-UART** pins **16 / 18** | **Heltec** | Battery powered, common GND only |
 
@@ -23,7 +24,7 @@ Cross TX/RX. Flash the Heltec over USB **once**, then **unplug USB** and run fro
 ```
 Pi USB ──────── USB audio only
 SIM7600 ─────── GPIO UART pins 8/10
-CardKB ──────── I2C pins 3/5
+CardKB ──────── I2C 3/5 (shared with MCP / UPS — Grove 4-wire, not ISP pads)
 Heltec LiPo ─── soft-UART pins 16/18 + GND
 ```
 

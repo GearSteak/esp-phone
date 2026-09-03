@@ -1,19 +1,57 @@
 # M5Stack CardKB on Digivice (Pi)
 
-Full QWERTY on I2C. Nav buttons stay on the hard pad ([`DIGI_BUTTONS.md`](DIGI_BUTTONS.md)).
+Full QWERTY over **I2C**. Nav buttons stay on the hard pad / MCP ([`DIGI_BUTTONS.md`](DIGI_BUTTONS.md)).
 Bluetooth / USB keyboards also type into Digivice text fields.
 
-## Wiring (Pi 40-pin)
+The Waveshare LCD is **SPI** — different bus. Do not confuse CardKB pads with LCD wiring.
 
-| CardKB | Pi pin | Notes |
-|--------|--------|--------|
-| **5V** (red) | **2** | 5V — **not 3.3V** |
-| **GND** (black) | **6** | GND |
-| **SDA** (yellow) | **3** | BCM **2** / SDA1 |
-| **SCL** (white) | **5** | BCM **3** / SCL1 |
+## Two connectors on the CardKB board (do not mix them up)
 
-Same Grove colors as the old Heltec path. Do **not** share these pins with anything else.
-CardKB wants a solid **5V** rail (brownout → LED blinks, no keys).
+| What | Where | Purpose | Wire to Pi? |
+|------|--------|---------|-------------|
+| **Grove / HY2.0-4P** (or the same four nets on a cable) | Side / cable | **Day-to-day Digivice typing** | **Yes** |
+| **Six solder pads** along the bottom edge | PCB edge | **ISP only** — flash the onboard ATmega | **No** (not for Digivice) |
+
+### Grove / cable — use this for Digivice
+
+| Grove wire | Signal | Pi pin | BCM |
+|------------|--------|--------|-----|
+| **Red** | **5V** | **2** | 5V — **not 3.3V** |
+| **Black** | **GND** | **6** | GND |
+| **Yellow** | **SDA** | **3** | **2** (SDA1) |
+| **White** | **SCL** | **5** | **3** (SCL1) |
+
+I2C address **`0x5F`**. CardKB wants a solid **5V** rail (brownout → LED blinks, no keys).
+
+Cables are fine (extension Grove, soldered pigtail to a protoboard header, etc.). You are still carrying these **four** signals — not one wire per key.
+
+### Six bottom pads — ISP programming only
+
+Left → right (keyboard oriented with pads along the bottom):
+
+| 1 | 2 | 3 | 4 | 5 | 6 |
+|---|---|---|---|---|---|
+| **VCC (5V)** | **RST** | **SCK** | **MISO** | **MOSI** | **GND** |
+
+That row is the **ATmega ISP** header (firmware update with an external programmer). It is **SPI to the keyboard MCU**, not Digivice’s key bus.
+
+**Do not** solder those six pads to the Pi SPI / LCD pins (MOSI/CLK/CS/etc.). That fights the Waveshare panel and does not make keys work.
+
+Official pin map: [M5Stack CardKB v1.1](https://docs.m5stack.com/en/unit/cardkb_1.1).
+
+## I2C1 is a shared bus
+
+Pins **3 / 5** are **one** I2C bus with **many devices** (different addresses). Digivice already expects this:
+
+| Device | Address (typical) |
+|--------|-------------------|
+| **CardKB** | **0x5F** |
+| **MCP23017** (pad / vibe) | **0x20–0x27** |
+| **UPS INA219** | **0x41** (sometimes **0x40**) |
+
+Sharing SDA/SCL is normal. Keep `dtparam=i2c_arm_baudrate=50000` for CardKB clock-stretch; other chips on the same bus are fine at that speed.
+
+What **not** to put on I2C1: Heltec notify (that uses soft-UART), or anything that is not an I2C device on those pins.
 
 ## Enable / fix on the Pi
 
@@ -30,10 +68,10 @@ Doctor checks: `i2cdetect` for **`5f`**, `type socket OK`, pause file **absent**
 
 ```bash
 sudo raspi-config nonint do_i2c 0
-sudo i2cdetect -y 1          # must show 5f
+sudo i2cdetect -y 1          # expect 5f (+ 20/27 MCP, + 41 UPS when fitted)
 ```
 
-`full-update` seeds `dtparam=i2c_arm_baudrate=50000` (Pi Zero clock-stretch). **Reboot once** after that line is first added.
+`full-update` seeds `dtparam=i2c_arm_baudrate=50000` (Pi Zero / CardKB clock-stretch). **Reboot once** after that line is first added.
 
 ## How keys reach Digivice vs Linux desktop
 
@@ -54,5 +92,8 @@ Usually I2C wedged or under-voltage — not Digivice UI.
 1. `sudo i2cdetect -y 1` — is `5f` still there after a key?
 2. If it vanished: power/wiring or baudrate → reboot with `i2c_arm_baudrate=50000`
 3. Keep CardKB on **5V**, not 3.3V
-4. `sudo digivice-ensure-cardkb --doctor`
-5. Digivice log should show: `[cardkb] in-process OK` — if you see `cannot open I2C`, add user to group `i2c` and reboot
+4. Confirm you used the **Grove four wires**, not the six ISP pads, for the Pi link
+5. `sudo digivice-ensure-cardkb --doctor`
+6. Digivice log should show: `[cardkb] in-process OK` — if you see `cannot open I2C`, add user to group `i2c` and reboot
+
+See also: [`DIGIVICE_WIRING.md`](DIGIVICE_WIRING.md) (full pin map), [`PI4_MIGRATION.md`](PI4_MIGRATION.md) (UPS on same I2C).

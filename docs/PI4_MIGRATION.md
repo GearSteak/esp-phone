@@ -26,7 +26,8 @@ See also: [`DIGIVICE_WIRING.md`](DIGIVICE_WIRING.md) (update after bench), [`HEL
 
 | Device | Bus | Address | Pi pins |
 |--------|-----|---------|---------|
-| **CardKB** | I2C1 | **0x5F** | 3 SDA, 5 SCL, 2 5V, 6 GND |
+| **CardKB** | I2C1 | **0x5F** | Grove **5V/GND/SDA/SCL** → pins 2/6/3/5 — **not** the six ISP pads ([`CARDKB_PI.md`](CARDKB_PI.md)) |
+| **MCP23017** | I2C1 | **0x20–0x27** | Same SDA/SCL |
 | **UPS INA219** | I2C1 | **0x41** (sometimes **0x40**) | UPS SDA/SCL + **GND** → Pi 3/5/6 |
 
 Share the bus: **SCL, SDA, GND only** from the UPS header to the Pi. **Do not** connect UPS header **5 V** to Pi GPIO pin 2/4 while the Pi is fed from the UPS Type-C cable (back-feed risk). See [Waveshare UPS Module 3S wiki](https://www.waveshare.com/wiki/UPS_Module_3S).
@@ -144,7 +145,7 @@ Order matches [`DIGIVICE_WIRING.md`](DIGIVICE_WIRING.md):
 - Antenna exits: SIM7600 LTE/GNSS, Heltec LoRa
 - **12.6 V charge port**, UPS **switch**, optional **BOOT** access
 - Headphone jack / speaker wire to 3.5 mm
-- CardKB Grove through wall
+- CardKB **Grove** cable through wall (4-wire I2C — not ISP pads)
 
 ### Phase 5 — Software on device
 
