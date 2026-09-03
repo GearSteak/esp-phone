@@ -83,6 +83,17 @@ MOUSE_STEP_PATHS = [
     Path("/etc/esp-handset/mouse_step"),
 ]
 TYPE_SOCK = Path("/run/digivice/type.sock")
+BUTTON_ACTIVITY = Path("/run/digivice/button-activity")
+
+
+def note_button_activity() -> None:
+    """Tell Digivice step counter to ignore tilt chatter from pad presses."""
+    try:
+        BUTTON_ACTIVITY.parent.mkdir(parents=True, exist_ok=True)
+        BUTTON_ACTIVITY.write_text(f"{time.time():.3f}\n", encoding="utf-8")
+        os.chmod(BUTTON_ACTIVITY, 0o666)
+    except OSError:
+        pass
 
 
 def log(msg: str) -> None:
@@ -882,6 +893,8 @@ def main() -> int:
                 prev[name] = level
                 down = is_pressed(level)
                 held[name] = down
+                if down:
+                    note_button_activity()
 
                 if mode == "desktop":
                     try:

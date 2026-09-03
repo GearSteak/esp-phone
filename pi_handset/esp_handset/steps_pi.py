@@ -18,7 +18,8 @@ from esp_handset.hw_pins import STEPS_BCM
 _RUN_DEBUG = Path("/run/digivice/steps-debug.json")
 _BURST = max(1, int(os.environ.get("DIGI_STEPS_BURST", "64")))
 _MIN_INTERVAL_S = float(os.environ.get("DIGI_STEPS_REFRACTORY", "0.07"))
-_BUTTON_MUTE_S = float(os.environ.get("DIGI_STEPS_BUTTON_MUTE", "0.35"))
+_BUTTON_MUTE_S = float(os.environ.get("DIGI_STEPS_BUTTON_MUTE", "0.55"))
+_BUTTON_ACTIVITY = Path("/run/digivice/button-activity")
 _monitor: Optional["StepsMonitor"] = None
 _lock = threading.Lock()
 
@@ -32,8 +33,24 @@ def _pressed(level: int) -> bool:
     return level == 0 if _active_low() else level != 0
 
 
+def _button_activity_recent(window_s: float) -> bool:
+    """True if digi-buttons-inputd reported a press within window_s (wall clock)."""
+    try:
+        raw = _BUTTON_ACTIVITY.read_text(encoding="utf-8").strip().split()[0]
+        at = float(raw)
+    except (OSError, ValueError, IndexError):
+        return False
+    return (time.time() - at) < window_s
+
+
 def _any_button_pressed() -> bool:
-    """MCP pad activity — button clicks shake the SW-520D in the same case."""
+    """Pad activity — MCP hold and/or buttons daemon press stamp.
+
+    Shared GND with the SW-520D is normal; button presses still cause case
+    vibration / brief ground chatter that looks like a tilt pulse.
+    """
+    if _button_activity_recent(max(_BUTTON_MUTE_S, 0.2)):
+        return True
     try:
         from esp_handset import mcp23017
 
