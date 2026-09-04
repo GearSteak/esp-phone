@@ -189,11 +189,13 @@ class _DownloadOverlay(QWidget):
 class _CardDetailPage(QWidget):
     """Left: name / cost / type / stats / rules. Right: art."""
 
+    _image_ready = pyqtSignal(object, int)  # path | None, token
+
     def __init__(self) -> None:
         super().__init__()
         self._card: Optional[cards_db.Card] = None
-        self._image_busy = False
         self._image_token = 0
+        self._image_ready.connect(self._on_image_ready)
 
         root = QHBoxLayout(self)
         root.setContentsMargins(2, 2, 2, 2)
@@ -262,22 +264,23 @@ class _CardDetailPage(QWidget):
             self._art.setPixmap(QPixmap())
             self._art.setText("No art")
             return
+
+        self._art.setPixmap(QPixmap())
         self._art.setText("…")
-        if self._image_busy:
-            return
-        self._image_busy = True
 
         def work() -> None:
             path = sync.download_card_image(card.id, card.image_url)
-            QTimer.singleShot(0, lambda: self._on_image_ready(path, token))
+            # Signal (not QTimer) — must cross threads into the GUI event loop
+            self._image_ready.emit(path, token)
 
         threading.Thread(target=work, name="mtg-art", daemon=True).start()
 
     def _on_image_ready(self, path: Optional[Path], token: int) -> None:
-        self._image_busy = False
         if token != self._image_token:
             return
         if path and path.is_file():
+            if self._card is not None:
+                self._card.image_path = str(path)
             self._set_art(path)
             return
         self._art.setPixmap(QPixmap())
@@ -288,14 +291,18 @@ class _CardDetailPage(QWidget):
         if pix.isNull():
             self._art.setText("Bad image")
             return
-        scaled = pix.scaled(
-            max(64, self._art.width() - 4),
-            max(64, self._art.height() - 4),
-            Qt.KeepAspectRatio,
-            Qt.SmoothTransformation,
-        )
+        w = max(64, self._art.width() - 4)
+        h = max(64, self._art.height() - 4)
+        # Label may still be 0×0 on first show — defer one frame then scale for real
+        if self._art.width() < 32 or self._art.height() < 32:
+            self._art.setPixmap(pix)
+            self._art.setText("")
+            QTimer.singleShot(0, lambda p=path: self._set_art(p) if self._card else None)
+            return
+        scaled = pix.scaled(w, h, Qt.KeepAspectRatio, Qt.SmoothTransformation)
         self._art.setPixmap(scaled)
         self._art.setText("")
+        self._art.update()
 
     def resizeEvent(self, event) -> None:  # noqa: N802
         super().resizeEvent(event)
