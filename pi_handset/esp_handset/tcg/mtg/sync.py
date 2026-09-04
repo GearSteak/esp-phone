@@ -100,7 +100,8 @@ def _download_file(
     tmp.replace(dest)
 
 
-def oracle_bulk_download_uri() -> str:
+def oracle_bulk_info() -> tuple[str, str]:
+    """Return (download_uri, updated_at) for oracle_cards bulk."""
     raw = json.loads(_request(cards_db.SCRYFALL_BULK_URL, timeout=60).decode("utf-8"))
     items = raw.get("data") if isinstance(raw, dict) else None
     if not isinstance(items, list):
@@ -108,14 +109,14 @@ def oracle_bulk_download_uri() -> str:
     for item in items:
         if not isinstance(item, dict) or item.get("type") != "oracle_cards":
             continue
-        # Current API: gzipped JSONL. Older API used download_uri (plain JSON).
         uri = str(
             item.get("jsonl_download_uri")
             or item.get("download_uri")
             or ""
         ).strip()
+        updated = str(item.get("updated_at") or "").strip()
         if uri:
-            return uri
+            return uri, updated
         raise RuntimeError(
             "oracle_cards listing has no download URI "
             f"(keys: {', '.join(sorted(item.keys()))})"
@@ -123,38 +124,65 @@ def oracle_bulk_download_uri() -> str:
     raise RuntimeError("oracle_cards bulk entry not found")
 
 
+def oracle_bulk_download_uri() -> str:
+    return oracle_bulk_info()[0]
+
+
 def ensure_database(
     *,
     progress: Optional[Callable[[str, int], None]] = None,
     force: bool = False,
 ) -> int:
-    """Download Scryfall oracle-cards (if needed) and build SQLite. Returns card count."""
+    """Download/index oracle cards if missing or Scryfall updated_at changed."""
     cards_db.data_dir()
+    remote_uri = ""
+    remote_updated = ""
+
     if not force and cards_db.is_ready():
-        n = cards_db.card_count()
         if progress:
-            progress(f"Database ready ({n:,} cards)", 100)
-        return n
+            progress("Checking for updates…", 2)
+        try:
+            remote_uri, remote_updated = oracle_bulk_info()
+            local_updated = str(cards_db.meta().get("scryfall_updated_at") or "")
+            if remote_updated and local_updated and local_updated == remote_updated:
+                n = cards_db.card_count()
+                if progress:
+                    progress(f"Up to date ({n:,} cards)", 100)
+                return n
+            if progress:
+                progress("Update available…", 4)
+        except Exception:
+            n = cards_db.card_count()
+            if progress:
+                progress(f"Offline — using {n:,} cards", 100)
+            return n
+    else:
+        if progress:
+            progress("Contacting Scryfall…", 2)
+        try:
+            remote_uri, remote_updated = oracle_bulk_info()
+        except Exception as e:
+            raise RuntimeError(f"Scryfall API failed: {type(e).__name__}: {e}") from e
 
-    if progress:
-        progress("Contacting Scryfall…", 2)
-    try:
-        uri = oracle_bulk_download_uri()
-    except Exception as e:
-        raise RuntimeError(f"Scryfall API failed: {type(e).__name__}: {e}") from e
+    if not remote_uri:
+        try:
+            remote_uri, remote_updated = oracle_bulk_info()
+        except Exception as e:
+            raise RuntimeError(f"Scryfall API failed: {type(e).__name__}: {e}") from e
 
-    # Compressed JSONL is ~25 MB; treat tiny/missing files as need download.
     bulk = cards_db.BULK_FILE
+    local_updated = str(cards_db.meta().get("scryfall_updated_at") or "")
     need_dl = (
         force
         or not bulk.is_file()
         or bulk.stat().st_size < 5_000_000
+        or (bool(remote_updated) and local_updated != remote_updated)
     )
     if need_dl:
         if progress:
             progress("Downloading oracle cards (~25 MB)…", 5)
         try:
-            _download_file(uri, bulk, progress=progress, min_bytes=5_000_000)
+            _download_file(remote_uri, bulk, progress=progress, min_bytes=5_000_000)
         except Exception as e:
             raise RuntimeError(f"Bulk download failed: {type(e).__name__}: {e}") from e
     elif progress:
@@ -163,7 +191,11 @@ def ensure_database(
     if progress:
         progress("Building search index (slow)…", 42)
     try:
-        return cards_db.import_bulk(bulk, progress=progress)
+        return cards_db.import_bulk(
+            bulk,
+            progress=progress,
+            scryfall_updated_at=remote_updated,
+        )
     except Exception as e:
         raise RuntimeError(f"Index build failed: {type(e).__name__}: {e}") from e
 

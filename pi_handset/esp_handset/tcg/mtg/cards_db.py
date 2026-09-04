@@ -254,6 +254,7 @@ def import_bulk(
     json_path: Path,
     *,
     progress: Optional[Callable[[str, int], None]] = None,
+    scryfall_updated_at: str = "",
 ) -> int:
     """Parse Scryfall oracle-cards bulk into SQLite. Returns card count."""
     data_dir()
@@ -341,6 +342,7 @@ def import_bulk(
                 "imported_at": time.time(),
                 "card_count": total,
                 "source": str(json_path.name),
+                "scryfall_updated_at": str(scryfall_updated_at or ""),
             },
             indent=2,
         ),
