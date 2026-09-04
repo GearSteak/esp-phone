@@ -34,6 +34,7 @@ QListWidget {
     font-size: 12px; background: #121820; color: #e8eef5;
     border: 1px solid #3a5068;
 }
+QListWidget[digiFocus="1"] { border: 2px solid #FFE600; }
 QListWidget::item:selected { background: #2a4a68; }
 QTextEdit {
     font-size: 11px; background: #0e1620; color: #e8eef5;
@@ -42,8 +43,9 @@ QTextEdit {
 QLabel#mtgArt { background: #0a1018; border: 1px solid #3a5068; }
 QPushButton {
     font-size: 12px; padding: 8px; background: #2a4a68; color: #fff;
-    border: none; border-radius: 4px;
+    border: 2px solid #3a5068; border-radius: 4px;
 }
+QPushButton[digiFocus="1"] { border: 2px solid #FFE600; background: #3a6a98; }
 QPushButton:disabled { background: #2a3038; color: #888; }
 QLabel#mtgStatus { font-size: 11px; color: #9ab; }
 """
@@ -87,18 +89,22 @@ class MtgCardsPage(QWidget):
         row = QHBoxLayout()
         self._search = QLineEdit()
         self._search.setPlaceholderText("Search name or rules text…")
+        self._search.setFocusPolicy(Qt.StrongFocus)
         self._search.textChanged.connect(self._on_search_changed)
         row.addWidget(self._search, 1)
-        self._sync_btn = QPushButton("↓")
-        self._sync_btn.setFixedWidth(36)
+        self._sync_btn = QPushButton("↓ DB")
+        self._sync_btn.setMinimumWidth(52)
         self._sync_btn.setToolTip("Download / refresh database")
+        self._sync_btn.setFocusPolicy(Qt.StrongFocus)
         self._sync_btn.clicked.connect(self._start_download)
         row.addWidget(self._sync_btn)
         root.addLayout(row)
 
         self._results = QListWidget()
         self._results.setMaximumHeight(88)
+        self._results.setFocusPolicy(Qt.StrongFocus)
         self._results.itemClicked.connect(self._on_result_pick)
+        self._results.currentItemChanged.connect(self._on_result_current)
         self._results.hide()
         root.addWidget(self._results)
 
@@ -107,6 +113,7 @@ class MtgCardsPage(QWidget):
 
         self._text = QTextEdit()
         self._text.setReadOnly(True)
+        self._text.setFocusPolicy(Qt.NoFocus)  # pad lands on search / list / buttons
         self._text.setLineWrapMode(QTextEdit.WidgetWidth)
         self._text.setFont(QFont(font_family(), 10))
         split.addWidget(self._text, 11)
@@ -116,11 +123,13 @@ class MtgCardsPage(QWidget):
         self._art.setAlignment(Qt.AlignCenter)
         self._art.setMinimumWidth(108)
         self._art.setScaledContents(False)
+        self._art.setFocusPolicy(Qt.NoFocus)
         split.addWidget(self._art, 9)
 
         root.addLayout(split, 1)
 
         self._download_btn = QPushButton("Download card database (~120 MB)")
+        self._download_btn.setFocusPolicy(Qt.StrongFocus)
         self._download_btn.clicked.connect(self._start_download)
         root.addWidget(self._download_btn)
 
@@ -131,24 +140,45 @@ class MtgCardsPage(QWidget):
 
         self._refresh_ready_state()
 
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        self._refresh_ready_state()
+        QTimer.singleShot(0, self._ensure_focus)
+
+    def _ensure_focus(self) -> None:
+        try:
+            from esp_handset import digi_nav
+
+            digi_nav.ensure_page_focus(self.window() if self.window() else self)
+        except Exception:
+            if self._download_btn.isVisible() and self._download_btn.isEnabled():
+                self._download_btn.setFocus(Qt.OtherFocusReason)
+            elif self._search.isEnabled():
+                self._search.setFocus(Qt.OtherFocusReason)
+
     def _refresh_ready_state(self) -> None:
         ready = cards_db.is_ready()
+        downloading = self._db_worker is not None and self._db_worker.isRunning()
         self._download_btn.setVisible(not ready)
-        self._search.setEnabled(ready)
-        self._sync_btn.setEnabled(ready or self._db_worker is None)
+        self._download_btn.setEnabled(not downloading)
+        self._search.setEnabled(ready and not downloading)
+        # Always allow ↓ when idle so pad can start/retry download
+        self._sync_btn.setEnabled(not downloading)
         if ready:
             n = cards_db.card_count()
-            self._status.setText(f"{n:,} cards indexed · Scryfall oracle data")
+            self._status.setText(
+                f"{n:,} cards · Confirm on search to type · ↓ refresh"
+            )
             if not self._text.toPlainText():
                 self._text.setPlainText(
-                    "Type to search any Magic card.\n\n"
-                    "Text on the left, art on the right.\n\n"
-                    "Images download on first view."
+                    "Confirm on Search → type with CardKB.\n"
+                    "D-pad moves focus · Confirm activates.\n\n"
+                    "Art downloads the first time you open a card."
                 )
         else:
             self._status.setText(
-                "One-time download from Scryfall (~120 MB JSON). "
-                "Works offline after that."
+                "Confirm on Download (~120 MB, needs Wi‑Fi). "
+                "Then search offline."
             )
 
     def _start_download(self) -> None:
@@ -170,14 +200,13 @@ class MtgCardsPage(QWidget):
         self._db_worker = None
         self._status.setText(f"Ready — {count:,} cards")
         self._refresh_ready_state()
-        self._download_btn.setEnabled(True)
-        self._sync_btn.setEnabled(True)
+        self._ensure_focus()
 
     def _on_db_err(self, message: str) -> None:
         self._db_worker = None
         self._status.setText(f"Download failed: {message[:120]}")
-        self._download_btn.setEnabled(True)
-        self._sync_btn.setEnabled(True)
+        self._refresh_ready_state()
+        self._ensure_focus()
 
     def _on_search_changed(self, _text: str) -> None:
         self._search_timer.start()
@@ -207,6 +236,15 @@ class MtgCardsPage(QWidget):
             self._art.setPixmap(QPixmap())
 
     def _on_result_pick(self, item: QListWidgetItem) -> None:
+        self._select_item(item)
+
+    def _on_result_current(
+        self, current: Optional[QListWidgetItem], _previous: Optional[QListWidgetItem]
+    ) -> None:
+        if current is not None:
+            self._select_item(current)
+
+    def _select_item(self, item: QListWidgetItem) -> None:
         cid = item.data(Qt.UserRole)
         card = cards_db.get_card(str(cid))
         if card:
