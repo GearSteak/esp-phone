@@ -15,6 +15,7 @@ from PyQt5.QtWidgets import (
     QLineEdit,
     QListWidget,
     QListWidgetItem,
+    QProgressBar,
     QPushButton,
     QTextEdit,
     QVBoxLayout,
@@ -73,6 +74,116 @@ class _DbWorker(QThread):
             self.finished_err.emit(str(e))
 
 
+class _DownloadOverlay(QWidget):
+    """Page-covering progress overlay (Digivice Confirm can hit OK)."""
+
+    dismissed = pyqtSignal()
+
+    def __init__(self, parent: QWidget) -> None:
+        super().__init__(parent)
+        self.setObjectName("mtgDlOverlay")
+        self.setStyleSheet(
+            "#mtgDlOverlay { background: #0a1018; border: 3px solid #FFE600; }"
+            "QLabel { color: #e8eef5; background: transparent; }"
+            "QProgressBar {"
+            "  border: 2px solid #3a5068; background: #121820;"
+            "  text-align: center; color: #fff; min-height: 22px;"
+            "}"
+            "QProgressBar::chunk { background: #FFE600; }"
+            "QPushButton {"
+            "  font-size: 13px; padding: 10px; background: #2a4a68; color: #fff;"
+            "  border: 2px solid #FFE600;"
+            "}"
+            "QPushButton[digiFocus='1'] {"
+            "  background: #FFE600; color: #000; border: 2px solid #000;"
+            "}"
+        )
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(12, 14, 12, 12)
+        lay.setSpacing(8)
+
+        title = QLabel("MTG database")
+        title.setAlignment(Qt.AlignCenter)
+        title.setStyleSheet("font-size: 14px; font-weight: bold; color: #FFE600;")
+        lay.addWidget(title)
+
+        self._pct = QLabel("0%")
+        self._pct.setAlignment(Qt.AlignCenter)
+        self._pct.setStyleSheet("font-size: 36px; font-weight: bold; color: #fff;")
+        lay.addWidget(self._pct)
+
+        self._bar = QProgressBar()
+        self._bar.setRange(0, 100)
+        self._bar.setValue(0)
+        self._bar.setTextVisible(False)
+        self._bar.setFocusPolicy(Qt.NoFocus)
+        lay.addWidget(self._bar)
+
+        self._msg = QLabel("Starting…")
+        self._msg.setWordWrap(True)
+        self._msg.setAlignment(Qt.AlignCenter)
+        self._msg.setStyleSheet("font-size: 12px;")
+        self._msg.setMinimumHeight(56)
+        lay.addWidget(self._msg, 1)
+
+        self._ok = QPushButton("OK")
+        self._ok.setFocusPolicy(Qt.StrongFocus)
+        self._ok.hide()
+        self._ok.clicked.connect(self._dismiss)
+        self._ok.digi_confirm = self._dismiss  # type: ignore[attr-defined]
+        lay.addWidget(self._ok)
+
+        self.hide()
+
+    def _dismiss(self) -> bool:
+        self.hide()
+        self.dismissed.emit()
+        return True
+
+    def resizeEvent(self, event) -> None:  # noqa: N802
+        super().resizeEvent(event)
+        if self.parentWidget() is not None:
+            self.setGeometry(self.parentWidget().rect())
+
+    def show_over(self) -> None:
+        p = self.parentWidget()
+        if p is not None:
+            self.setGeometry(p.rect())
+        self.raise_()
+        self.show()
+
+    def set_progress(self, message: str, percent: int) -> None:
+        pct = max(0, min(100, int(percent)))
+        self._bar.setValue(pct)
+        self._pct.setText(f"{pct}%")
+        self._pct.setStyleSheet("font-size: 36px; font-weight: bold; color: #fff;")
+        self._msg.setText(message)
+        self._ok.hide()
+
+    def set_success(self, count: int) -> None:
+        self._bar.setValue(100)
+        self._pct.setText("100%")
+        self._pct.setStyleSheet("font-size: 36px; font-weight: bold; color: #fff;")
+        self._msg.setText(f"Done — {count:,} cards indexed.\nConfirm OK.")
+        self._ok.setText("OK")
+        self._ok.show()
+        self._ok.setFocus(Qt.OtherFocusReason)
+        self._ok.setProperty("digiFocus", "1")
+        self._ok.style().unpolish(self._ok)
+        self._ok.style().polish(self._ok)
+
+    def set_error(self, message: str) -> None:
+        self._pct.setText("FAIL")
+        self._pct.setStyleSheet("font-size: 28px; font-weight: bold; color: #ff6b6b;")
+        self._msg.setText(message[:220])
+        self._ok.setText("OK")
+        self._ok.show()
+        self._ok.setFocus(Qt.OtherFocusReason)
+        self._ok.setProperty("digiFocus", "1")
+        self._ok.style().unpolish(self._ok)
+        self._ok.style().polish(self._ok)
+
+
 class MtgCardsPage(QWidget):
     def __init__(self, on_back: Callable[[], None]) -> None:
         super().__init__()
@@ -82,6 +193,7 @@ class MtgCardsPage(QWidget):
         self._cards: List[cards_db.Card] = []
         self._selected: Optional[cards_db.Card] = None
         self._db_worker: Optional[_DbWorker] = None
+        self._overlay: Optional[_DownloadOverlay] = None
         self._image_busy = False
 
         root = QVBoxLayout(self)
@@ -143,6 +255,9 @@ class MtgCardsPage(QWidget):
 
         root.addLayout(split, 1)
 
+        self._overlay = _DownloadOverlay(self)
+        self._overlay.dismissed.connect(self._on_overlay_dismissed)
+
         self._search_timer = QTimer(self)
         self._search_timer.setSingleShot(True)
         self._search_timer.setInterval(280)
@@ -158,6 +273,16 @@ class MtgCardsPage(QWidget):
     def _ensure_focus(self) -> None:
         try:
             from esp_handset import digi_nav
+
+            if (
+                self._overlay is not None
+                and self._overlay.isVisible()
+                and self._overlay._ok.isVisible()
+            ):
+                digi_nav.clear_highlights(self)
+                self._overlay._ok.setFocus(Qt.OtherFocusReason)
+                digi_nav._highlight(self._overlay._ok, True)
+                return
 
             root = self.window() if self.window() else self
             digi_nav.clear_highlights(root)
@@ -180,6 +305,7 @@ class MtgCardsPage(QWidget):
         self._download_btn.setVisible(not ready)
         self._download_btn.setEnabled(not downloading)
         self._search.setEnabled(ready and not downloading)
+        self._results.setEnabled(not downloading)
         self._sync_btn.setEnabled(not downloading)
         self._sync_btn.setVisible(True)
         if downloading:
@@ -205,23 +331,33 @@ class MtgCardsPage(QWidget):
                 "(can take several minutes)."
             )
 
+    def _on_overlay_dismissed(self) -> None:
+        self._refresh_ready_state()
+        self._ensure_focus()
+
+    def resizeEvent(self, event) -> None:  # noqa: N802
+        super().resizeEvent(event)
+        if self._overlay is not None and self._overlay.isVisible():
+            self._overlay.setGeometry(self.rect())
+
     def _start_download(self, force: bool = False) -> bool:
         if self._db_worker is not None and self._db_worker.isRunning():
+            if self._overlay is not None:
+                self._overlay.show_over()
             self._status.setText("Already downloading…")
             return True
         self._download_btn.setEnabled(False)
         self._sync_btn.setEnabled(False)
         self._search.setEnabled(False)
+        self._results.setEnabled(False)
         self._status.setText("Starting download…")
-        self._text.setPlainText(
-            "Download started.\n\n"
-            "1) Contact Scryfall\n"
-            "2) Pull ~120 MB JSON\n"
-            "3) Build search index\n\n"
-            "Keep Wi‑Fi on. Do not leave this page."
-        )
         QApplication.processEvents()
         print(f"[mtg-cards] download start force={force}", flush=True)
+
+        assert self._overlay is not None
+        self._overlay.set_progress("Starting…", 0)
+        self._overlay.show_over()
+        QApplication.processEvents()
 
         self._db_worker = _DbWorker(self, force=force)
         self._db_worker.progress.connect(self._on_db_progress)
@@ -233,12 +369,8 @@ class MtgCardsPage(QWidget):
     def _on_db_progress(self, message: str, percent: int) -> None:
         line = f"{message} ({percent}%)"
         self._status.setText(line)
-        # Keep a short live log in the text pane
-        self._text.setPlainText(
-            "Downloading card database…\n\n"
-            f"{line}\n\n"
-            "Stay on this screen."
-        )
+        if self._overlay is not None:
+            self._overlay.set_progress(message, percent)
 
     def _on_db_ok(self, count: int) -> None:
         self._db_worker = None
@@ -247,8 +379,19 @@ class MtgCardsPage(QWidget):
             f"Indexed {count:,} cards.\n\n"
             "Confirm on Search and type a name."
         )
-        self._refresh_ready_state()
-        self._ensure_focus()
+        if self._overlay is not None:
+            self._overlay.set_success(count)
+            self._ensure_focus()
+            # Auto-dismiss if they don't Confirm OK
+            QTimer.singleShot(
+                2800,
+                lambda: self._overlay._dismiss()
+                if self._overlay is not None and self._overlay.isVisible()
+                else None,
+            )
+        else:
+            self._refresh_ready_state()
+            self._ensure_focus()
         print(f"[mtg-cards] download OK count={count}", flush=True)
 
     def _on_db_err(self, message: str) -> None:
@@ -259,8 +402,12 @@ class MtgCardsPage(QWidget):
             f"{message}\n\n"
             "Check Wi‑Fi, then Confirm Download again."
         )
-        self._refresh_ready_state()
-        self._ensure_focus()
+        if self._overlay is not None:
+            self._overlay.set_error(message)
+            self._ensure_focus()
+        else:
+            self._refresh_ready_state()
+            self._ensure_focus()
         print(f"[mtg-cards] download FAIL {message}", flush=True)
 
     def _on_search_changed(self, _text: str) -> None:
