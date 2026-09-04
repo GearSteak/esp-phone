@@ -60,15 +60,11 @@ def data_dir() -> Path:
     return DATA_DIR
 
 
-def is_ready() -> bool:
-    try:
-        return DB_PATH.is_file() and DB_PATH.stat().st_size > 4096
-    except OSError:
-        return False
-
-
 def card_count() -> int:
-    if not is_ready():
+    try:
+        if not DB_PATH.is_file() or DB_PATH.stat().st_size < 4096:
+            return 0
+    except OSError:
         return 0
     try:
         with _connect() as conn:
@@ -76,6 +72,11 @@ def card_count() -> int:
             return int(row[0]) if row else 0
     except sqlite3.Error:
         return 0
+
+
+def is_ready() -> bool:
+    """True only when a real Scryfall index exists (not an empty shell DB)."""
+    return card_count() >= 1000
 
 
 def meta() -> dict:

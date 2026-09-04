@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import ssl
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -14,9 +15,19 @@ USER_AGENT = "Digivice/1.0 (+https://github.com/GearSteak/esp-phone)"
 CHUNK = 256 * 1024
 
 
+def _ssl_context() -> ssl.SSLContext:
+    try:
+        import certifi  # type: ignore
+
+        return ssl.create_default_context(cafile=certifi.where())
+    except Exception:
+        ctx = ssl.create_default_context()
+        return ctx
+
+
 def _request(url: str, *, timeout: float = 120.0) -> bytes:
     req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
+    with urllib.request.urlopen(req, timeout=timeout, context=_ssl_context()) as resp:
         return resp.read()
 
 
@@ -31,7 +42,7 @@ def _download_file(
     if tmp.is_file():
         tmp.unlink()
     req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
-    with urllib.request.urlopen(req, timeout=300) as resp:
+    with urllib.request.urlopen(req, timeout=600, context=_ssl_context()) as resp:
         total = int(resp.headers.get("Content-Length") or 0)
         done = 0
         with tmp.open("wb") as out:
@@ -41,10 +52,20 @@ def _download_file(
                     break
                 out.write(chunk)
                 done += len(chunk)
-                if progress and total > 0:
-                    pct = min(39, int(done * 39 / total))
-                    mb = done / (1024 * 1024)
-                    progress(f"Downloading… {mb:.0f} MB", pct)
+                if progress:
+                    if total > 0:
+                        pct = min(39, int(done * 39 / total))
+                        mb = done / (1024 * 1024)
+                        progress(f"Downloading… {mb:.0f} MB", pct)
+                    elif done and done % (2 * 1024 * 1024) < CHUNK:
+                        mb = done / (1024 * 1024)
+                        progress(f"Downloading… {mb:.0f} MB", 10)
+    if done < 1_000_000:
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+        raise RuntimeError(f"download too small ({done} bytes) — check Wi‑Fi")
     tmp.replace(dest)
 
 
@@ -64,29 +85,44 @@ def oracle_bulk_download_uri() -> str:
 def ensure_database(
     *,
     progress: Optional[Callable[[str, int], None]] = None,
+    force: bool = False,
 ) -> int:
     """Download Scryfall oracle-cards (if needed) and build SQLite. Returns card count."""
     cards_db.data_dir()
-    if cards_db.is_ready():
+    if not force and cards_db.is_ready():
         n = cards_db.card_count()
         if progress:
             progress(f"Database ready ({n:,} cards)", 100)
         return n
 
     if progress:
-        progress("Fetching Scryfall manifest…", 2)
-    uri = oracle_bulk_download_uri()
+        progress("Contacting Scryfall…", 2)
+    try:
+        uri = oracle_bulk_download_uri()
+    except Exception as e:
+        raise RuntimeError(f"Scryfall API failed: {e}") from e
 
-    if not cards_db.BULK_JSON.is_file() or cards_db.BULK_JSON.stat().st_size < 1_000_000:
+    need_dl = (
+        force
+        or not cards_db.BULK_JSON.is_file()
+        or cards_db.BULK_JSON.stat().st_size < 1_000_000
+    )
+    if need_dl:
         if progress:
             progress("Downloading oracle cards (~120 MB)…", 5)
-        _download_file(uri, cards_db.BULK_JSON, progress=progress)
+        try:
+            _download_file(uri, cards_db.BULK_JSON, progress=progress)
+        except Exception as e:
+            raise RuntimeError(f"Bulk download failed: {e}") from e
     elif progress:
         progress("Using cached bulk JSON…", 40)
 
     if progress:
-        progress("Building search index…", 42)
-    return cards_db.import_bulk(cards_db.BULK_JSON, progress=progress)
+        progress("Building search index (slow)…", 42)
+    try:
+        return cards_db.import_bulk(cards_db.BULK_JSON, progress=progress)
+    except Exception as e:
+        raise RuntimeError(f"Index build failed: {e}") from e
 
 
 def download_card_image(
