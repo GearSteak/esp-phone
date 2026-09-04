@@ -12,6 +12,7 @@ from typing import Callable, Optional
 from esp_handset.tcg.mtg import cards_db
 
 USER_AGENT = "Digivice/1.0 (+https://github.com/GearSteak/esp-phone)"
+ACCEPT = "application/json;q=0.9,*/*;q=0.8"
 CHUNK = 256 * 1024
 
 
@@ -25,10 +26,32 @@ def _ssl_context() -> ssl.SSLContext:
         return ctx
 
 
+def _headers() -> dict:
+    # Scryfall rejects requests missing Accept (HTTP 400) or using a default UA.
+    return {"User-Agent": USER_AGENT, "Accept": ACCEPT}
+
+
+def _http_error_message(exc: urllib.error.HTTPError) -> str:
+    detail = ""
+    try:
+        body = exc.read().decode("utf-8", errors="replace")
+        payload = json.loads(body)
+        if isinstance(payload, dict):
+            detail = str(payload.get("details") or payload.get("code") or "")[:180]
+    except Exception:
+        detail = ""
+    if detail:
+        return f"HTTP {exc.code}: {detail}"
+    return f"HTTP {exc.code} {exc.reason}"
+
+
 def _request(url: str, *, timeout: float = 120.0) -> bytes:
-    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
-    with urllib.request.urlopen(req, timeout=timeout, context=_ssl_context()) as resp:
-        return resp.read()
+    req = urllib.request.Request(url, headers=_headers())
+    try:
+        with urllib.request.urlopen(req, timeout=timeout, context=_ssl_context()) as resp:
+            return resp.read()
+    except urllib.error.HTTPError as e:
+        raise RuntimeError(_http_error_message(e)) from e
 
 
 def _download_file(
@@ -41,25 +64,28 @@ def _download_file(
     tmp = dest.with_suffix(dest.suffix + ".part")
     if tmp.is_file():
         tmp.unlink()
-    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
-    with urllib.request.urlopen(req, timeout=600, context=_ssl_context()) as resp:
-        total = int(resp.headers.get("Content-Length") or 0)
-        done = 0
-        with tmp.open("wb") as out:
-            while True:
-                chunk = resp.read(CHUNK)
-                if not chunk:
-                    break
-                out.write(chunk)
-                done += len(chunk)
-                if progress:
-                    if total > 0:
-                        pct = min(39, int(done * 39 / total))
-                        mb = done / (1024 * 1024)
-                        progress(f"Downloading… {mb:.0f} MB", pct)
-                    elif done and done % (2 * 1024 * 1024) < CHUNK:
-                        mb = done / (1024 * 1024)
-                        progress(f"Downloading… {mb:.0f} MB", 10)
+    req = urllib.request.Request(url, headers=_headers())
+    try:
+        with urllib.request.urlopen(req, timeout=600, context=_ssl_context()) as resp:
+            total = int(resp.headers.get("Content-Length") or 0)
+            done = 0
+            with tmp.open("wb") as out:
+                while True:
+                    chunk = resp.read(CHUNK)
+                    if not chunk:
+                        break
+                    out.write(chunk)
+                    done += len(chunk)
+                    if progress:
+                        if total > 0:
+                            pct = min(39, int(done * 39 / total))
+                            mb = done / (1024 * 1024)
+                            progress(f"Downloading… {mb:.0f} MB", pct)
+                        elif done and done % (2 * 1024 * 1024) < CHUNK:
+                            mb = done / (1024 * 1024)
+                            progress(f"Downloading… {mb:.0f} MB", 10)
+    except urllib.error.HTTPError as e:
+        raise RuntimeError(_http_error_message(e)) from e
     if done < 1_000_000:
         try:
             tmp.unlink()
