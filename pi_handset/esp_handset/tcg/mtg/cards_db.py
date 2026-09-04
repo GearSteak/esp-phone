@@ -15,7 +15,9 @@ DATA_DIR = Path(
 )
 DB_PATH = DATA_DIR / "cards.sqlite"
 IMAGES_DIR = DATA_DIR / "images"
-BULK_JSON = DATA_DIR / "oracle_cards.json"
+# Scryfall now ships gzipped JSONL (~25 MB); legacy JSON array still importable.
+BULK_FILE = DATA_DIR / "oracle_cards.jsonl.gz"
+BULK_JSON = BULK_FILE  # back-compat alias used by sync
 META_PATH = DATA_DIR / "meta.json"
 
 SCRYFALL_BULK_URL = "https://api.scryfall.com/bulk-data"
@@ -211,37 +213,67 @@ def _card_fields(raw: dict) -> tuple[str, str, str, str, str, str, str, str]:
     return name, mana, type_line, oracle, power, toughness, loyalty, image_url
 
 
+def _iter_bulk_cards(json_path: Path):
+    """Yield card dicts from Scryfall bulk: .jsonl.gz, .jsonl, or legacy JSON array."""
+    name = json_path.name.lower()
+    if name.endswith(".jsonl.gz") or name.endswith(".gz"):
+        import gzip
+
+        with gzip.open(json_path, "rt", encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                raw = json.loads(line)
+                if isinstance(raw, dict):
+                    yield raw
+        return
+
+    if name.endswith(".jsonl"):
+        with json_path.open(encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                raw = json.loads(line)
+                if isinstance(raw, dict):
+                    yield raw
+        return
+
+    # Legacy: single JSON array
+    with json_path.open(encoding="utf-8") as fh:
+        cards = json.load(fh)
+    if not isinstance(cards, list):
+        raise ValueError("bulk JSON must be a list of cards or JSONL")
+    for raw in cards:
+        if isinstance(raw, dict):
+            yield raw
+
+
 def import_bulk(
     json_path: Path,
     *,
     progress: Optional[Callable[[str, int], None]] = None,
 ) -> int:
-    """Parse Scryfall oracle-cards JSON into SQLite. Returns card count."""
+    """Parse Scryfall oracle-cards bulk into SQLite. Returns card count."""
     data_dir()
     if not json_path.is_file():
         raise FileNotFoundError(str(json_path))
 
     if progress:
-        progress("Loading JSON…", 0)
-
-    with json_path.open(encoding="utf-8") as fh:
-        cards = json.load(fh)
-    if not isinstance(cards, list):
-        raise ValueError("bulk JSON must be a list of cards")
+        progress("Opening bulk file…", 42)
 
     tmp = DB_PATH.with_suffix(".sqlite.tmp")
     if tmp.is_file():
         tmp.unlink()
 
     conn = sqlite3.connect(str(tmp), timeout=60)
+    total = 0
     try:
         _schema(conn)
         conn.execute("DELETE FROM cards")
-        total = len(cards)
         batch: list[tuple] = []
-        for i, raw in enumerate(cards):
-            if not isinstance(raw, dict):
-                continue
+        for i, raw in enumerate(_iter_bulk_cards(json_path)):
             cid = str(raw.get("id") or "")
             if not cid:
                 continue
@@ -262,6 +294,7 @@ def import_bulk(
                     "",
                 )
             )
+            total += 1
             if len(batch) >= 500:
                 conn.executemany(
                     """
@@ -274,8 +307,9 @@ def import_bulk(
                 )
                 conn.commit()
                 batch.clear()
-            if progress and i % 400 == 0 and total:
-                progress(f"Indexing {i}/{total}…", int(40 + (i / total) * 55))
+            if progress and i % 400 == 0:
+                # ~34k oracle cards typical; soft ramp 42→95 while streaming
+                progress(f"Indexing {total:,}…", min(95, 42 + (total // 500)))
         if batch:
             conn.executemany(
                 """
@@ -289,6 +323,13 @@ def import_bulk(
             conn.commit()
     finally:
         conn.close()
+
+    if total < 1000:
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+        raise RuntimeError(f"index too small ({total} cards) — bulk file may be corrupt")
 
     if DB_PATH.is_file():
         DB_PATH.unlink()

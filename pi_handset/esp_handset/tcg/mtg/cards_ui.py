@@ -205,7 +205,7 @@ class MtgCardsPage(QWidget):
         self._status.setWordWrap(True)
         root.addWidget(self._status)
 
-        self._download_btn = QPushButton("Download database (~120 MB)")
+        self._download_btn = QPushButton("Download database (~25 MB)")
         self._download_btn.setFocusPolicy(Qt.StrongFocus)
         self._download_btn.setMinimumHeight(40)
         self._download_btn.clicked.connect(lambda: self._start_download(force=False))
@@ -324,7 +324,7 @@ class MtgCardsPage(QWidget):
                     "Art downloads the first time you open a card."
                 )
         else:
-            self._status.setText("Needs Wi‑Fi · Confirm Download (~120 MB)")
+            self._status.setText("Needs Wi‑Fi · Confirm Download (~25 MB)")
             self._text.setPlainText(
                 "Confirm on Download database.\n\n"
                 "Status updates here while it runs\n"

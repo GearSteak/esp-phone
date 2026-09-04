@@ -52,6 +52,8 @@ def _request(url: str, *, timeout: float = 120.0) -> bytes:
             return resp.read()
     except urllib.error.HTTPError as e:
         raise RuntimeError(_http_error_message(e)) from e
+    except urllib.error.URLError as e:
+        raise RuntimeError(f"network error: {e.reason}") from e
 
 
 def _download_file(
@@ -59,16 +61,17 @@ def _download_file(
     dest: Path,
     *,
     progress: Optional[Callable[[str, int], None]] = None,
+    min_bytes: int = 1_000_000,
 ) -> None:
     cards_db.data_dir()
     tmp = dest.with_suffix(dest.suffix + ".part")
     if tmp.is_file():
         tmp.unlink()
     req = urllib.request.Request(url, headers=_headers())
+    done = 0
     try:
         with urllib.request.urlopen(req, timeout=600, context=_ssl_context()) as resp:
             total = int(resp.headers.get("Content-Length") or 0)
-            done = 0
             with tmp.open("wb") as out:
                 while True:
                     chunk = resp.read(CHUNK)
@@ -86,7 +89,9 @@ def _download_file(
                             progress(f"Downloading… {mb:.0f} MB", 10)
     except urllib.error.HTTPError as e:
         raise RuntimeError(_http_error_message(e)) from e
-    if done < 1_000_000:
+    except urllib.error.URLError as e:
+        raise RuntimeError(f"network error: {e.reason}") from e
+    if done < min_bytes:
         try:
             tmp.unlink()
         except OSError:
@@ -101,10 +106,20 @@ def oracle_bulk_download_uri() -> str:
     if not isinstance(items, list):
         raise RuntimeError("unexpected Scryfall bulk-data response")
     for item in items:
-        if isinstance(item, dict) and item.get("type") == "oracle_cards":
-            uri = str(item.get("download_uri") or "")
-            if uri:
-                return uri
+        if not isinstance(item, dict) or item.get("type") != "oracle_cards":
+            continue
+        # Current API: gzipped JSONL. Older API used download_uri (plain JSON).
+        uri = str(
+            item.get("jsonl_download_uri")
+            or item.get("download_uri")
+            or ""
+        ).strip()
+        if uri:
+            return uri
+        raise RuntimeError(
+            "oracle_cards listing has no download URI "
+            f"(keys: {', '.join(sorted(item.keys()))})"
+        )
     raise RuntimeError("oracle_cards bulk entry not found")
 
 
@@ -126,29 +141,31 @@ def ensure_database(
     try:
         uri = oracle_bulk_download_uri()
     except Exception as e:
-        raise RuntimeError(f"Scryfall API failed: {e}") from e
+        raise RuntimeError(f"Scryfall API failed: {type(e).__name__}: {e}") from e
 
+    # Compressed JSONL is ~25 MB; treat tiny/missing files as need download.
+    bulk = cards_db.BULK_FILE
     need_dl = (
         force
-        or not cards_db.BULK_JSON.is_file()
-        or cards_db.BULK_JSON.stat().st_size < 1_000_000
+        or not bulk.is_file()
+        or bulk.stat().st_size < 5_000_000
     )
     if need_dl:
         if progress:
-            progress("Downloading oracle cards (~120 MB)…", 5)
+            progress("Downloading oracle cards (~25 MB)…", 5)
         try:
-            _download_file(uri, cards_db.BULK_JSON, progress=progress)
+            _download_file(uri, bulk, progress=progress, min_bytes=5_000_000)
         except Exception as e:
-            raise RuntimeError(f"Bulk download failed: {e}") from e
+            raise RuntimeError(f"Bulk download failed: {type(e).__name__}: {e}") from e
     elif progress:
-        progress("Using cached bulk JSON…", 40)
+        progress("Using cached bulk file…", 40)
 
     if progress:
         progress("Building search index (slow)…", 42)
     try:
-        return cards_db.import_bulk(cards_db.BULK_JSON, progress=progress)
+        return cards_db.import_bulk(bulk, progress=progress)
     except Exception as e:
-        raise RuntimeError(f"Index build failed: {e}") from e
+        raise RuntimeError(f"Index build failed: {type(e).__name__}: {e}") from e
 
 
 def download_card_image(
