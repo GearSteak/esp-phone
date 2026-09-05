@@ -1,3 +1,5 @@
+Paper / e-Reader-style **license cards** (unlock local ROMs, scan to insert, eject to swap) are documented in [`LICENSE_CARDS.md`](LICENSE_CARDS.md). USB carts below stay for movies and fat media.
+
 # Digivice USB cartridges
 
 Game Boy–sized shells around USB mass-storage sticks. The Pi sees a normal USB disk; **`cartridge.json`** at the root tells Digivice what is on the cart and which menus to take over.

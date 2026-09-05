@@ -111,6 +111,7 @@ MEDIA_APPS = [
 ]
 
 GAMES_APPS = [
+    AppEntry("card_scan", "Paper Cart", "Scan · eject license card", "▤"),
     AppEntry("gb", "Game Boy", "GB / GBC ROMs", "♠"),
     AppEntry("nes", "NES", "Famicom ROMs", "◆"),
     # Key must not be "sms" — that is the home Messages folder.

@@ -27,7 +27,14 @@ DATA = Path.home() / ".esp-handset"
 
 def games_cart_active() -> bool:
     try:
-        return takeover_games()
+        if takeover_games():
+            return True
+    except Exception:
+        pass
+    try:
+        from esp_handset import license_cart
+
+        return license_cart.takeover_games()
     except Exception:
         return False
 
@@ -35,26 +42,55 @@ def games_cart_active() -> bool:
 def games_home_title() -> Optional[str]:
     if not games_cart_active():
         return None
-    cart = current()
-    if cart is None:
-        return None
-    return ((cart.title or "").strip() or "Cart")[:18]
+    try:
+        if takeover_games():
+            cart = current()
+            if cart is not None:
+                return ((cart.title or "").strip() or "Cart")[:18]
+    except Exception:
+        pass
+    try:
+        from esp_handset import license_cart
+
+        t = license_cart.active_title()
+        if t:
+            return t[:18]
+    except Exception:
+        pass
+    return None
 
 
 def games_home_logo() -> Optional[Path]:
     if not games_cart_active():
         return None
-    cart = current()
-    if cart is None:
-        return None
-    if cart.logo is not None and cart.logo.is_file():
-        return cart.logo
-    if cart.menu.logo is not None and cart.menu.logo.is_file():
-        return cart.menu.logo
-    for game in _valid_games(cart):
-        cover = find_cover(game.path, SYSTEMS[game.system].folder, DATA)
-        if cover is not None:
-            return cover
+    try:
+        if takeover_games():
+            cart = current()
+            if cart is not None:
+                if cart.logo is not None and cart.logo.is_file():
+                    return cart.logo
+                if cart.menu.logo is not None and cart.menu.logo.is_file():
+                    return cart.menu.logo
+                for game in _valid_games(cart):
+                    cover = find_cover(game.path, SYSTEMS[game.system].folder, DATA)
+                    if cover is not None:
+                        return cover
+    except Exception:
+        pass
+    try:
+        from esp_handset import license_cart
+
+        card = license_cart.active_card()
+        if card is not None:
+            for g in card.games:
+                sys = SYSTEMS.get(g.system)
+                if sys is None:
+                    continue
+                cover = find_cover(g.path, sys.folder, DATA)
+                if cover is not None:
+                    return cover
+    except Exception:
+        pass
     return None
 
 
@@ -65,6 +101,21 @@ def _valid_games(cart: Optional[Cartridge]) -> List[CartGame]:
     for system in SYSTEMS:
         games.extend(cart.games_for_system(system))
     return games
+
+
+def _license_games() -> List[CartGame]:
+    try:
+        from esp_handset import license_cart
+
+        card = license_cart.active_card()
+        if card is None:
+            return []
+        out: List[CartGame] = []
+        for g in card.games:
+            out.append(CartGame(title=g.title, system=g.system, path=g.path))
+        return out
+    except Exception:
+        return []
 
 
 def make_cart_games_page(on_back: Callable[[], None]) -> QWidget:
@@ -165,25 +216,44 @@ def make_cart_games_page(on_back: Callable[[], None]) -> QWidget:
     def rebuild() -> None:
         refresh(force=True)
         cart = current()
-        games = _valid_games(cart)
+        games = _valid_games(cart) if takeover_games() else []
+        if not games:
+            games = _license_games()
+            cart = None
         state["cart"] = cart
         state["games"] = games
         show_menu()
         _set_art(cart)
-        _set_logo(cart)
+        path = games_home_logo()
+        if path is None:
+            logo.clear()
+            logo.hide()
+        else:
+            pm = QPixmap(str(path))
+            if pm.isNull():
+                logo.clear()
+                logo.hide()
+            else:
+                logo.setPixmap(
+                    pm.scaled(190, 68, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                )
+                logo.show()
         lst.clear()
         for game in games:
-            system = SYSTEMS[game.system]
-            lst.addItem(QListWidgetItem(f"{game.title}  ·  {system.title}"))
+            system = SYSTEMS.get(game.system)
+            label = system.title if system else game.system
+            missing = "" if game.path.is_file() else "  (ROM missing)"
+            lst.addItem(QListWidgetItem(f"{game.title}  ·  {label}{missing}"))
         if not games:
             lst.addItem(
                 QListWidgetItem(
-                    "No valid games (use .gb/.gbc in roms/gb or cart root)"
+                    "No valid games (USB cart or paper cart)"
                 )
             )
             return
-        if len(games) == 1:
-            QTimer.singleShot(0, lambda game=games[0]: launch(game))
+        playable = [g for g in games if g.path.is_file()]
+        if len(playable) == 1 and len(games) == 1:
+            QTimer.singleShot(0, lambda game=playable[0]: launch(game))
         else:
             lst.setCurrentRow(0)
             lst.setFocus(Qt.OtherFocusReason)

@@ -489,14 +489,23 @@ class PhoneShell(QMainWindow):
             except Exception:
                 pass
 
-    def set_cart_label(self, title: str) -> None:
+    def set_cart_label(self, title: str, *, kind: str = "usb") -> None:
         t = (title or "").strip()
         if not t:
             self.cart_lab.hide()
             return
         short = t if len(t) <= 10 else t[:9] + "…"
         self.cart_lab.setText(short)
-        self.cart_lab.setToolTip(f"USB cart: {t}")
+        if kind == "paper":
+            self.cart_lab.setStyleSheet(
+                "font-size:9px; font-weight:700; color:#FFE600; font-family:monospace;"
+            )
+            self.cart_lab.setToolTip(f"Paper cart: {t}")
+        else:
+            self.cart_lab.setStyleSheet(
+                "font-size:9px; font-weight:700; color:#5ec4a8; font-family:monospace;"
+            )
+            self.cart_lab.setToolTip(f"USB cart: {t}")
         self.cart_lab.show()
 
     def _restore_title(self) -> None:

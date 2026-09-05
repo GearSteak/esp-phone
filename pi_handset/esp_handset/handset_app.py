@@ -690,6 +690,9 @@ def build_app(bridge: Optional[EspBridge], modem: Optional[Sim7600]) -> PhoneShe
     shell.register_page("tetris", games_ui.make_tetris(back))
     shell.register_page("solitaire", games_ui.make_solitaire(back))
     shell.register_page("uno", games_ui.make_uno(back))
+    from esp_handset.license_cart_ui import make_license_cart_page
+
+    shell.register_page("card_scan", make_license_cart_page(back))
     shell.register_page("mtg", mtg_life_ui.make_mtg_life_page(back))
     shell.register_page("mtg_cards", mtg_cards_ui.make_mtg_cards_page(back))
     shell.register_page(
@@ -914,9 +917,17 @@ def build_app(bridge: Optional[EspBridge], modem: Optional[Sim7600]) -> PhoneShe
             pass
         try:
             from esp_handset.cartridge import refresh, cart_label
+            from esp_handset import license_cart
 
             refresh()
-            shell.set_cart_label(cart_label())
+            usb = cart_label()
+            paper = license_cart.active_title()
+            if usb:
+                shell.set_cart_label(usb, kind="usb")
+            elif paper:
+                shell.set_cart_label(paper, kind="paper")
+            else:
+                shell.set_cart_label("")
             apply = getattr(shell, "apply_cart_home", None)
             if callable(apply):
                 apply()

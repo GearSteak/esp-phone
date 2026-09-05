@@ -219,20 +219,29 @@ def _bios_dir(sys: EmuSystem) -> Path:
 
 
 def _cart_games_for_system(sys: EmuSystem) -> List[Tuple[str, Path]]:
-    """Cart takeover: (display title, rom path) from cartridge.json."""
+    """USB cart first, then inserted paper (license) cart."""
     try:
         from esp_handset.cartridge import current, takeover_games
 
-        if not takeover_games():
-            return []
-        cart = current()
-        if cart is None:
-            return []
-        out: List[Tuple[str, Path]] = []
-        for g in cart.games_for_system(sys.key):
-            if g.path.is_file():
-                out.append((g.title, g.path))
-        return out
+        if takeover_games():
+            cart = current()
+            if cart is not None:
+                out: List[Tuple[str, Path]] = []
+                for g in cart.games_for_system(sys.key):
+                    if g.path.is_file():
+                        out.append((g.title, g.path))
+                if out:
+                    return out
+    except Exception:
+        pass
+    try:
+        from esp_handset import license_cart
+
+        return [
+            (title, path)
+            for title, path in license_cart.license_games_for_system(sys.key)
+            if path.is_file()
+        ]
     except Exception:
         return []
 
@@ -245,10 +254,19 @@ def list_roms(sys: EmuSystem) -> List[Path]:
 
 
 def list_local_roms(sys: EmuSystem) -> List[Path]:
-    """Scan on-disk ROM folders (ignores cart takeover shortcut)."""
+    """Scan on-disk ROM folders (ignores cart takeover shortcut).
+
+    Paper-cart-gated ROMs stay hidden until that card is inserted.
+    """
     found: List[Path] = []
     seen = set()
     ensure_rom_dir(sys)
+    try:
+        from esp_handset import license_cart
+
+        visible = license_cart.rom_visible
+    except Exception:
+        visible = lambda _p: True  # noqa: E731
     for d in system_rom_dirs(sys):
         if not d.is_dir():
             continue
@@ -259,6 +277,8 @@ def list_local_roms(sys: EmuSystem) -> List[Path]:
                 if p.suffix.lower() not in sys.extensions:
                     continue
                 if p.name.upper() == "README.TXT":
+                    continue
+                if not visible(p):
                     continue
                 try:
                     key = str(p.resolve())
