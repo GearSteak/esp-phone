@@ -58,6 +58,7 @@ CAMERA_APPS = [
 
 TOOLS_APPS = [
     AppEntry("wifi_transfer", "Transfer", "Send & get · Wi‑Fi", "⇅"),
+    AppEntry("snail_link", "Snail Link", "X3 companion bridge", "◎"),
     AppEntry("calc", "Calculator", "", "+"),
     AppEntry("ai", "AI", "Ollama · llama3.2", "✦"),
     AppEntry("convert", "Converter", "", "⇄"),

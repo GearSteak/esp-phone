@@ -664,6 +664,9 @@ def build_app(bridge: Optional[EspBridge], modem: Optional[Sim7600]) -> PhoneShe
     )
     transfer_page = wifi_transfer.make_wifi_transfer_page(back)
     shell.register_page("wifi_transfer", transfer_page)
+    from esp_handset.snail_bridge_ui import make_snail_link_page
+
+    shell.register_page("snail_link", make_snail_link_page(back))
 
     def open_rom_transfer(system_key: str = "roms") -> None:
         page = shell.pages.get("wifi_transfer")
